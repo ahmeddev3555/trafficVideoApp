@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">TrafficWatch</string>
+
+    <!-- Auth -->
+    <string name="label_email">Email</string>
+    <string name="label_password">Password</string>
+    <string name="label_name">Full Name</string>
+    <string name="action_login">Log In</string>
+    <string name="action_register">Create Account</string>
+    <string name="action_logout">Log Out</string>
+    <string name="prompt_no_account">Don\'t have an account?</string>
+    <string name="prompt_have_account">Already have an account?</string>
+    <string name="action_sign_up">Sign up</string>
+    <string name="action_sign_in">Sign in</string>
+
+    <!-- Permissions -->
+    <string name="permission_camera_title">Camera Access</string>
+    <string name="permission_camera_rationale">Required to record traffic violation videos.</string>
+    <string name="permission_audio_title">Microphone Access</string>
+    <string name="permission_audio_rationale">Required to capture audio with the video recording.</string>
+    <string name="permission_location_title">Location Access</string>
+    <string name="permission_location_rationale">Required to embed GPS coordinates in the violation report for verification.</string>
+    <string name="permission_notification_title">Notifications</string>
+    <string name="permission_notification_rationale">We\'ll notify you when your report has been analysed.</string>
+    <string name="action_grant">Grant Permission</string>
+    <string name="action_open_settings">Open Settings</string>
+    <string name="permission_denied_permanently">Permission permanently denied. Please enable it in app settings.</string>
+
+    <!-- Camera screen -->
+    <string name="label_gps_acquiring">Acquiring GPS…</string>
+    <string name="label_gps_fixed">GPS Fixed</string>
+    <string name="label_gps_unavailable">GPS Unavailable</string>
+    <string name="label_gps_poor">GPS signal weak — wait for better fix</string>
+    <string name="action_record">Record</string>
+    <string name="action_stop">Stop</string>
+    <string name="label_max_duration">Max 2 min</string>
+    <string name="msg_recording_auto_stopped">Recording stopped — maximum duration reached</string>
+
+    <!-- Trim screen -->
+    <string name="title_trim">Trim Video</string>
+    <string name="label_selected_duration">Selected: %1$s</string>
+    <string name="label_total_duration">Total: %1$s</string>
+    <string name="action_preview_trim">Preview</string>
+    <string name="action_confirm_trim">Confirm Trim</string>
+    <string name="msg_trimming">Trimming video…</string>
+    <string name="msg_trim_failed">Trim failed: %1$s</string>
+
+    <!-- Review screen -->
+    <string name="title_review">Review Report</string>
+    <string name="label_location">Location</string>
+    <string name="label_recorded_at">Recorded At</string>
+    <string name="label_duration">Duration</string>
+    <string name="label_file_size">File Size</string>
+    <string name="action_submit">Submit Report</string>
+    <string name="action_retrim">Re-trim</string>
+
+    <!-- Upload screen -->
+    <string name="title_uploading">Uploading…</string>
+    <string name="label_upload_progress">%1$d%%</string>
+    <string name="msg_upload_success">Report submitted successfully</string>
+    <string name="msg_upload_failed">Upload failed. Please try again.</string>
+    <string name="action_cancel_upload">Cancel</string>
+    <string name="action_retry">Retry</string>
+    <string name="action_view_history">View Reports</string>
+
+    <!-- History screen -->
+    <string name="title_history">My Reports</string>
+    <string name="label_status_draft">Draft</string>
+    <string name="label_status_pending">Pending Review</string>
+    <string name="label_status_confirmed">Confirmed</string>
+    <string name="label_status_rejected">Rejected</string>
+    <string name="label_status_uploading">Uploading</string>
+    <string name="label_status_upload_failed">Upload Failed</string>
+    <string name="msg_no_reports">No reports yet.\nRecord a traffic violation to get started.</string>
+
+    <!-- Report Detail screen -->
+    <string name="title_report_detail">Report Details</string>
+    <string name="label_report_id">Report ID</string>
+    <string name="label_license_plate">License Plate</string>
+    <string name="label_confidence">Confidence</string>
+    <string name="label_analysis_message">Analysis Result</string>
+
+    <!-- Errors -->
+    <string name="error_network">Network error. Please check your connection.</string>
+    <string name="error_generic">Something went wrong. Please try again.</string>
+    <string name="error_invalid_credentials">Invalid email or password.</string>
+    <string name="error_email_taken">An account with this email already exists.</string>
+</resources>

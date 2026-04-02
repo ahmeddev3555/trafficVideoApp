@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Brand -->
+    <color name="primary">#1565C0</color>
+    <color name="on_primary">#FFFFFF</color>
+    <color name="primary_container">#D6E4FF</color>
+    <color name="secondary">#E53935</color>
+    <color name="on_secondary">#FFFFFF</color>
+    <color name="background">#FAFAFA</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="on_surface">#1A1A1A</color>
+
+    <!-- Status chip colours -->
+    <color name="status_pending">#F57C00</color>
+    <color name="status_confirmed">#2E7D32</color>
+    <color name="status_rejected">#C62828</color>
+    <color name="status_uploading">#1565C0</color>
+    <color name="status_draft">#757575</color>
+
+    <!-- GPS badge -->
+    <color name="gps_fixed">#43A047</color>
+    <color name="gps_acquiring">#FB8C00</color>
+    <color name="gps_unavailable">#E53935</color>
+
+    <!-- Recording indicator -->
+    <color name="recording_red">#D32F2F</color>
+</resources>

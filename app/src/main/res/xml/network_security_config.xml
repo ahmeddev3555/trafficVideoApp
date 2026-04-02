@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Production API: enforce TLS 1.2+ -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">trafficwatch.example.com</domain>
+    </domain-config>
+    <!-- Allow cleartext for local dev/mock testing only in debug builds -->
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="user" />
+        </trust-anchors>
+    </debug-overrides>
+</network-security-config>

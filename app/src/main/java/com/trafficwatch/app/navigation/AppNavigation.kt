@@ -55,6 +55,7 @@ fun AppNavigation(
     var snapshotLocation by remember { mutableStateOf<LocationData?>(null) }
     var recordingStartedAt by rememberSaveable { mutableLongStateOf(0L) }
     var trimDurationMs by rememberSaveable { mutableLongStateOf(0L) }
+    var permissionsNextRoute by rememberSaveable { mutableStateOf(Routes.HISTORY) }
 
     val startDestination = if (isLoggedIn) Routes.HISTORY else Routes.LOGIN
 
@@ -85,7 +86,7 @@ fun AppNavigation(
         composable(Routes.PERMISSIONS) {
             PermissionsScreen(
                 onAllGranted = {
-                    navController.navigate(Routes.HISTORY) {
+                    navController.navigate(permissionsNextRoute) {
                         popUpTo(Routes.PERMISSIONS) { inclusive = true }
                     }
                 }
@@ -94,7 +95,10 @@ fun AppNavigation(
 
         composable(Routes.HISTORY) {
             HistoryScreen(
-                onNewReport = { navController.navigate(Routes.PERMISSIONS) },
+                onNewReport = {
+                    permissionsNextRoute = Routes.CAMERA
+                    navController.navigate(Routes.PERMISSIONS)
+                },
                 onReportClick = { id -> navController.navigate(Routes.reportDetail(id)) },
                 onLogout = {
                     navController.navigate(Routes.LOGIN) {

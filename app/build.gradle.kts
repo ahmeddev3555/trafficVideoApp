@@ -75,6 +75,7 @@ dependencies {
     implementation(libs.core.ktx)
     implementation(libs.appcompat)
     implementation(libs.splashscreen)
+    implementation(libs.material)
 
     // CameraX
     implementation(libs.bundles.camerax)

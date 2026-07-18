@@ -1,6 +1,7 @@
 package com.trafficwatch.app.core.util
 
 import android.content.Context
+import dagger.hilt.android.qualifiers.ApplicationContext
 import okhttp3.MediaType
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody
@@ -12,7 +13,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-class FileUtil @Inject constructor(private val context: Context) {
+class FileUtil @Inject constructor(@ApplicationContext private val context: Context) {
 
     fun getRawRecordingDir(): File {
         val dir = File(context.cacheDir, "recordings")

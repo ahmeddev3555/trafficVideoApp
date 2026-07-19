@@ -107,6 +107,22 @@ class RegisterViewModelTest {
     }
 
     @Test
+    fun `register does not reject email with leading or trailing whitespace`() {
+        fillValidForm()
+        viewModel.onEmailChange("ahmed@example.com ")
+        val user = User(id = "u1", name = "Ahmed Hussain", email = "ahmed@example.com")
+        coEvery {
+            registerUseCase(any(), any(), any(), any(), any())
+        } returns Result.success(user)
+
+        viewModel.register()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(true, viewModel.uiState.value.isSuccess)
+        assertNull(viewModel.uiState.value.error)
+    }
+
+    @Test
     fun `register still enforces existing name, password length, and password match checks`() {
         fillValidForm()
         viewModel.onNameChange("")

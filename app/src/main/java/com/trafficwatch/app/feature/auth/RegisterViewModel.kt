@@ -55,7 +55,7 @@ class RegisterViewModel @Inject constructor(
             state.cnic.isBlank() -> { _uiState.update { it.copy(error = "CNIC is required") }; return }
             !CNIC_REGEX.matches(state.cnic) -> { _uiState.update { it.copy(error = "Enter a valid 13-digit CNIC") }; return }
             state.email.isBlank() -> { _uiState.update { it.copy(error = "Email is required") }; return }
-            !EMAIL_REGEX.matches(state.email) -> { _uiState.update { it.copy(error = "Enter a valid email address") }; return }
+            !EMAIL_REGEX.matches(state.email.trim()) -> { _uiState.update { it.copy(error = "Enter a valid email address") }; return }
             state.password.length < 8 -> { _uiState.update { it.copy(error = "Password must be at least 8 characters") }; return }
             state.password != state.confirmPassword -> { _uiState.update { it.copy(error = "Passwords do not match") }; return }
         }

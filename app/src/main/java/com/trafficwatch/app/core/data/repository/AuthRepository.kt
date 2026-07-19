@@ -21,7 +21,11 @@ class AuthRepository @Inject constructor(
 
     suspend fun register(name: String, email: String, password: String): Result<User> =
         runCatching {
-            val response = apiService.register(RegisterRequest(name, email, password))
+            // TODO(Task 3): thread real phoneNumber/cnic values through once
+            // AuthRepository.register()/RegisterUseCase accept them.
+            val response = apiService.register(
+                RegisterRequest(name = name, phoneNumber = "", cnic = "", email = email, password = password)
+            )
             tokenStore.saveToken(response.token)
             tokenStore.saveUser(response.user.id, response.user.name, response.user.email)
             _isLoggedIn.value = true

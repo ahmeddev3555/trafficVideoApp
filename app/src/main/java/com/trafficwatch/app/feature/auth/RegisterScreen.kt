@@ -95,6 +95,33 @@ fun RegisterScreen(
             )
 
             OutlinedTextField(
+                value = uiState.phoneNumber,
+                onValueChange = viewModel::onPhoneNumberChange,
+                label = { Text("Phone Number (03XXXXXXXXX)") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Phone,
+                    imeAction = ImeAction.Next
+                ),
+                keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            OutlinedTextField(
+                value = uiState.cnic,
+                onValueChange = viewModel::onCnicChange,
+                label = { Text("CNIC") },
+                singleLine = true,
+                visualTransformation = CnicVisualTransformation(),
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Number,
+                    imeAction = ImeAction.Next
+                ),
+                keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            OutlinedTextField(
                 value = uiState.email,
                 onValueChange = viewModel::onEmailChange,
                 label = { Text("Email") },

@@ -11,8 +11,11 @@ import kotlinx.coroutines.delay
 import okhttp3.MultipartBody
 import okhttp3.RequestBody
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
+
+class DuplicatePhoneNumberException(message: String) : Exception(message)
 
 /**
  * Fake implementation of [ApiService] used while the real backend is not yet available.
@@ -25,8 +28,13 @@ class MockApiService @Inject constructor() : ApiService {
     // Simulate network latency
     private suspend fun fakeDelay() = delay(800)
 
+    private val registeredPhoneNumbers = ConcurrentHashMap.newKeySet<String>()
+
     override suspend fun register(request: RegisterRequest): AuthResponse {
         fakeDelay()
+        if (!registeredPhoneNumbers.add(request.phoneNumber)) {
+            throw DuplicatePhoneNumberException("An account with this phone number already exists.")
+        }
         return AuthResponse(
             token = "mock_token_${UUID.randomUUID()}",
             user = UserDto(

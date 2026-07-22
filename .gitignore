@@ -85,3 +85,6 @@ lint/reports/
 
 # Android Profiling
 *.hprof
+
+# Superpowers brainstorming session artifacts
+.superpowers/

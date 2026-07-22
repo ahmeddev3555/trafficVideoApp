@@ -18,7 +18,7 @@ import kotlinx.coroutines.launch
 import java.io.File
 import javax.inject.Inject
 
-private const val MAX_RECORDING_MS = 120_000L
+private const val MAX_RECORDING_MS = 600_000L
 
 sealed class LocationState {
     object Acquiring : LocationState()
@@ -44,6 +44,7 @@ class CameraViewModel @Inject constructor(
 
     private var maxDurationJob: Job? = null
     private var snapshotLocation: LocationData? = null
+    private var recordingStartedAt: Long = 0L
 
     init {
         observeLocation()
@@ -77,6 +78,7 @@ class CameraViewModel @Inject constructor(
     fun newRawFile(): File = fileUtil.newRawRecordingFile()
 
     fun onStartRecording(outputFile: File) {
+        recordingStartedAt = System.currentTimeMillis()
         viewModelScope.launch {
             snapshotLocation = locationUtil.getSnapshot()
         }
@@ -96,7 +98,11 @@ class CameraViewModel @Inject constructor(
 
     fun getSnapshotLocation(): LocationData? = snapshotLocation
 
+    fun getRecordingStartedAt(): Long = recordingStartedAt
+
     fun resetRecordingState() = cameraController.resetState()
+
+    fun stopOrientationTracking() = cameraController.stopOrientationTracking()
 
     fun clearError() = _uiState.update { it.copy(cameraError = null) }
 }

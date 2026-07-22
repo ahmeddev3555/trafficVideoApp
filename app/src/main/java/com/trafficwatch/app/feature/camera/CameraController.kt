@@ -1,6 +1,8 @@
 package com.trafficwatch.app.feature.camera
 
 import android.content.Context
+import android.view.OrientationEventListener
+import android.view.Surface
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -37,6 +39,35 @@ class CameraController @Inject constructor(
     private var videoCapture: VideoCapture<Recorder>? = null
     private var activeRecording: Recording? = null
 
+    // The Activity is portrait-locked, so display rotation never changes and CameraX's
+    // default (display-rotation-based) target rotation would always record as portrait
+    // regardless of how the phone is physically held. Tracking physical device
+    // orientation directly and feeding it to VideoCapture is what makes a sideways-held
+    // recording actually come out landscape.
+    private var orientationEventListener: OrientationEventListener? = null
+
+    private fun ensureOrientationListener(): OrientationEventListener =
+        orientationEventListener ?: object : OrientationEventListener(context) {
+            override fun onOrientationChanged(orientation: Int) {
+                if (orientation == ORIENTATION_UNKNOWN) return
+                val rotation = when (orientation) {
+                    in 45 until 135 -> Surface.ROTATION_270
+                    in 135 until 225 -> Surface.ROTATION_180
+                    in 225 until 315 -> Surface.ROTATION_90
+                    else -> Surface.ROTATION_0
+                }
+                videoCapture?.targetRotation = rotation
+            }
+        }.also { orientationEventListener = it }
+
+    private fun startOrientationTracking() {
+        ensureOrientationListener().enable()
+    }
+
+    fun stopOrientationTracking() {
+        orientationEventListener?.disable()
+    }
+
     fun bindCamera(
         lifecycleOwner: LifecycleOwner,
         previewView: PreviewView,
@@ -61,6 +92,7 @@ class CameraController @Inject constructor(
             try {
                 cameraProvider.unbindAll()
                 cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector, preview, videoCapture)
+                startOrientationTracking()
                 onBound()
             } catch (e: Exception) {
                 onError(e.message ?: "Camera bind failed")
@@ -76,7 +108,6 @@ class CameraController @Inject constructor(
 
         activeRecording = vc.output
             .prepareRecording(context, fileOutputOptions)
-            .withAudioEnabled()
             .start(ContextCompat.getMainExecutor(context)) { event ->
                 when (event) {
                     is VideoRecordEvent.Start -> {

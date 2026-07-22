@@ -17,8 +17,6 @@
     <!-- Permissions -->
     <string name="permission_camera_title">Camera Access</string>
     <string name="permission_camera_rationale">Required to record traffic violation videos.</string>
-    <string name="permission_audio_title">Microphone Access</string>
-    <string name="permission_audio_rationale">Required to capture audio with the video recording.</string>
     <string name="permission_location_title">Location Access</string>
     <string name="permission_location_rationale">Required to embed GPS coordinates in the violation report for verification.</string>
     <string name="permission_notification_title">Notifications</string>

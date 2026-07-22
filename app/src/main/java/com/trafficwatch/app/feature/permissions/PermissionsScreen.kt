@@ -19,7 +19,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Camera
 import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -45,7 +44,6 @@ import com.google.accompanist.permissions.shouldShowRationale
 
 private val REQUIRED_PERMISSIONS = buildList {
     add(Manifest.permission.CAMERA)
-    add(Manifest.permission.RECORD_AUDIO)
     add(Manifest.permission.ACCESS_FINE_LOCATION)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         add(Manifest.permission.POST_NOTIFICATIONS)
@@ -90,14 +88,6 @@ fun PermissionsScreen(onAllGranted: () -> Unit) {
                 rationale = "Required to record traffic violation videos.",
                 isGranted = permissionsState.permissions.firstOrNull {
                     it.permission == Manifest.permission.CAMERA
-                }?.status?.isGranted == true
-            )
-            PermissionItem(
-                icon = Icons.Default.Mic,
-                title = "Microphone",
-                rationale = "Required to capture audio with the recording.",
-                isGranted = permissionsState.permissions.firstOrNull {
-                    it.permission == Manifest.permission.RECORD_AUDIO
                 }?.status?.isGranted == true
             )
             PermissionItem(

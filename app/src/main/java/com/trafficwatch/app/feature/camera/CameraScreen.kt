@@ -28,6 +28,7 @@ import androidx.compose.material3.Snackbar
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -47,7 +48,7 @@ import java.io.File
 @SuppressLint("MissingPermission")
 @Composable
 fun CameraScreen(
-    onVideoRecorded: (file: File, location: LocationData?) -> Unit,
+    onVideoRecorded: (file: File, location: LocationData?, recordingStartedAt: Long) -> Unit,
     viewModel: CameraViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -67,12 +68,19 @@ fun CameraScreen(
         viewModel.bindCamera(previewView, lifecycleOwner)
     }
 
+    // The orientation listener is a plain sensor listener, not tied to CameraX's
+    // lifecycle-aware binding, so it needs to be stopped explicitly.
+    DisposableEffect(Unit) {
+        onDispose { viewModel.stopOrientationTracking() }
+    }
+
     // Navigate forward once recording is finalised
     LaunchedEffect(recordingState) {
         if (recordingState is RecordingState.Finalizing) {
             onVideoRecorded(
                 (recordingState as RecordingState.Finalizing).outputFile,
-                viewModel.getSnapshotLocation()
+                viewModel.getSnapshotLocation(),
+                viewModel.getRecordingStartedAt()
             )
         }
     }

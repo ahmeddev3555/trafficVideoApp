@@ -13,13 +13,20 @@ import kotlinx.coroutines.launch
 import java.io.File
 import javax.inject.Inject
 
+private const val MAX_TRIM_DURATION_MS = 5_000L
+
 data class TrimUiState(
     val videoPath: String = "",
     val totalDurationMs: Long = 0L,
     val trimStartMs: Long = 0L,
-    val trimEndMs: Long = 0L,
+    val maxDurationMs: Long = MAX_TRIM_DURATION_MS,
+    val scrubPositionMs: Long? = null,
     val trimProgress: TrimProgress = TrimProgress.Idle
-)
+) {
+    /** The selection is always exactly [maxDurationMs] long, or the whole clip if it's shorter. */
+    val selectedDurationMs: Long get() = minOf(maxDurationMs, totalDurationMs)
+    val trimEndMs: Long get() = trimStartMs + selectedDurationMs
+}
 
 @HiltViewModel
 class TrimViewModel @Inject constructor(
@@ -38,14 +45,28 @@ class TrimViewModel @Inject constructor(
                 videoPath = path,
                 totalDurationMs = durationMs,
                 trimStartMs = 0L,
-                trimEndMs = minOf(durationMs, 60_000L),
                 trimProgress = TrimProgress.Idle
             )
         }
     }
 
-    fun onRangeChange(startMs: Long, endMs: Long) {
-        _uiState.update { it.copy(trimStartMs = startMs, trimEndMs = endMs) }
+    /** Moves the fixed-length selection window so it starts at [startMs], clamped to the video's bounds. */
+    fun onWindowPositionChange(startMs: Long) {
+        _uiState.update { it.copy(trimStartMs = clampWindowStart(startMs, it)) }
+    }
+
+    /** Shifts the window by [deltaMs] (positive = later, negative = earlier), clamped to the video's bounds. */
+    fun nudgeWindow(deltaMs: Long) {
+        _uiState.update { it.copy(trimStartMs = clampWindowStart(it.trimStartMs + deltaMs, it)) }
+    }
+
+    private fun clampWindowStart(startMs: Long, state: TrimUiState): Long {
+        val maxStart = (state.totalDurationMs - state.selectedDurationMs).coerceAtLeast(0L)
+        return startMs.coerceIn(0L, maxStart)
+    }
+
+    fun onScrubChange(positionMs: Long?) {
+        _uiState.update { it.copy(scrubPositionMs = positionMs) }
     }
 
     fun confirmTrim() {

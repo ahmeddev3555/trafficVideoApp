@@ -48,7 +48,7 @@ class VideoTrimmer @Inject constructor(
             .build()
 
         val editedMediaItem = EditedMediaItem.Builder(mediaItem)
-            .setRemoveAudio(false)
+            .setRemoveAudio(true)
             .build()
 
         val transformer = Transformer.Builder(context)

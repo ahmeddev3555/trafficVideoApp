@@ -121,10 +121,10 @@ fun AppNavigation(
 
         composable(Routes.CAMERA) {
             CameraScreen(
-                onVideoRecorded = { file, location ->
+                onVideoRecorded = { file, location, startedAt ->
                     rawVideoFile = file.absolutePath
                     snapshotLocation = location
-                    recordingStartedAt = System.currentTimeMillis()
+                    recordingStartedAt = startedAt
                     navController.navigate(Routes.TRIM)
                 }
             )
@@ -134,6 +134,7 @@ fun AppNavigation(
             val raw = rawVideoFile ?: return@composable
             TrimScreen(
                 rawVideoFile = File(raw),
+                recordingStartedAt = recordingStartedAt,
                 onTrimComplete = { file ->
                     trimmedVideoFile = file.absolutePath
                     navController.navigate(Routes.REVIEW)

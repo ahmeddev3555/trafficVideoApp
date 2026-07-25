@@ -12,4 +12,4 @@ app:
     secret: "replace-with-a-real-secret-change-me-now"
     expiration-days: 30
   storage:
-    video-directory: "server/storage/videos"
+    video-directory: "storage/videos"

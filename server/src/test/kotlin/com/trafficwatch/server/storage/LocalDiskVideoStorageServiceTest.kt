@@ -1,6 +1,7 @@
 package com.trafficwatch.server.storage
 
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatCode
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import org.springframework.mock.web.MockMultipartFile
@@ -75,5 +76,36 @@ class LocalDiskVideoStorageServiceTest {
         val resolved = service.resolve("some-report-id.mp4")
 
         assertThat(resolved).isEqualTo(videoDir.resolve("some-report-id.mp4"))
+    }
+
+    @Test
+    fun `delete removes a previously stored file`(@TempDir tempDir: Path) {
+        val videoDir = tempDir.resolve("videos")
+        val service = LocalDiskVideoStorageService(
+            StorageProperties(videoDirectory = videoDir.toString()),
+        )
+        service.init()
+
+        val reportId = UUID.randomUUID()
+        val file = MockMultipartFile("file", "clip.mp4", "video/mp4", byteArrayOf(1, 2, 3))
+        val storedPath = service.store(reportId, file)
+        assertThat(Files.exists(service.resolve(storedPath))).isTrue()
+
+        service.delete(storedPath)
+
+        assertThat(Files.exists(service.resolve(storedPath))).isFalse()
+    }
+
+    @Test
+    fun `delete does not throw when the file is already absent`(@TempDir tempDir: Path) {
+        val videoDir = tempDir.resolve("videos")
+        val service = LocalDiskVideoStorageService(
+            StorageProperties(videoDirectory = videoDir.toString()),
+        )
+        service.init()
+
+        // Files.deleteIfExists returns false rather than throwing when the target is
+        // missing, which is exactly the idempotent-cleanup behavior callers rely on.
+        assertThatCode { service.delete("never-written.mp4") }.doesNotThrowAnyException()
     }
 }

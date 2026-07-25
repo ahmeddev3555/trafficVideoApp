@@ -2,9 +2,12 @@ package com.trafficwatch.server.reports
 
 import com.trafficwatch.server.storage.VideoStorageService
 import io.mockk.every
+import io.mockk.just
 import io.mockk.mockk
+import io.mockk.runs
 import io.mockk.verify
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -116,5 +119,50 @@ class ReportServiceTest {
         verify(exactly = 2) { reportRepository.save(any()) }
 
         assertThat(savedReport.recordedAt).isEqualTo(LocalDateTime.of(2026, 7, 25, 14, 30, 45))
+    }
+
+    // Reproduces the orphaned-file gap the finding described: the video is written to disk
+    // successfully by `store()`, but the second `save()` (persisting the real video path)
+    // then fails. `@Transactional` rolls back the DB insert, but never touches the
+    // filesystem, so `submit()` itself must delete the just-written file in a catch block -
+    // this proves that cleanup call happens with the right path, and that the original
+    // exception still propagates rather than being swallowed or replaced.
+    @Test
+    fun `submit deletes the just-written video and rethrows if the second save fails`() {
+        val fixedId = UUID.randomUUID()
+        val storedPath = "$fixedId.mp4"
+        val dbFailure = RuntimeException("connection drop")
+
+        var saveCallCount = 0
+        every { reportRepository.save(any()) } answers {
+            saveCallCount++
+            val report = firstArg<Report>()
+            if (saveCallCount == 1) {
+                report.id = fixedId
+                report
+            } else {
+                throw dbFailure
+            }
+        }
+        every { videoStorageService.store(fixedId, any()) } returns storedPath
+        every { videoStorageService.delete(storedPath) } just runs
+
+        assertThatThrownBy {
+            reportService.submit(
+                video = sampleVideo(),
+                latitude = BigDecimal.ONE,
+                longitude = BigDecimal.ONE,
+                accuracy = BigDecimal.ONE,
+                altitude = BigDecimal.ONE,
+                bearing = BigDecimal.ONE,
+                speed = BigDecimal.ONE,
+                recordedAt = "2026-07-25T14:30:45Z",
+                durationMs = 1000L,
+                deviceId = "device-x",
+            )
+        }.isSameAs(dbFailure)
+
+        verify(exactly = 1) { videoStorageService.delete(storedPath) }
+        verify(exactly = 2) { reportRepository.save(any()) }
     }
 }

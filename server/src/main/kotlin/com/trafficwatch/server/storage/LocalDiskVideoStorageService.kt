@@ -35,4 +35,8 @@ class LocalDiskVideoStorageService(
     }
 
     override fun resolve(path: String): Path = videoDirectory.resolve(path)
+
+    override fun delete(path: String) {
+        Files.deleteIfExists(resolve(path))
+    }
 }

@@ -37,6 +37,12 @@ class ReportService(
      * between (e.g. disk write failure) rolls back the first, incomplete insert rather
      * than leaving a `PENDING` row with an empty `video_path` behind.
      *
+     * `@Transactional` only covers the database side, though - it cannot undo the
+     * filesystem write [VideoStorageService.store] already performed. If the second
+     * `save()` (or anything after the video is written) throws, the video file itself would
+     * otherwise be orphaned on disk with no DB row ever pointing to it, so that path is
+     * explicitly deleted before the original exception is rethrown.
+     *
      * Does not invoke any analysis job - a later task wires that call into this method
      * once the real job exists.
      */
@@ -74,8 +80,14 @@ class ReportService(
         val saved = reportRepository.save(report)
         val reportId = requireNotNull(saved.id) { "Saved report must have a generated id" }
 
-        saved.videoPath = videoStorageService.store(reportId, video)
-        reportRepository.save(saved)
+        val videoPath = videoStorageService.store(reportId, video)
+        try {
+            saved.videoPath = videoPath
+            reportRepository.save(saved)
+        } catch (ex: Exception) {
+            videoStorageService.delete(videoPath)
+            throw ex
+        }
 
         return SubmitReportResponse(
             reportId = reportId,

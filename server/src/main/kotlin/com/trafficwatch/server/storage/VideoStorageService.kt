@@ -20,4 +20,12 @@ interface VideoStorageService {
 
     /** Resolves a previously-returned [store] path back to a full filesystem [Path]. */
     fun resolve(path: String): Path
+
+    /**
+     * Removes a previously-[store]d file, e.g. to clean up an orphaned video after a
+     * failure elsewhere in the same submission (see `ReportService.submit`'s catch block).
+     * A no-op (not an error) if [path] does not resolve to an existing file, so callers can
+     * treat cleanup as idempotent.
+     */
+    fun delete(path: String)
 }

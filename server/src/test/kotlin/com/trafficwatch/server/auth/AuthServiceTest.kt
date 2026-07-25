@@ -81,4 +81,23 @@ class AuthServiceTest {
         assertThat(response.toString()).doesNotContain(request.password)
         assertThat(response.user.toString()).doesNotContain(request.password)
     }
+
+    @Test
+    fun `RegisterRequest toString redacts password to prevent logging leaks`() {
+        val request = validRequest()
+        val requestString = request.toString()
+
+        // Verify the raw password is never in the string representation
+        assertThat(requestString).doesNotContain(request.password)
+        assertThat(requestString).doesNotContain("supersecret")
+
+        // Verify redaction marker is present
+        assertThat(requestString).contains("[REDACTED]")
+
+        // Verify other fields are still present and readable
+        assertThat(requestString).contains(request.name)
+        assertThat(requestString).contains(request.phoneNumber)
+        assertThat(requestString).contains(request.cnic)
+        assertThat(requestString).contains(request.email)
+    }
 }

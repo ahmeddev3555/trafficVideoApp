@@ -27,7 +27,9 @@ data class RegisterRequest(
 
     @field:Size(min = 8, message = "Password must be at least 8 characters")
     val password: String,
-)
+) {
+    override fun toString(): String = "RegisterRequest(name=$name, phoneNumber=$phoneNumber, cnic=$cnic, email=$email, password=[REDACTED])"
+}
 
 /** Public-facing user representation - deliberately excludes phone, cnic, and password. */
 data class UserDto(

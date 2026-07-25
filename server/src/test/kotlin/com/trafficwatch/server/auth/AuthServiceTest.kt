@@ -8,6 +8,7 @@ import com.trafficwatch.server.auth.exception.InvalidCredentialsException
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
+import io.mockk.spyk
 import io.mockk.verify
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
@@ -20,11 +21,13 @@ class AuthServiceTest {
     private val userRepository = mockk<UserRepository>()
     private val jwtService = mockk<JwtService>()
 
-    // Real BCryptPasswordEncoder rather than a mock: register()'s test asserts the
-    // persisted hash actually starts with a real bcrypt prefix, and login()'s tests need
-    // genuine hash/verify round-tripping - a mocked `matches()` would just assert against
-    // itself and prove nothing about real credential checking.
-    private val passwordEncoder = BCryptPasswordEncoder()
+    // A spy over a real BCryptPasswordEncoder rather than a mock: register()'s test
+    // asserts the persisted hash actually starts with a real bcrypt prefix, and login()'s
+    // tests need genuine hash/verify round-tripping - a mocked `matches()` would just
+    // assert against itself and prove nothing about real credential checking. Wrapping it
+    // in a spy keeps all real behavior while letting timing-side-channel tests verify
+    // that `matches()` was actually invoked (see the "still performs a comparison" test).
+    private val passwordEncoder = spyk(BCryptPasswordEncoder())
     private val authService = AuthService(userRepository, passwordEncoder, jwtService)
 
     private fun validRequest(
@@ -148,6 +151,20 @@ class AuthServiceTest {
         }.isInstanceOf(InvalidCredentialsException::class.java)
 
         verify(exactly = 0) { jwtService.generateToken(any()) }
+    }
+
+    @Test
+    fun `login with unknown email still performs a bcrypt comparison to avoid a timing side-channel`() {
+        every { userRepository.findByEmail("nobody@example.com") } returns null
+
+        assertThatThrownBy {
+            authService.login(LoginRequest(email = "nobody@example.com", password = "whatever12"))
+        }.isInstanceOf(InvalidCredentialsException::class.java)
+
+        // Proves the dummy comparison genuinely runs rather than being short-circuited
+        // away - without it, this path would return before ever touching the (slow)
+        // bcrypt encoder, making it distinguishable from the wrong-password path by timing.
+        verify(exactly = 1) { passwordEncoder.matches("whatever12", any()) }
     }
 
     @Test

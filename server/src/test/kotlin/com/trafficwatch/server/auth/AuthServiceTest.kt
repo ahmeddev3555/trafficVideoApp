@@ -15,7 +15,8 @@ import java.util.UUID
 class AuthServiceTest {
 
     private val userRepository = mockk<UserRepository>()
-    private val authService = AuthService(userRepository)
+    private val jwtService = mockk<JwtService>()
+    private val authService = AuthService(userRepository, jwtService)
 
     private fun validRequest(
         phoneNumber: String = "03001234567",
@@ -38,6 +39,7 @@ class AuthServiceTest {
 
         verify(exactly = 0) { userRepository.existsByEmail(any()) }
         verify(exactly = 0) { userRepository.save(any()) }
+        verify(exactly = 0) { jwtService.generateToken(any()) }
     }
 
     @Test
@@ -50,6 +52,7 @@ class AuthServiceTest {
             .isInstanceOf(DuplicateEmailException::class.java)
 
         verify(exactly = 0) { userRepository.save(any()) }
+        verify(exactly = 0) { jwtService.generateToken(any()) }
     }
 
     @Test
@@ -63,10 +66,14 @@ class AuthServiceTest {
         every { userRepository.save(capture(savedUserSlot)) } answers {
             savedUserSlot.captured.apply { id = fixedId }
         }
+        every { jwtService.generateToken(fixedId) } returns "signed.jwt.token"
 
         val response = authService.register(request)
 
-        assertThat(response.token).isNotBlank()
+        // The token must be the one JwtService actually issued for this user's id -
+        // not a hardcoded/stub value - confirming AuthService no longer fabricates it.
+        assertThat(response.token).isEqualTo("signed.jwt.token")
+        verify(exactly = 1) { jwtService.generateToken(fixedId) }
         assertThat(response.user.id).isEqualTo(fixedId)
         assertThat(response.user.name).isEqualTo(request.name)
         assertThat(response.user.email).isEqualTo(request.email)

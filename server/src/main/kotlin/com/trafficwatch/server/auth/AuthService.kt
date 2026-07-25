@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service
 @Service
 class AuthService(
     private val userRepository: UserRepository,
+    private val jwtService: JwtService,
 ) {
 
     // Instantiated directly rather than injected as a `PasswordEncoder` bean: this task's
@@ -48,13 +49,12 @@ class AuthService(
         )
 
         val saved = userRepository.save(user)
+        val userId = requireNotNull(saved.id) { "Saved user must have a generated id" }
 
         return AuthResponse(
-            // TEMPORARY placeholder token. Task 4 introduces the real JwtService and
-            // replaces this with an actually-signed JWT.
-            token = "stub-jwt-${saved.id}",
+            token = jwtService.generateToken(userId),
             user = UserDto(
-                id = requireNotNull(saved.id) { "Saved user must have a generated id" },
+                id = userId,
                 name = saved.name,
                 email = saved.email,
             ),

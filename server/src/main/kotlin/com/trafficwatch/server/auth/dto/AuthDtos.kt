@@ -42,3 +42,18 @@ data class AuthResponse(
     val token: String,
     val user: UserDto,
 )
+
+/**
+ * Wire request body for POST /v1/auth/login. Both fields map straight through under the
+ * app-wide SNAKE_CASE Jackson naming strategy since neither name is multi-word.
+ */
+data class LoginRequest(
+    @field:NotBlank(message = "Email must not be blank")
+    @field:Email(message = "Email must be a well-formed email address")
+    val email: String,
+
+    @field:NotBlank(message = "Password must not be blank")
+    val password: String,
+) {
+    override fun toString(): String = "LoginRequest(email=$email, password=[REDACTED])"
+}

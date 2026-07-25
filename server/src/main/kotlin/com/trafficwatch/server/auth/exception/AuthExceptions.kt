@@ -13,3 +13,12 @@ class DuplicatePhoneNumberException(phoneNumber: String) :
  */
 class DuplicateEmailException(email: String) :
     RuntimeException("Email already registered: $email")
+
+/**
+ * Thrown by AuthService.login() when the email is not registered OR the password does
+ * not match the stored hash. Deliberately a single, generic exception for both cases -
+ * distinguishing them in the response would leak which registered emails exist. Mapped
+ * to HTTP 401 by Task 6's GlobalExceptionHandler eventually; AuthController maps it
+ * locally for now.
+ */
+class InvalidCredentialsException : RuntimeException("Invalid email or password")

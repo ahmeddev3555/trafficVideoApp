@@ -1,8 +1,10 @@
 package com.trafficwatch.server.auth
 
+import com.trafficwatch.server.auth.dto.LoginRequest
 import com.trafficwatch.server.auth.dto.RegisterRequest
 import com.trafficwatch.server.auth.exception.DuplicateEmailException
 import com.trafficwatch.server.auth.exception.DuplicatePhoneNumberException
+import com.trafficwatch.server.auth.exception.InvalidCredentialsException
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
@@ -10,13 +12,20 @@ import io.mockk.verify
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder
 import java.util.UUID
 
 class AuthServiceTest {
 
     private val userRepository = mockk<UserRepository>()
     private val jwtService = mockk<JwtService>()
-    private val authService = AuthService(userRepository, jwtService)
+
+    // Real BCryptPasswordEncoder rather than a mock: register()'s test asserts the
+    // persisted hash actually starts with a real bcrypt prefix, and login()'s tests need
+    // genuine hash/verify round-tripping - a mocked `matches()` would just assert against
+    // itself and prove nothing about real credential checking.
+    private val passwordEncoder = BCryptPasswordEncoder()
+    private val authService = AuthService(userRepository, passwordEncoder, jwtService)
 
     private fun validRequest(
         phoneNumber: String = "03001234567",
@@ -106,5 +115,72 @@ class AuthServiceTest {
         assertThat(requestString).contains(request.phoneNumber)
         assertThat(requestString).contains(request.cnic)
         assertThat(requestString).contains(request.email)
+    }
+
+    @Test
+    fun `login with correct email and password returns AuthResponse with a real JWT`() {
+        val fixedId = UUID.randomUUID()
+        val storedUser = User(
+            name = "Jane Doe",
+            phoneNumber = "03001234567",
+            cnic = "1234567890123",
+            email = "person@example.com",
+            passwordHash = passwordEncoder.encode("correct-password"),
+        ).apply { id = fixedId }
+        every { userRepository.findByEmail("person@example.com") } returns storedUser
+        every { jwtService.generateToken(fixedId) } returns "signed.jwt.token"
+
+        val response = authService.login(LoginRequest(email = "person@example.com", password = "correct-password"))
+
+        assertThat(response.token).isEqualTo("signed.jwt.token")
+        assertThat(response.user.id).isEqualTo(fixedId)
+        assertThat(response.user.name).isEqualTo("Jane Doe")
+        assertThat(response.user.email).isEqualTo("person@example.com")
+        verify(exactly = 1) { jwtService.generateToken(fixedId) }
+    }
+
+    @Test
+    fun `login with unknown email throws InvalidCredentialsException`() {
+        every { userRepository.findByEmail("nobody@example.com") } returns null
+
+        assertThatThrownBy {
+            authService.login(LoginRequest(email = "nobody@example.com", password = "whatever12"))
+        }.isInstanceOf(InvalidCredentialsException::class.java)
+
+        verify(exactly = 0) { jwtService.generateToken(any()) }
+    }
+
+    @Test
+    fun `login with wrong password throws the SAME InvalidCredentialsException type and message as unknown email - no leak`() {
+        val storedUser = User(
+            name = "Jane Doe",
+            phoneNumber = "03001234567",
+            cnic = "1234567890123",
+            email = "person@example.com",
+            passwordHash = passwordEncoder.encode("correct-password"),
+        ).apply { id = UUID.randomUUID() }
+        every { userRepository.findByEmail("person@example.com") } returns storedUser
+        every { userRepository.findByEmail("nobody@example.com") } returns null
+
+        val wrongPasswordException = catchInvalidCredentials {
+            authService.login(LoginRequest(email = "person@example.com", password = "wrong-password"))
+        }
+        val unknownEmailException = catchInvalidCredentials {
+            authService.login(LoginRequest(email = "nobody@example.com", password = "whatever12"))
+        }
+
+        // Both failure modes must be indistinguishable to a caller: same exception type
+        // and same message - nothing here reveals which one was actually wrong.
+        assertThat(wrongPasswordException.message).isEqualTo(unknownEmailException.message)
+        verify(exactly = 0) { jwtService.generateToken(any()) }
+    }
+
+    private fun catchInvalidCredentials(block: () -> Unit): InvalidCredentialsException {
+        try {
+            block()
+            error("expected InvalidCredentialsException to be thrown")
+        } catch (e: InvalidCredentialsException) {
+            return e
+        }
     }
 }

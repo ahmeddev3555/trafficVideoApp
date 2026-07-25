@@ -1,24 +1,21 @@
 package com.trafficwatch.server.auth
 
 import com.trafficwatch.server.auth.dto.AuthResponse
+import com.trafficwatch.server.auth.dto.LoginRequest
 import com.trafficwatch.server.auth.dto.RegisterRequest
 import com.trafficwatch.server.auth.dto.UserDto
 import com.trafficwatch.server.auth.exception.DuplicateEmailException
 import com.trafficwatch.server.auth.exception.DuplicatePhoneNumberException
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder
+import com.trafficwatch.server.auth.exception.InvalidCredentialsException
+import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.stereotype.Service
 
 @Service
 class AuthService(
     private val userRepository: UserRepository,
+    private val passwordEncoder: PasswordEncoder,
     private val jwtService: JwtService,
 ) {
-
-    // Instantiated directly rather than injected as a `PasswordEncoder` bean: this task's
-    // scope is limited to auth/ additions (no SecurityConfig yet). Task 5 introduces
-    // SecurityConfig and is the more natural home for a shared PasswordEncoder bean -
-    // at that point this should be replaced with a constructor-injected dependency.
-    private val passwordEncoder = BCryptPasswordEncoder()
 
     /**
      * Registers a new user.
@@ -57,6 +54,33 @@ class AuthService(
                 id = userId,
                 name = saved.name,
                 email = saved.email,
+            ),
+        )
+    }
+
+    /**
+     * Authenticates an existing user by email + password.
+     *
+     * Deliberately throws the exact same [InvalidCredentialsException] whether the email
+     * doesn't exist at all or the password doesn't match the stored hash - the client
+     * (and anyone probing the endpoint) must not be able to distinguish "no such account"
+     * from "wrong password" for a real account.
+     */
+    fun login(request: LoginRequest): AuthResponse {
+        val user = userRepository.findByEmail(request.email) ?: throw InvalidCredentialsException()
+
+        if (!passwordEncoder.matches(request.password, user.passwordHash)) {
+            throw InvalidCredentialsException()
+        }
+
+        val userId = requireNotNull(user.id) { "Persisted user must have a generated id" }
+
+        return AuthResponse(
+            token = jwtService.generateToken(userId),
+            user = UserDto(
+                id = userId,
+                name = user.name,
+                email = user.email,
             ),
         )
     }

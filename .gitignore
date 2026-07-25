@@ -85,3 +85,6 @@ lint/reports/
 
 # Android Profiling
 *.hprof
+
+# Superpowers scratch state
+.superpowers/

@@ -35,8 +35,9 @@ class AuthService(
      * concurrent registrations for the same phone/email can both pass these checks and
      * race to save(). The real safety net is the unique constraint added by Task 2's
      * migration, which will cause the losing save() to throw
-     * org.springframework.dao.DataIntegrityViolationException. Translating that exception
-     * into a friendly response is Task 6's job (a fallback case on top of this check).
+     * org.springframework.dao.DataIntegrityViolationException. That exception is
+     * translated into a friendly 409 response by
+     * `com.trafficwatch.server.common.GlobalExceptionHandler`'s fallback handler.
      */
     fun register(request: RegisterRequest): AuthResponse {
         if (userRepository.existsByPhoneNumber(request.phoneNumber)) {

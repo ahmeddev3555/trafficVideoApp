@@ -100,7 +100,7 @@ class AuthControllerTest {
     }
 
     @Test
-    fun `register with already-registered phone number returns 409`() {
+    fun `register with already-registered phone number returns 409 with ApiError body`() {
         every { userRepository.existsByPhoneNumber("03001234567") } returns true
 
         mockMvc.perform(
@@ -109,6 +109,8 @@ class AuthControllerTest {
                 .content(registerBody),
         )
             .andExpect(status().isConflict)
+            .andExpect(jsonPath("$.error").value("DUPLICATE_PHONE_NUMBER"))
+            .andExpect(jsonPath("$.message").value("Phone number already registered: 03001234567"))
     }
 
     @Test
@@ -122,6 +124,50 @@ class AuthControllerTest {
                 .content(registerBody),
         )
             .andExpect(status().isConflict)
+    }
+
+    @Test
+    fun `register when save races past the existence checks returns 409 via DataIntegrityViolationException fallback`() {
+        // Simulates the documented TOCTOU race: existsByPhoneNumber/existsByEmail both
+        // pass (say a concurrent request won in between), so AuthService proceeds to
+        // save(), and the DB's unique constraint throws DataIntegrityViolationException
+        // directly - not one of AuthService's friendlier typed exceptions. This must be
+        // caught by GlobalExceptionHandler's generic fallback, not bubble up as a 500.
+        every { userRepository.existsByPhoneNumber("03001234567") } returns false
+        every { userRepository.existsByEmail("jane@example.com") } returns false
+        every { userRepository.save(any()) } throws
+            org.springframework.dao.DataIntegrityViolationException("duplicate key value violates unique constraint")
+
+        mockMvc.perform(
+            post("/auth/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(registerBody),
+        )
+            .andExpect(status().isConflict)
+            .andExpect(jsonPath("$.error").value("DUPLICATE_RESOURCE"))
+            .andExpect(jsonPath("$.message").isNotEmpty)
+    }
+
+    @Test
+    fun `register with malformed phone number returns 400 with ApiError body`() {
+        val invalidBody = """
+            {
+              "name": "Jane Doe",
+              "phone_number": "not-a-phone",
+              "cnic": "1234567890123",
+              "email": "jane@example.com",
+              "password": "supersecret1"
+            }
+        """.trimIndent()
+
+        mockMvc.perform(
+            post("/auth/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(invalidBody),
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"))
+            .andExpect(jsonPath("$.message").value("Phone number must match 03XXXXXXXXX"))
     }
 
     @Test
@@ -152,7 +198,7 @@ class AuthControllerTest {
     }
 
     @Test
-    fun `login with unknown email returns 401`() {
+    fun `login with unknown email returns 401 with ApiError body`() {
         every { userRepository.findByEmail("nobody@example.com") } returns null
 
         val loginBody = """{"email": "nobody@example.com", "password": "whatever12"}"""
@@ -163,6 +209,8 @@ class AuthControllerTest {
                 .content(loginBody),
         )
             .andExpect(status().isUnauthorized)
+            .andExpect(jsonPath("$.error").value("INVALID_CREDENTIALS"))
+            .andExpect(jsonPath("$.message").value("Invalid email or password"))
     }
 
     @Test

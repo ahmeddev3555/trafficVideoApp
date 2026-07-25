@@ -17,3 +17,12 @@ spring:
     multipart:
       max-file-size: 500MB
       max-request-size: 500MB
+
+app:
+  storage:
+    # Relative to the server module's working directory (the `server/` folder, since
+    # this Gradle project's own root is `server/`, not the repo root) - resolves to
+    # `server/storage/videos`, matching the directory the repo's .gitignore expects.
+    # Not a secret, so a sane default lives here rather than requiring every
+    # environment to set it (unlike app.jwt.secret, which fails fast if unset).
+    video-directory: "storage/videos"

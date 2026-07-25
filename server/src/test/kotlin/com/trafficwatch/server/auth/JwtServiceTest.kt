@@ -32,11 +32,19 @@ class JwtServiceTest {
     fun `tampered token is rejected without throwing`() {
         val token = jwtService.generateToken(UUID.randomUUID())
 
-        // Flip the last character of the signature segment so the signature no longer
-        // matches, while keeping the string well-formed (three dot-separated segments).
-        val lastChar = token.last()
-        val flipped = if (lastChar == 'A') 'B' else 'A'
-        val tampered = token.dropLast(1) + flipped
+        // Flip the second-to-last character of the token (i.e. of the base64url-encoded
+        // signature segment) so the signature no longer matches, while keeping the string
+        // well-formed (three dot-separated segments). We deliberately avoid the very last
+        // character: a 256-bit HMAC-SHA256 signature base64url-encodes to 43 characters,
+        // and since 256 isn't a multiple of 6, that final character's 6-bit group carries
+        // only 4 real signature bits plus 2 unused padding bits - flipping it can sometimes
+        // change only the padding, leaving the decoded signature bytes unchanged and making
+        // the test flaky. The second-to-last character is a full 6-bit group of real
+        // signature bits, so flipping it is guaranteed to change the decoded signature.
+        val position = token.length - 2
+        val originalChar = token[position]
+        val flipped = if (originalChar == 'A') 'B' else 'A'
+        val tampered = token.substring(0, position) + flipped + token.substring(position + 1)
 
         assertThat(jwtService.isValid(tampered)).isFalse()
         assertThat(jwtService.extractUserId(tampered)).isNull()

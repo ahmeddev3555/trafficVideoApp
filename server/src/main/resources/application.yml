@@ -1,0 +1,19 @@
+server:
+  servlet:
+    context-path: /v1
+
+spring:
+  application:
+    name: server
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+  servlet:
+    multipart:
+      max-file-size: 500MB
+      max-request-size: 500MB

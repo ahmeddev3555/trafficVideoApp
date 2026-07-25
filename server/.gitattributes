@@ -1,0 +1,9 @@
+# https://help.github.com/articles/dealing-with-line-endings/
+
+# These are explicitly windows files and should use crlf
+*.bat           text eol=crlf
+
+# Unix launcher script must keep lf, even on windows checkouts
+/gradlew        text eol=lf
+
+gradle-wrapper.jar binary

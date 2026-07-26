@@ -193,4 +193,14 @@ class ReportControllerTest {
         mockMvc.perform(get("/reports"))
             .andExpect(status().isUnauthorized)
     }
+
+    @Test
+    fun `listReports with an unparseable status query param returns 400 with ApiError body`() {
+        mockMvc.perform(
+            get("/reports?status=BOGUS").header("Authorization", "Bearer ${bearerToken()}"),
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("INVALID_PARAMETER"))
+            .andExpect(jsonPath("$.message").exists())
+    }
 }

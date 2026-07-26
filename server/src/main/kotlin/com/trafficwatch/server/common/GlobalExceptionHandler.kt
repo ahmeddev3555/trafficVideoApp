@@ -10,6 +10,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.ResponseStatus
 import org.springframework.web.bind.annotation.RestControllerAdvice
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException
 
 /**
  * App-wide mapping from exceptions to a uniform [ApiError]`{error, message}` response
@@ -78,5 +79,25 @@ class GlobalExceptionHandler {
         val message = ex.bindingResult.fieldErrors.firstOrNull()?.defaultMessage
             ?: "Validation failed"
         return ApiError(error = "VALIDATION_ERROR", message = message)
+    }
+
+    /**
+     * Thrown by Spring's argument-resolution machinery when a `@RequestParam` can't be
+     * converted to its declared type - e.g. `GET /reports?status=BOGUS` against
+     * `ReportController.listReports`'s `status: ReportStatus?` param. Without this
+     * handler the request would fall through to Spring Boot's default `/error` body
+     * shape instead of this API's uniform [ApiError].
+     */
+    @ExceptionHandler(MethodArgumentTypeMismatchException::class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    fun handleMethodArgumentTypeMismatch(ex: MethodArgumentTypeMismatchException): ApiError {
+        val allowedValues = ex.requiredType?.enumConstants
+            ?.joinToString(", ") { it.toString() }
+        val message = if (allowedValues != null) {
+            "Invalid value for parameter '${ex.name}'; allowed values: $allowedValues"
+        } else {
+            "Invalid value for parameter '${ex.name}'"
+        }
+        return ApiError(error = "INVALID_PARAMETER", message = message)
     }
 }

@@ -1,21 +1,27 @@
 package com.trafficwatch.server.reports
 
+import com.trafficwatch.server.reports.exception.ReportNotFoundException
 import com.trafficwatch.server.storage.VideoStorageService
 import io.mockk.every
 import io.mockk.just
 import io.mockk.mockk
 import io.mockk.runs
+import io.mockk.slot
 import io.mockk.verify
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.springframework.data.domain.PageImpl
+import org.springframework.data.domain.PageRequest
+import org.springframework.data.domain.Pageable
 import org.springframework.mock.web.MockMultipartFile
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken
 import org.springframework.security.core.context.SecurityContextHolder
 import java.math.BigDecimal
 import java.time.LocalDateTime
+import java.time.OffsetDateTime
 import java.util.UUID
 
 /**
@@ -164,5 +170,139 @@ class ReportServiceTest {
 
         verify(exactly = 1) { videoStorageService.delete(storedPath) }
         verify(exactly = 2) { reportRepository.save(any()) }
+    }
+
+    // --- getStatus ---------------------------------------------------------------------
+
+    private fun sampleReport(
+        id: UUID,
+        userId: UUID,
+        status: ReportStatus = ReportStatus.PENDING,
+        licensePlate: String? = null,
+        confidence: BigDecimal? = null,
+        analysisMessage: String? = null,
+    ) = Report(
+        userId = userId,
+        videoPath = "/videos/$id.mp4",
+        latitude = BigDecimal("31.520370"),
+        longitude = BigDecimal("74.358749"),
+        accuracy = BigDecimal("5.00"),
+        altitude = BigDecimal("210.50"),
+        bearing = BigDecimal("87.30"),
+        speed = BigDecimal("12.40"),
+        recordedAt = LocalDateTime.of(2026, 7, 25, 10, 0, 0),
+        durationMs = 15000L,
+        deviceId = "device-123",
+        status = status,
+        licensePlate = licensePlate,
+        confidence = confidence,
+        analysisMessage = analysisMessage,
+        updatedAt = OffsetDateTime.parse("2026-07-25T10:05:00Z"),
+    ).apply { this.id = id }
+
+    @Test
+    fun `getStatus maps a report owned by the requester into a ReportStatusResponse`() {
+        val reportId = UUID.randomUUID()
+        val report = sampleReport(
+            id = reportId,
+            userId = currentUserId,
+            status = ReportStatus.CONFIRMED,
+            licensePlate = "LEA-1234",
+            confidence = BigDecimal("0.95"),
+            analysisMessage = "Plate matched",
+        )
+        every { reportRepository.findByIdAndUserId(reportId, currentUserId) } returns report
+
+        val response = reportService.getStatus(reportId, currentUserId)
+
+        assertThat(response.reportId).isEqualTo(reportId)
+        assertThat(response.status).isEqualTo(ReportStatus.CONFIRMED)
+        assertThat(response.licensePlate).isEqualTo("LEA-1234")
+        assertThat(response.confidence).isEqualTo(BigDecimal("0.95"))
+        assertThat(response.message).isEqualTo("Plate matched")
+        assertThat(response.updatedAt).isEqualTo(OffsetDateTime.parse("2026-07-25T10:05:00Z"))
+    }
+
+    @Test
+    fun `getStatus throws ReportNotFoundException when the report does not belong to the requester`() {
+        // findByIdAndUserId returns null both when the id belongs to a different user and
+        // when it does not exist at all - either way, getStatus must not leak which case it
+        // is, so it always throws the same ReportNotFoundException regardless of the reason.
+        val reportId = UUID.randomUUID()
+        val strangerId = UUID.randomUUID()
+        every { reportRepository.findByIdAndUserId(reportId, strangerId) } returns null
+
+        assertThatThrownBy { reportService.getStatus(reportId, strangerId) }
+            .isInstanceOf(ReportNotFoundException::class.java)
+    }
+
+    @Test
+    fun `getStatus proves per-user scoping - report created for user A is not visible to user B`() {
+        val userA = UUID.randomUUID()
+        val userB = UUID.randomUUID()
+        val reportId = UUID.randomUUID()
+        val reportOwnedByA = sampleReport(id = reportId, userId = userA)
+
+        every { reportRepository.findByIdAndUserId(reportId, userA) } returns reportOwnedByA
+        every { reportRepository.findByIdAndUserId(reportId, userB) } returns null
+
+        assertThat(reportService.getStatus(reportId, userA).reportId).isEqualTo(reportId)
+        assertThatThrownBy { reportService.getStatus(reportId, userB) }
+            .isInstanceOf(ReportNotFoundException::class.java)
+    }
+
+    // --- listReports --------------------------------------------------------------------
+
+    @Test
+    fun `listReports converts a 1-indexed page to a 0-indexed PageRequest`() {
+        val pageableSlot = slot<Pageable>()
+        every {
+            reportRepository.findByUserId(currentUserId, capture(pageableSlot))
+        } returns PageImpl(emptyList(), PageRequest.of(0, 20), 0)
+
+        reportService.listReports(currentUserId, page = 1, pageSize = 20, status = null)
+
+        assertThat(pageableSlot.captured.pageNumber).isEqualTo(0)
+        assertThat(pageableSlot.captured.pageSize).isEqualTo(20)
+    }
+
+    @Test
+    fun `listReports echoes back the 1-indexed page the client asked for, not the internal 0-indexed value`() {
+        every {
+            reportRepository.findByUserId(currentUserId, any())
+        } returns PageImpl(emptyList(), PageRequest.of(2, 20), 0)
+
+        val response = reportService.listReports(currentUserId, page = 3, pageSize = 20, status = null)
+
+        assertThat(response.page).isEqualTo(3)
+    }
+
+    @Test
+    fun `listReports without a status filter calls findByUserId and maps total and content`() {
+        val report = sampleReport(id = UUID.randomUUID(), userId = currentUserId)
+        every {
+            reportRepository.findByUserId(currentUserId, any())
+        } returns PageImpl(listOf(report), PageRequest.of(0, 20), 1)
+
+        val response = reportService.listReports(currentUserId, page = 1, pageSize = 20, status = null)
+
+        assertThat(response.total).isEqualTo(1)
+        assertThat(response.reports).hasSize(1)
+        assertThat(response.reports.first().reportId).isEqualTo(report.id)
+        verify(exactly = 0) { reportRepository.findByUserIdAndStatus(any(), any(), any()) }
+    }
+
+    @Test
+    fun `listReports with a status filter calls findByUserIdAndStatus instead of findByUserId`() {
+        val report = sampleReport(id = UUID.randomUUID(), userId = currentUserId, status = ReportStatus.CONFIRMED)
+        every {
+            reportRepository.findByUserIdAndStatus(currentUserId, ReportStatus.CONFIRMED, any())
+        } returns PageImpl(listOf(report), PageRequest.of(0, 20), 1)
+
+        val response = reportService.listReports(currentUserId, page = 1, pageSize = 20, status = ReportStatus.CONFIRMED)
+
+        assertThat(response.total).isEqualTo(1)
+        assertThat(response.reports.first().status).isEqualTo(ReportStatus.CONFIRMED)
+        verify(exactly = 0) { reportRepository.findByUserId(any(), any()) }
     }
 }

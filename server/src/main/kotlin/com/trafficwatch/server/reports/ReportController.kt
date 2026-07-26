@@ -1,7 +1,12 @@
 package com.trafficwatch.server.reports
 
+import com.trafficwatch.server.common.CurrentUser
+import com.trafficwatch.server.reports.dto.ReportListResponse
+import com.trafficwatch.server.reports.dto.ReportStatusResponse
 import com.trafficwatch.server.reports.dto.SubmitReportResponse
 import org.springframework.http.HttpStatus
+import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RequestPart
@@ -9,6 +14,7 @@ import org.springframework.web.bind.annotation.ResponseStatus
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.multipart.MultipartFile
 import java.math.BigDecimal
+import java.util.UUID
 
 /**
  * `POST /reports` - accepts a `multipart/form-data` request (not JSON): the video as a
@@ -47,4 +53,26 @@ class ReportController(
             durationMs = durationMs,
             deviceId = deviceId,
         )
+
+    /**
+     * `GET /reports/{reportId}/status` - per-user scoped; [ReportService.getStatus] throws
+     * `ReportNotFoundException` (mapped to 404 by `GlobalExceptionHandler`) if `reportId`
+     * doesn't belong to the authenticated user, or doesn't exist at all.
+     */
+    @GetMapping("/reports/{reportId}/status")
+    fun getReportStatus(@PathVariable reportId: UUID): ReportStatusResponse =
+        reportService.getStatus(reportId, CurrentUser.id())
+
+    /**
+     * `GET /reports` - `page` is 1-indexed on the wire (client sends `page=1` for the
+     * first page); [ReportService.listReports] handles the conversion to Spring Data's
+     * 0-indexed `PageRequest`. `status` is an optional filter to a single status value.
+     */
+    @GetMapping("/reports")
+    fun listReports(
+        @RequestParam("page", defaultValue = "1") page: Int,
+        @RequestParam("page_size", defaultValue = "20") pageSize: Int,
+        @RequestParam("status", required = false) status: ReportStatus?,
+    ): ReportListResponse =
+        reportService.listReports(CurrentUser.id(), page, pageSize, status)
 }

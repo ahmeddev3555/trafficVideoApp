@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest
 import org.springframework.dao.DataIntegrityViolationException
+import org.springframework.data.domain.PageRequest
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.test.context.ActiveProfiles
 import java.math.BigDecimal
@@ -102,6 +103,38 @@ class ReportRepositoryTest @Autowired constructor(
 
         assertThat(reportRepository.findByIdAndUserId(saved.id!!, owner.id!!)).isNotNull
         assertThat(reportRepository.findByIdAndUserId(saved.id!!, stranger.id!!)).isNull()
+    }
+
+    @Test
+    fun `findByUserId with a Pageable returns a Page with correct total and page size`() {
+        val user = newUser("03007777777", "g@example.com")
+        repeat(3) { reportRepository.saveAndFlush(newReport(user.id!!)) }
+
+        val firstPage = reportRepository.findByUserId(user.id!!, PageRequest.of(0, 2))
+
+        assertThat(firstPage.totalElements).isEqualTo(3)
+        assertThat(firstPage.content).hasSize(2)
+        assertThat(firstPage.totalPages).isEqualTo(2)
+
+        val secondPage = reportRepository.findByUserId(user.id!!, PageRequest.of(1, 2))
+        assertThat(secondPage.content).hasSize(1)
+    }
+
+    @Test
+    fun `findByUserIdAndStatus with a Pageable filters by status and paginates`() {
+        val user = newUser("03008888888", "h@example.com")
+        reportRepository.saveAndFlush(newReport(user.id!!, ReportStatus.PENDING))
+        reportRepository.saveAndFlush(newReport(user.id!!, ReportStatus.CONFIRMED))
+        reportRepository.saveAndFlush(newReport(user.id!!, ReportStatus.CONFIRMED))
+
+        val confirmedPage = reportRepository.findByUserIdAndStatus(
+            user.id!!,
+            ReportStatus.CONFIRMED,
+            PageRequest.of(0, 10),
+        )
+
+        assertThat(confirmedPage.totalElements).isEqualTo(2)
+        assertThat(confirmedPage.content).allMatch { it.status == ReportStatus.CONFIRMED }
     }
 
     @Test

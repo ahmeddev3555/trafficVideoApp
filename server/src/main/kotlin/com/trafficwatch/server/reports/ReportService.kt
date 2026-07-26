@@ -1,14 +1,19 @@
 package com.trafficwatch.server.reports
 
 import com.trafficwatch.server.common.CurrentUser
+import com.trafficwatch.server.reports.dto.ReportListResponse
+import com.trafficwatch.server.reports.dto.ReportStatusResponse
 import com.trafficwatch.server.reports.dto.SubmitReportResponse
+import com.trafficwatch.server.reports.exception.ReportNotFoundException
 import com.trafficwatch.server.storage.VideoStorageService
+import org.springframework.data.domain.PageRequest
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.multipart.MultipartFile
 import java.math.BigDecimal
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import java.util.UUID
 
 /**
  * Matches the Android client's `recorded_at` format exactly, including its known bug:
@@ -93,6 +98,53 @@ class ReportService(
             reportId = reportId,
             status = saved.status,
             message = "Report submitted successfully",
+        )
+    }
+
+    /**
+     * Backs `GET /reports/{reportId}/status`. Uses [ReportRepository.findByIdAndUserId] -
+     * the same per-user scoping guard `submit()`'s sibling endpoints rely on - so a report
+     * id that belongs to a different user is indistinguishable from one that doesn't exist
+     * at all: both throw [ReportNotFoundException], which `GlobalExceptionHandler` maps to
+     * a 404, never a 403 or another user's data.
+     */
+    fun getStatus(reportId: UUID, currentUserId: UUID): ReportStatusResponse {
+        val report = reportRepository.findByIdAndUserId(reportId, currentUserId)
+            ?: throw ReportNotFoundException(reportId)
+        return report.toStatusResponse()
+    }
+
+    /**
+     * Backs `GET /reports`. `page` is the 1-indexed page number as sent by the Android
+     * client; Spring Data's [PageRequest] is 0-indexed, so `page - 1` is what's actually
+     * passed to the repository. [ReportListResponse.page] echoes back the original
+     * 1-indexed `page` argument, not the internal 0-indexed value, so the client sees back
+     * exactly what it asked for.
+     */
+    fun listReports(currentUserId: UUID, page: Int, pageSize: Int, status: ReportStatus?): ReportListResponse {
+        val pageable = PageRequest.of(page - 1, pageSize)
+        val resultPage = if (status != null) {
+            reportRepository.findByUserIdAndStatus(currentUserId, status, pageable)
+        } else {
+            reportRepository.findByUserId(currentUserId, pageable)
+        }
+
+        return ReportListResponse(
+            reports = resultPage.content.map { it.toStatusResponse() },
+            total = resultPage.totalElements,
+            page = page,
+        )
+    }
+
+    private fun Report.toStatusResponse(): ReportStatusResponse {
+        val reportId = requireNotNull(id) { "Report must have a generated id" }
+        return ReportStatusResponse(
+            reportId = reportId,
+            status = status,
+            licensePlate = licensePlate,
+            confidence = confidence,
+            message = analysisMessage,
+            updatedAt = updatedAt,
         )
     }
 }

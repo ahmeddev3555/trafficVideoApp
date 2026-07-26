@@ -3,6 +3,7 @@ package com.trafficwatch.server.common
 import com.trafficwatch.server.auth.exception.DuplicateEmailException
 import com.trafficwatch.server.auth.exception.DuplicatePhoneNumberException
 import com.trafficwatch.server.auth.exception.InvalidCredentialsException
+import com.trafficwatch.server.reports.exception.ReportNotFoundException
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
 import org.springframework.web.bind.MethodArgumentNotValidException
@@ -54,6 +55,16 @@ class GlobalExceptionHandler {
     @ResponseStatus(HttpStatus.UNAUTHORIZED)
     fun handleInvalidCredentials(ex: InvalidCredentialsException): ApiError =
         ApiError(error = "INVALID_CREDENTIALS", message = ex.message ?: "Invalid email or password")
+
+    /**
+     * Thrown by `ReportService.getStatus()` when the requested report either belongs to a
+     * different user or does not exist at all - both cases are indistinguishable 404s so
+     * a foreign report id never leaks whether it exists for someone else.
+     */
+    @ExceptionHandler(ReportNotFoundException::class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    fun handleReportNotFound(ex: ReportNotFoundException): ApiError =
+        ApiError(error = "REPORT_NOT_FOUND", message = ex.message ?: "Report not found")
 
     /**
      * Thrown by `@Valid` on a `@RequestBody` when `jakarta.validation` constraints fail

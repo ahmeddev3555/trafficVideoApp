@@ -36,7 +36,8 @@ class ReportServiceTest {
 
     private val reportRepository = mockk<ReportRepository>()
     private val videoStorageService = mockk<VideoStorageService>()
-    private val reportService = ReportService(reportRepository, videoStorageService)
+    private val reportAnalysisJob = mockk<ReportAnalysisJob>()
+    private val reportService = ReportService(reportRepository, videoStorageService, reportAnalysisJob)
 
     private val currentUserId = UUID.randomUUID()
 
@@ -76,6 +77,7 @@ class ReportServiceTest {
         val fixedId = UUID.randomUUID()
         stubSaveAssigningId(fixedId)
         every { videoStorageService.store(fixedId, any()) } returns "$fixedId.mp4"
+        every { reportAnalysisJob.analyze(fixedId) } just runs
 
         val response = reportService.submit(
             video = sampleVideo(),
@@ -101,6 +103,10 @@ class ReportServiceTest {
         assertThat(response.status).isEqualTo(ReportStatus.PENDING)
 
         verify(exactly = 1) { videoStorageService.store(fixedId, any()) }
+        // The analysis job is kicked off with the real generated id, after both saves
+        // have succeeded - proves submit() actually wires the real job in rather than
+        // leaving Task 9's no-op behavior (report stuck PENDING forever).
+        verify(exactly = 1) { reportAnalysisJob.analyze(fixedId) }
     }
 
     @Test
@@ -108,6 +114,7 @@ class ReportServiceTest {
         val fixedId = UUID.randomUUID()
         stubSaveAssigningId(fixedId)
         every { videoStorageService.store(any(), any()) } returns "$fixedId.mp4"
+        every { reportAnalysisJob.analyze(any()) } just runs
 
         reportService.submit(
             video = sampleVideo(),
@@ -170,6 +177,9 @@ class ReportServiceTest {
 
         verify(exactly = 1) { videoStorageService.delete(storedPath) }
         verify(exactly = 2) { reportRepository.save(any()) }
+        // The failure happens before the analysis job would be kicked off, so it must
+        // never fire for a report that was never durably persisted with its real video path.
+        verify(exactly = 0) { reportAnalysisJob.analyze(any()) }
     }
 
     // --- getStatus ---------------------------------------------------------------------

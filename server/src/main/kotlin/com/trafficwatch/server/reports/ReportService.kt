@@ -29,6 +29,7 @@ private val RECORDED_AT_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPatte
 class ReportService(
     private val reportRepository: ReportRepository,
     private val videoStorageService: VideoStorageService,
+    private val reportAnalysisJob: ReportAnalysisJob,
 ) {
 
     /**
@@ -48,8 +49,12 @@ class ReportService(
      * otherwise be orphaned on disk with no DB row ever pointing to it, so that path is
      * explicitly deleted before the original exception is rethrown.
      *
-     * Does not invoke any analysis job - a later task wires that call into this method
-     * once the real job exists.
+     * Once the report is safely persisted, [ReportAnalysisJob.analyze] is kicked off to
+     * simulate CV analysis. That call is `@Async`, so it returns immediately - `submit()`
+     * itself never waits on it, and the HTTP response always carries `PENDING`. Since it's
+     * only triggered here (after both saves succeed), a failure that rolls back the
+     * transaction or leaves the video orphaned never has a stray analysis job running
+     * against a report that doesn't durably exist.
      */
     @Transactional
     fun submit(
@@ -93,6 +98,8 @@ class ReportService(
             videoStorageService.delete(videoPath)
             throw ex
         }
+
+        reportAnalysisJob.analyze(reportId)
 
         return SubmitReportResponse(
             reportId = reportId,

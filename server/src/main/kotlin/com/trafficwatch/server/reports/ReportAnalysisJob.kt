@@ -33,6 +33,16 @@ class ReportAnalysisJob(
      */
     @Async("analysisExecutor")
     fun analyze(reportId: UUID) {
+        // This sleep is not just "simulated analysis time": ReportService.submit() calls
+        // analyze() from inside its own @Transactional block, before that transaction has
+        // committed. The only reason applyOutcome()'s findById() below reliably sees the
+        // row is that this sleep - at any realistic delay value (test: 50-75ms, prod
+        // default: ~10s) - gives the caller's transaction time to commit first. If this
+        // sleep is ever removed, reordered to run after a repository read, or configured
+        // down near zero (app.analysis.delay-ms), findById() can race the commit and miss
+        // the not-yet-visible row - applyOutcome()'s "report no longer found" branch would
+        // then swallow that as a log warning, silently leaving the report stuck PENDING
+        // forever. This must remain the first statement in this method.
         Thread.sleep(analysisProperties.delayMs)
         applyOutcome(reportId, Random.nextInt(100))
     }

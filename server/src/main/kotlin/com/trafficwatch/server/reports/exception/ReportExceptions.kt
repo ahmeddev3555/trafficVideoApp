@@ -11,3 +11,13 @@ import java.util.UUID
  * 404 by `com.trafficwatch.server.common.GlobalExceptionHandler`.
  */
 class ReportNotFoundException(reportId: UUID) : RuntimeException("Report not found: $reportId")
+
+/**
+ * Thrown by `ReportService.listReports()` when `page` or `page_size` is less than 1 - both
+ * are 1-indexed/positive-only on the wire. Without this guard, `page - 1` can go negative and
+ * reach `PageRequest.of` directly, which throws a plain `IllegalArgumentException` with no
+ * handler in `GlobalExceptionHandler`, falling through to Spring Boot's default `/error` body
+ * instead of this API's uniform `ApiError` shape. Mapped to HTTP 400 by
+ * `com.trafficwatch.server.common.GlobalExceptionHandler`.
+ */
+class InvalidPaginationException(message: String) : RuntimeException(message)

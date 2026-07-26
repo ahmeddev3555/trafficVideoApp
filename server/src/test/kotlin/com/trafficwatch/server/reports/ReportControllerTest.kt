@@ -6,6 +6,7 @@ import com.trafficwatch.server.config.SecurityConfig
 import com.trafficwatch.server.reports.dto.ReportListResponse
 import com.trafficwatch.server.reports.dto.ReportStatusResponse
 import com.trafficwatch.server.reports.dto.SubmitReportResponse
+import com.trafficwatch.server.reports.exception.InvalidPaginationException
 import com.trafficwatch.server.reports.exception.ReportNotFoundException
 import io.mockk.every
 import io.mockk.mockk
@@ -257,6 +258,39 @@ class ReportControllerTest {
         )
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.error").value("INVALID_PARAMETER"))
+            .andExpect(jsonPath("$.message").exists())
+    }
+
+    // Task 6's whole point was a uniform ApiError{error, message} shape across every
+    // endpoint - page=0 (or a negative page/page_size) must not fall through to Spring
+    // Boot's default /error body via an unhandled IllegalArgumentException. The service is
+    // mocked to throw InvalidPaginationException the way the real ReportService.listReports
+    // does, proving GlobalExceptionHandler's mapping to a 400 ApiError.
+    @Test
+    fun `listReports with page=0 returns 400 with ApiError body`() {
+        every {
+            reportService.listReports(any(), 0, any(), any())
+        } throws InvalidPaginationException("page must be at least 1, got 0")
+
+        mockMvc.perform(
+            get("/reports?page=0").header("Authorization", "Bearer ${bearerToken()}"),
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("INVALID_PAGINATION"))
+            .andExpect(jsonPath("$.message").exists())
+    }
+
+    @Test
+    fun `listReports with page_size=0 returns 400 with ApiError body`() {
+        every {
+            reportService.listReports(any(), any(), 0, any())
+        } throws InvalidPaginationException("page_size must be at least 1, got 0")
+
+        mockMvc.perform(
+            get("/reports?page_size=0").header("Authorization", "Bearer ${bearerToken()}"),
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("INVALID_PAGINATION"))
             .andExpect(jsonPath("$.message").exists())
     }
 }

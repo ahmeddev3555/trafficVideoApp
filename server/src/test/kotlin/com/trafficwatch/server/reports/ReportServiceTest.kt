@@ -1,5 +1,6 @@
 package com.trafficwatch.server.reports
 
+import com.trafficwatch.server.reports.exception.InvalidPaginationException
 import com.trafficwatch.server.reports.exception.ReportNotFoundException
 import com.trafficwatch.server.storage.VideoStorageService
 import io.mockk.every
@@ -16,6 +17,7 @@ import org.junit.jupiter.api.Test
 import org.springframework.data.domain.PageImpl
 import org.springframework.data.domain.PageRequest
 import org.springframework.data.domain.Pageable
+import org.springframework.data.domain.Sort
 import org.springframework.mock.web.MockMultipartFile
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken
 import org.springframework.security.core.context.SecurityContextHolder
@@ -274,6 +276,51 @@ class ReportServiceTest {
 
         assertThat(pageableSlot.captured.pageNumber).isEqualTo(0)
         assertThat(pageableSlot.captured.pageSize).isEqualTo(20)
+    }
+
+    // Guards against a client sending page=0 (or negative): page - 1 would otherwise go
+    // negative and reach PageRequest.of directly, which throws a plain
+    // IllegalArgumentException with no handler in GlobalExceptionHandler - falling through
+    // to Spring Boot's default /error body instead of this API's uniform ApiError shape.
+    @Test
+    fun `listReports throws InvalidPaginationException when page is less than 1`() {
+        assertThatThrownBy { reportService.listReports(currentUserId, page = 0, pageSize = 20, status = null) }
+            .isInstanceOf(InvalidPaginationException::class.java)
+
+        assertThatThrownBy { reportService.listReports(currentUserId, page = -1, pageSize = 20, status = null) }
+            .isInstanceOf(InvalidPaginationException::class.java)
+
+        verify(exactly = 0) { reportRepository.findByUserId(any(), any<Pageable>()) }
+    }
+
+    @Test
+    fun `listReports throws InvalidPaginationException when page_size is less than 1`() {
+        assertThatThrownBy { reportService.listReports(currentUserId, page = 1, pageSize = 0, status = null) }
+            .isInstanceOf(InvalidPaginationException::class.java)
+
+        assertThatThrownBy { reportService.listReports(currentUserId, page = 1, pageSize = -5, status = null) }
+            .isInstanceOf(InvalidPaginationException::class.java)
+
+        verify(exactly = 0) { reportRepository.findByUserId(any(), any<Pageable>()) }
+    }
+
+    // Without an explicit Sort, page-to-page ordering is DB-heap-dependent - rows can
+    // duplicate or be skipped across pages under Postgres. Asserts the service always
+    // requests a stable, newest-first order regardless of which repository method it calls.
+    @Test
+    fun `listReports requests results ordered newest-first by createdAt`() {
+        val pageableSlot = slot<Pageable>()
+        every {
+            reportRepository.findByUserId(currentUserId, capture(pageableSlot))
+        } returns PageImpl(emptyList(), PageRequest.of(0, 20), 0)
+
+        reportService.listReports(currentUserId, page = 1, pageSize = 20, status = null)
+
+        val sort = pageableSlot.captured.sort
+        assertThat(sort.isSorted).isTrue()
+        val order = sort.getOrderFor("createdAt")
+        assertThat(order).isNotNull
+        assertThat(order!!.direction).isEqualTo(Sort.Direction.DESC)
     }
 
     @Test

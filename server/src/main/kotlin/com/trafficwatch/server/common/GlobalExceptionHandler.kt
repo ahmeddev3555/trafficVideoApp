@@ -3,6 +3,7 @@ package com.trafficwatch.server.common
 import com.trafficwatch.server.auth.exception.DuplicateEmailException
 import com.trafficwatch.server.auth.exception.DuplicatePhoneNumberException
 import com.trafficwatch.server.auth.exception.InvalidCredentialsException
+import com.trafficwatch.server.reports.exception.InvalidPaginationException
 import com.trafficwatch.server.reports.exception.ReportNotFoundException
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
@@ -100,4 +101,16 @@ class GlobalExceptionHandler {
         }
         return ApiError(error = "INVALID_PARAMETER", message = message)
     }
+
+    /**
+     * Thrown by `ReportService.listReports()` when `page` or `page_size` is less than 1 -
+     * e.g. `GET /reports?page=0`. Without this handler, an out-of-range `page` would
+     * otherwise reach `PageRequest.of` as a negative index, throwing a plain
+     * `IllegalArgumentException` with no handler here and falling through to Spring Boot's
+     * default `/error` body instead of this API's uniform [ApiError].
+     */
+    @ExceptionHandler(InvalidPaginationException::class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    fun handleInvalidPagination(ex: InvalidPaginationException): ApiError =
+        ApiError(error = "INVALID_PAGINATION", message = ex.message ?: "Invalid pagination parameters")
 }

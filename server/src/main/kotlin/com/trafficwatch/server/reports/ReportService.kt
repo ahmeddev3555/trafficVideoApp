@@ -4,9 +4,11 @@ import com.trafficwatch.server.common.CurrentUser
 import com.trafficwatch.server.reports.dto.ReportListResponse
 import com.trafficwatch.server.reports.dto.ReportStatusResponse
 import com.trafficwatch.server.reports.dto.SubmitReportResponse
+import com.trafficwatch.server.reports.exception.InvalidPaginationException
 import com.trafficwatch.server.reports.exception.ReportNotFoundException
 import com.trafficwatch.server.storage.VideoStorageService
 import org.springframework.data.domain.PageRequest
+import org.springframework.data.domain.Sort
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.multipart.MultipartFile
@@ -127,9 +129,28 @@ class ReportService(
      * passed to the repository. [ReportListResponse.page] echoes back the original
      * 1-indexed `page` argument, not the internal 0-indexed value, so the client sees back
      * exactly what it asked for.
+     *
+     * Both `page` and `pageSize` must be at least 1: `page - 1` going negative (e.g.
+     * `page=0`) would otherwise reach [PageRequest.of] directly, which throws a plain
+     * `IllegalArgumentException` with no handler in `GlobalExceptionHandler` - falling
+     * through to Spring Boot's default `/error` body instead of this API's uniform
+     * `ApiError` shape. [InvalidPaginationException] is thrown instead so it can be mapped
+     * to a proper 400 there.
+     *
+     * Results are explicitly ordered newest-first (`createdAt` descending) rather than
+     * left to whatever order the database happens to return rows in - without an explicit
+     * `Sort`, page-to-page ordering is DB-heap-dependent and rows can duplicate or be
+     * skipped across pages.
      */
     fun listReports(currentUserId: UUID, page: Int, pageSize: Int, status: ReportStatus?): ReportListResponse {
-        val pageable = PageRequest.of(page - 1, pageSize)
+        if (page < 1) {
+            throw InvalidPaginationException("page must be at least 1, got $page")
+        }
+        if (pageSize < 1) {
+            throw InvalidPaginationException("page_size must be at least 1, got $pageSize")
+        }
+
+        val pageable = PageRequest.of(page - 1, pageSize, Sort.by(Sort.Direction.DESC, "createdAt"))
         val resultPage = if (status != null) {
             reportRepository.findByUserIdAndStatus(currentUserId, status, pageable)
         } else {

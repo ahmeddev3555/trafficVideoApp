@@ -86,5 +86,12 @@ lint/reports/
 # Android Profiling
 *.hprof
 
-# Superpowers brainstorming session artifacts
+# Superpowers brainstorming session artifacts / scratch state
 .superpowers/
+
+# Server-specific ignores
+server/src/main/resources/application-local.yml
+server/.env
+server/storage/videos/*
+!server/storage/videos/.gitkeep
+!server/gradle/wrapper/gradle-wrapper.jar

@@ -1,0 +1,15 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/trafficwatch
+    username: trafficwatch
+    password: trafficwatch_dev_password
+    driverClassName: org.postgresql.Driver
+
+app:
+  jwt:
+    # IMPORTANT: Replace this with a real secret for development/production.
+    # Example: use `openssl rand -base64 32` to generate a secure random secret.
+    secret: "replace-with-a-real-secret-change-me-now"
+    expiration-days: 30
+  storage:
+    video-directory: "storage/videos"

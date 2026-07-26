@@ -315,4 +315,33 @@ class ReportServiceTest {
         assertThat(response.reports.first().status).isEqualTo(ReportStatus.CONFIRMED)
         verify(exactly = 0) { reportRepository.findByUserId(any(), any()) }
     }
+
+    // Every listReports test above only ever exercises a single user, so none of them
+    // actually prove per-user isolation the way `getStatus proves per-user scoping` does
+    // for the sibling endpoint. This mirrors that test's shape for the list endpoint: two
+    // distinct users, each with their own repository stub, proving user B's response never
+    // carries user A's report (and vice versa) rather than merely that pagination/filtering
+    // works for one user.
+    @Test
+    fun `listReports proves per-user scoping - user B's list never includes user A's reports`() {
+        val userA = UUID.randomUUID()
+        val userB = UUID.randomUUID()
+        val reportA = sampleReport(id = UUID.randomUUID(), userId = userA)
+        val reportB = sampleReport(id = UUID.randomUUID(), userId = userB)
+
+        every {
+            reportRepository.findByUserId(userA, any())
+        } returns PageImpl(listOf(reportA), PageRequest.of(0, 20), 1)
+        every {
+            reportRepository.findByUserId(userB, any())
+        } returns PageImpl(listOf(reportB), PageRequest.of(0, 20), 1)
+
+        val responseA = reportService.listReports(userA, page = 1, pageSize = 20, status = null)
+        val responseB = reportService.listReports(userB, page = 1, pageSize = 20, status = null)
+
+        assertThat(responseA.reports.map { it.reportId }).containsExactly(reportA.id)
+        assertThat(responseB.reports.map { it.reportId }).containsExactly(reportB.id)
+        assertThat(responseA.reports.map { it.reportId }).doesNotContain(reportB.id)
+        assertThat(responseB.reports.map { it.reportId }).doesNotContain(reportA.id)
+    }
 }

@@ -136,6 +136,36 @@ class ReportControllerTest {
             .andExpect(jsonPath("$.updated_at").exists())
     }
 
+    // Every other test in this class matches the userId argument passed to the mocked
+    // service with `any()`, so none of them actually prove that the specific user id
+    // embedded in *this request's* bearer token is what reaches the service - only that
+    // *some* valid token produces a 200/201. This exercises the real JwtAuthFilter + real
+    // JwtService (both @Import-ed, not mocked) end to end and captures the exact userId
+    // CurrentUser.id() resolved, proving it's the token's own subject and not some other
+    // value.
+    @Test
+    fun `getReportStatus passes the userId embedded in the bearer token to the service`() {
+        val reportId = UUID.randomUUID()
+        val userId = UUID.randomUUID()
+        val userIdSlot = slot<UUID>()
+        every { reportService.getStatus(reportId, capture(userIdSlot)) } returns ReportStatusResponse(
+            reportId = reportId,
+            status = ReportStatus.PENDING,
+            licensePlate = null,
+            confidence = null,
+            message = null,
+            updatedAt = OffsetDateTime.now(),
+        )
+
+        mockMvc.perform(
+            get("/reports/$reportId/status").header("Authorization", "Bearer ${jwtService.generateToken(userId)}"),
+        ).andExpect(status().isOk)
+
+        assert(userIdSlot.captured == userId) {
+            "expected service to be called with the token's own user id $userId, got ${userIdSlot.captured}"
+        }
+    }
+
     @Test
     fun `getReportStatus for a report belonging to another user returns 404 with ApiError body`() {
         val reportId = UUID.randomUUID()
@@ -186,6 +216,32 @@ class ReportControllerTest {
             .andExpect(jsonPath("$.page").value(2))
 
         verify(exactly = 1) { reportService.listReports(any(), 2, 5, ReportStatus.PENDING) }
+    }
+
+    // Two separate requests with two different users' tokens, both handled by the same
+    // MockMvc/filter chain instance - proves the per-request SecurityContext (and thus
+    // CurrentUser.id()) doesn't leak or get stuck across requests, which the single-user
+    // pagination/filter tests above can't show since they never vary the token's subject.
+    @Test
+    fun `listReports scopes to the specific user embedded in each request's own bearer token`() {
+        val userA = UUID.randomUUID()
+        val userB = UUID.randomUUID()
+        val userIdSlot = slot<UUID>()
+        every {
+            reportService.listReports(capture(userIdSlot), any(), any(), any())
+        } returns ReportListResponse(reports = emptyList(), total = 0, page = 1)
+
+        mockMvc.perform(get("/reports").header("Authorization", "Bearer ${jwtService.generateToken(userA)}"))
+            .andExpect(status().isOk)
+        assert(userIdSlot.captured == userA) {
+            "expected first request to be scoped to userA $userA, got ${userIdSlot.captured}"
+        }
+
+        mockMvc.perform(get("/reports").header("Authorization", "Bearer ${jwtService.generateToken(userB)}"))
+            .andExpect(status().isOk)
+        assert(userIdSlot.captured == userB) {
+            "expected second request to be scoped to userB $userB, got ${userIdSlot.captured}"
+        }
     }
 
     @Test

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Debug-variant override of src/main/res/xml/network_security_config.xml (Android's
+    resource merging picks this one for debug builds, the main one for release). Permits
+    cleartext to any host so the debug build can point DEV_SERVER_URL (see
+    app/build.gradle.kts, sourced from the gitignored local.properties) at a plain-HTTP
+    local dev server without editing this file per developer/network. Never packaged into
+    a release build.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

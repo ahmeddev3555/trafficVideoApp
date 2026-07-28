@@ -4,7 +4,6 @@
     <domain-config cleartextTrafficPermitted="false">
         <domain includeSubdomains="true">trafficwatch.example.com</domain>
     </domain-config>
-    <!-- Allow cleartext for local dev/mock testing only in debug builds -->
     <debug-overrides>
         <trust-anchors>
             <certificates src="user" />

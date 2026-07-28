@@ -2,7 +2,6 @@ package com.trafficwatch.app.di
 
 import com.trafficwatch.app.BuildConfig
 import com.trafficwatch.app.core.data.remote.ApiService
-import com.trafficwatch.app.core.data.remote.MockApiService
 import com.trafficwatch.app.core.data.remote.interceptor.AuthInterceptor
 import dagger.Module
 import dagger.Provides
@@ -46,8 +45,6 @@ object NetworkModule {
 
     @Provides
     @Singleton
-    fun provideApiService(mockApiService: MockApiService): ApiService =
-        mockApiService
-    // TODO: swap to real Retrofit once the backend is live:
-    // fun provideApiService(retrofit: Retrofit): ApiService = retrofit.create(ApiService::class.java)
+    fun provideApiService(retrofit: Retrofit): ApiService =
+        retrofit.create(ApiService::class.java)
 }

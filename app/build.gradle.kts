@@ -1,9 +1,25 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.kapt)
     alias(libs.plugins.hilt)
 }
+
+// Debug builds point at a local dev server via `DEV_SERVER_URL` in the gitignored
+// `local.properties` (same file that holds `sdk.dir`), so no developer's machine-specific
+// IP ever gets hardcoded/committed. Falls back to the emulator-reachable loopback alias if
+// unset - for a physical device, either set DEV_SERVER_URL to the host's LAN IP, or run
+// `adb reverse tcp:8080 tcp:8080` and leave this default (localhost then works over USB
+// regardless of Wi-Fi network).
+val localProperties = Properties().apply {
+    val localPropertiesFile = rootProject.file("local.properties")
+    if (localPropertiesFile.exists()) {
+        localPropertiesFile.inputStream().use { load(it) }
+    }
+}
+val devServerUrl = localProperties.getProperty("DEV_SERVER_URL") ?: "http://10.0.2.2:8080/v1/"
 
 android {
     namespace = "com.trafficwatch.app"
@@ -33,7 +49,7 @@ android {
         debug {
             isDebuggable = true
             applicationIdSuffix = ".debug"
-            buildConfigField("String", "BASE_URL", "\"https://mock.trafficwatch.example.com/v1/\"")
+            buildConfigField("String", "BASE_URL", "\"$devServerUrl\"")
         }
     }
 

@@ -2,7 +2,12 @@ package com.trafficwatch.app.feature.upload
 
 import android.content.Context
 import androidx.hilt.work.HiltWorker
+import androidx.work.BackoffPolicy
+import androidx.work.Constraints
 import androidx.work.CoroutineWorker
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequest
+import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.trafficwatch.app.core.data.remote.ApiService
@@ -23,6 +28,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 
 @HiltWorker
 class UploadWorker @AssistedInject constructor(
@@ -120,5 +126,31 @@ class UploadWorker @AssistedInject constructor(
             KEY_RECORDED_AT to recordingStartedAt,
             KEY_DURATION_MS to durationMs
         )
+
+        /** Unique WorkManager work name for [reportId], so retries/re-enqueues can be deduped. */
+        fun uniqueWorkName(reportId: String): String = "upload_$reportId"
+
+        /**
+         * [requireWifiOnly] true maps to [NetworkType.UNMETERED] (the safe default for every
+         * upload attempt); false maps to [NetworkType.CONNECTED] (any network), used only when
+         * the user has explicitly confirmed uploading over cellular data.
+         */
+        fun buildRequest(
+            reportId: String,
+            videoPath: String,
+            location: LocationData,
+            recordingStartedAt: Long,
+            durationMs: Long,
+            requireWifiOnly: Boolean
+        ): OneTimeWorkRequest {
+            val inputData = buildInputData(reportId, videoPath, location, recordingStartedAt, durationMs)
+            val networkType = if (requireWifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED
+            val constraints = Constraints.Builder().setRequiredNetworkType(networkType).build()
+            return OneTimeWorkRequestBuilder<UploadWorker>()
+                .setInputData(inputData)
+                .setConstraints(constraints)
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.SECONDS)
+                .build()
+        }
     }
 }

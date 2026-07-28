@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.trafficwatch.app.core.domain.model.LocationData
+import com.trafficwatch.app.core.ui.components.CellularConfirmDialog
 import java.io.File
 
 @Composable
@@ -54,6 +55,13 @@ fun UploadScreen(
             kotlinx.coroutines.delay(1500)
             onUploadSuccess()
         }
+    }
+
+    if (uiState.showCellularPrompt) {
+        CellularConfirmDialog(
+            onConfirm = viewModel::confirmCellularUpload,
+            onDismiss = viewModel::dismissCellularPrompt
+        )
     }
 
     Scaffold { padding ->

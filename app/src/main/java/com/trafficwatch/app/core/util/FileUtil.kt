@@ -38,6 +38,8 @@ class FileUtil @Inject constructor(@ApplicationContext private val context: Cont
         if (file.exists()) file.delete()
     }
 
+    fun exists(path: String): Boolean = File(path).exists()
+
     fun formatFileSize(bytes: Long): String {
         if (bytes <= 0) return "0 B"
         val units = arrayOf("B", "KB", "MB", "GB")

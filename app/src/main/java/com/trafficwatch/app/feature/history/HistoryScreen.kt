@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Card
@@ -24,13 +25,17 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.SuggestionChipDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -41,6 +46,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.trafficwatch.app.core.domain.model.Report
 import com.trafficwatch.app.core.domain.model.ReportStatus
+import com.trafficwatch.app.core.ui.components.CellularConfirmDialog
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -55,8 +61,24 @@ fun HistoryScreen(
 ) {
     val reports by viewModel.reports.collectAsStateWithLifecycle()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(uiState.error) {
+        uiState.error?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.clearError()
+        }
+    }
+
+    uiState.pendingCellularReport?.let {
+        CellularConfirmDialog(
+            onConfirm = viewModel::confirmCellularRetry,
+            onDismiss = viewModel::dismissCellularPrompt
+        )
+    }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("My Reports") },
@@ -100,7 +122,11 @@ fun HistoryScreen(
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp)
                 ) {
                     items(reports, key = { it.id }) { report ->
-                        ReportCard(report = report, onClick = { onReportClick(report.id) })
+                        ReportCard(
+                            report = report,
+                            onClick = { onReportClick(report.id) },
+                            onRetry = { viewModel.retryUpload(report) }
+                        )
                     }
                 }
             }
@@ -109,7 +135,7 @@ fun HistoryScreen(
 }
 
 @Composable
-private fun ReportCard(report: Report, onClick: () -> Unit) {
+private fun ReportCard(report: Report, onClick: () -> Unit, onRetry: () -> Unit) {
     Card(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
@@ -126,7 +152,14 @@ private fun ReportCard(report: Report, onClick: () -> Unit) {
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium
                 )
-                StatusChip(report.status)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (report.status == ReportStatus.UPLOADING || report.status == ReportStatus.UPLOAD_FAILED) {
+                        IconButton(onClick = onRetry) {
+                            Icon(Icons.Default.CloudUpload, contentDescription = "Retry upload")
+                        }
+                    }
+                    StatusChip(report.status)
+                }
             }
             Spacer(Modifier.height(8.dp))
             Text(

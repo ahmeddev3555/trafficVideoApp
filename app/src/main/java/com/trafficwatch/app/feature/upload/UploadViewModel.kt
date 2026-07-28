@@ -3,16 +3,14 @@ package com.trafficwatch.app.feature.upload
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.work.BackoffPolicy
-import androidx.work.Constraints
-import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.ExistingWorkPolicy
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.trafficwatch.app.core.data.repository.ReportRepository
 import com.trafficwatch.app.core.domain.model.LocationData
 import com.trafficwatch.app.core.domain.model.Report
 import com.trafficwatch.app.core.domain.model.ReportStatus
+import com.trafficwatch.app.core.util.NetworkMonitor
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,7 +19,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.UUID
-import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
 sealed class UploadState {
@@ -32,19 +29,30 @@ sealed class UploadState {
 }
 
 data class UploadUiState(
-    val uploadState: UploadState = UploadState.Queued
+    val uploadState: UploadState = UploadState.Queued,
+    val showCellularPrompt: Boolean = false
 )
 
 @HiltViewModel
 class UploadViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val reportRepository: ReportRepository
+    private val reportRepository: ReportRepository,
+    private val networkMonitor: NetworkMonitor
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(UploadUiState())
     val uiState = _uiState.asStateFlow()
 
     private var workId: UUID? = null
+
+    // Stashed so a later explicit cellular-upload confirmation can rebuild the same
+    // request with a relaxed network constraint, without re-running the whole
+    // record->trim->review pipeline.
+    private var lastReportId: String? = null
+    private var lastVideoPath: String? = null
+    private var lastLocation: LocationData? = null
+    private var lastRecordingStartedAt: Long = 0L
+    private var lastDurationMs: Long = 0L
 
     fun startUpload(
         trimmedFile: File,
@@ -71,27 +79,47 @@ class UploadViewModel @Inject constructor(
             reportRepository.saveReport(report)
         }
 
-        val inputData = UploadWorker.buildInputData(
-            reportId = reportId,
-            videoPath = trimmedFile.absolutePath,
-            location = effectiveLocation,
-            recordingStartedAt = recordingStartedAt,
-            durationMs = durationMs
+        lastReportId = reportId
+        lastVideoPath = trimmedFile.absolutePath
+        lastLocation = effectiveLocation
+        lastRecordingStartedAt = recordingStartedAt
+        lastDurationMs = durationMs
+
+        // Always enqueue with the safe Wi-Fi-only default first, so the report is never
+        // lost even if the cellular-confirmation prompt below is ignored/dismissed - it
+        // will simply run automatically once Wi-Fi becomes available.
+        val request = UploadWorker.buildRequest(
+            reportId, trimmedFile.absolutePath, effectiveLocation,
+            recordingStartedAt, durationMs, requireWifiOnly = true
         )
-
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .build()
-
-        val request = OneTimeWorkRequestBuilder<UploadWorker>()
-            .setInputData(inputData)
-            .setConstraints(constraints)
-            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.SECONDS)
-            .build()
-
         workId = request.id
-        WorkManager.getInstance(context).enqueue(request)
+        WorkManager.getInstance(context)
+            .enqueueUniqueWork(UploadWorker.uniqueWorkName(reportId), ExistingWorkPolicy.KEEP, request)
         observeUploadWork(request.id)
+
+        if (!networkMonitor.isOnWifi()) {
+            _uiState.update { it.copy(showCellularPrompt = true) }
+        }
+    }
+
+    /** User explicitly confirmed uploading over cellular data for the current attempt. */
+    fun confirmCellularUpload() {
+        val reportId = lastReportId ?: return
+        val videoPath = lastVideoPath ?: return
+        val location = lastLocation ?: return
+
+        val request = UploadWorker.buildRequest(
+            reportId, videoPath, location, lastRecordingStartedAt, lastDurationMs, requireWifiOnly = false
+        )
+        workId = request.id
+        WorkManager.getInstance(context)
+            .enqueueUniqueWork(UploadWorker.uniqueWorkName(reportId), ExistingWorkPolicy.REPLACE, request)
+        observeUploadWork(request.id)
+        _uiState.update { it.copy(showCellularPrompt = false) }
+    }
+
+    fun dismissCellularPrompt() {
+        _uiState.update { it.copy(showCellularPrompt = false) }
     }
 
     private fun observeUploadWork(id: UUID) {

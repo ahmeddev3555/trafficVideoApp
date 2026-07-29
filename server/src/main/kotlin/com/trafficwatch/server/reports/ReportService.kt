@@ -11,6 +11,8 @@ import org.springframework.data.domain.PageRequest
 import org.springframework.data.domain.Sort
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.support.TransactionSynchronization
+import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.web.multipart.MultipartFile
 import java.math.BigDecimal
 import java.time.LocalDateTime
@@ -51,12 +53,15 @@ class ReportService(
      * otherwise be orphaned on disk with no DB row ever pointing to it, so that path is
      * explicitly deleted before the original exception is rethrown.
      *
-     * Once the report is safely persisted, [ReportAnalysisJob.analyze] is kicked off to
-     * simulate CV analysis. That call is `@Async`, so it returns immediately - `submit()`
-     * itself never waits on it, and the HTTP response always carries `PENDING`. Since it's
-     * only triggered here (after both saves succeed), a failure that rolls back the
-     * transaction or leaves the video orphaned never has a stray analysis job running
-     * against a report that doesn't durably exist.
+     * Once the report is safely persisted, [ReportAnalysisJob.analyze] is scheduled via
+     * [TransactionSynchronizationManager.registerSynchronization]'s `afterCommit` callback,
+     * rather than called directly here - this method still runs inside its own open
+     * `@Transactional` block, so a direct call would race the commit (the analysis job's
+     * `findById` could run before this transaction's insert is visible to it). `afterCommit`
+     * makes that race structurally impossible instead of merely improbable: the callback
+     * only fires once the transaction has actually committed. A failure that rolls back the
+     * transaction or leaves the video orphaned never reaches this registration at all, so a
+     * stray analysis job never runs against a report that doesn't durably exist.
      */
     @Transactional
     fun submit(
@@ -70,6 +75,7 @@ class ReportService(
         recordedAt: String,
         durationMs: Long,
         deviceId: String,
+        compassHeadingDegrees: BigDecimal?,
     ): SubmitReportResponse {
         val userId = CurrentUser.id()
         val parsedRecordedAt = LocalDateTime.parse(recordedAt, RECORDED_AT_FORMATTER)
@@ -87,6 +93,7 @@ class ReportService(
             durationMs = durationMs,
             deviceId = deviceId,
             status = ReportStatus.PENDING,
+            compassHeadingDegrees = compassHeadingDegrees,
         )
 
         val saved = reportRepository.save(report)
@@ -101,7 +108,13 @@ class ReportService(
             throw ex
         }
 
-        reportAnalysisJob.analyze(reportId)
+        TransactionSynchronizationManager.registerSynchronization(
+            object : TransactionSynchronization {
+                override fun afterCommit() {
+                    reportAnalysisJob.analyze(reportId)
+                }
+            },
+        )
 
         return SubmitReportResponse(
             reportId = reportId,
@@ -173,6 +186,7 @@ class ReportService(
             confidence = confidence,
             message = analysisMessage,
             updatedAt = updatedAt,
+            streetName = streetName,
         )
     }
 }

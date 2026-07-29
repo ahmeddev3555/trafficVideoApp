@@ -68,7 +68,8 @@ class MockApiService @Inject constructor() : ApiService {
         speed: RequestBody,
         recordedAt: RequestBody,
         durationMs: RequestBody,
-        deviceId: RequestBody
+        deviceId: RequestBody,
+        compassHeadingDegrees: RequestBody?
     ): SubmitReportResponse {
         fakeDelay()
         return SubmitReportResponse(

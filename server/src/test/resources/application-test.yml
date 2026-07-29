@@ -16,3 +16,8 @@ app:
     # (well over 32 bytes) to satisfy jjwt's HS256 minimum key-length requirement.
     secret: "test-only-jwt-signing-secret-do-not-use-in-any-real-environment-0123456789"
     expiration-days: 30
+  video-analysis:
+    # Test-only secret; StreetDirectionResolverTest/VideoAnalysisClientTest/
+    # ReportAnalysisIntegrationTest override base-url via @DynamicPropertySource to point
+    # at WireMock, so this never reaches a real network call.
+    api-key: "test-only-video-analysis-api-key"

@@ -65,6 +65,18 @@ class Report(
     @Column(name = "analysis_message", length = 500)
     var analysisMessage: String? = null,
 
+    // From the Android client's compass snapshot - absent on submissions from app
+    // versions predating that capability (see ReportAnalysisJob's "no compass heading"
+    // rejection path).
+    @Column(name = "compass_heading_degrees")
+    var compassHeadingDegrees: BigDecimal? = null,
+
+    // Populated from StreetDirectionResolver whenever a street name is known - even for
+    // TwoWay/Unknown outcomes, not just CONFIRMED, since it's useful context regardless of
+    // the violation decision.
+    @Column(name = "street_name")
+    var streetName: String? = null,
+
     @Column(name = "created_at", nullable = false)
     var createdAt: OffsetDateTime = OffsetDateTime.now(),
 

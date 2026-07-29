@@ -17,7 +17,6 @@ import org.springframework.http.ResponseEntity
 import org.springframework.test.context.ActiveProfiles
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
-import org.springframework.test.context.TestPropertySource
 import org.springframework.util.LinkedMultiValueMap
 import org.springframework.util.MultiValueMap
 import java.nio.file.Files
@@ -40,6 +39,14 @@ import kotlin.random.Random
  * `@WebMvcTest`/`@SpringBootTest` (mock web environment) slices, which stub out
  * collaborators this test leaves wired for real.
  *
+ * This test never sends `compass_heading_degrees` (an older-app-version-shaped request),
+ * so the real [com.trafficwatch.server.reports.ReportAnalysisJob] deterministically lands
+ * on `REJECTED` with its "compass heading unavailable" message, short-circuiting before it
+ * would ever reach the real Nominatim/Overpass/video-analysis network calls - this is what
+ * makes the terminal-status assertions below deterministic without any WireMock stubbing
+ * (contrast with `ReportAnalysisIntegrationTest`, which does stub those to exercise the
+ * CONFIRMED path).
+ *
  * The test-only H2 database (`jdbc:h2:mem:testdb;...;DB_CLOSE_DELAY=-1`, see
  * `application-test.yml`) is a single named in-memory instance that persists for the life
  * of the JVM running the whole Gradle `test` task, so rows from other test classes in the
@@ -50,7 +57,6 @@ import kotlin.random.Random
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
-@TestPropertySource(properties = ["app.analysis.delay-ms=75"])
 class EndToEndFlowTest @Autowired constructor(
     private val restTemplate: TestRestTemplate,
 ) {
@@ -165,10 +171,9 @@ class EndToEndFlowTest @Autowired constructor(
         val reportId = submitBody["report_id"] as String
         assertThat(reportId).isNotBlank()
 
-        // 4. Poll GET /reports/{id}/status until the real async ReportAnalysisJob (delay
-        // overridden to 75ms via app.analysis.delay-ms above, not the real ~10s default)
-        // flips it out of PENDING. Bounded Awaitility poll, matching Task 11's precedent -
-        // not a fixed sleep guess, and not an unbounded wait.
+        // 4. Poll GET /reports/{id}/status until the real async ReportAnalysisJob flips it
+        // out of PENDING. Bounded Awaitility poll, matching Task 11's precedent - not a
+        // fixed sleep guess, and not an unbounded wait.
         val terminalStatusBody = mutableMapOf<String, Any?>()
         await()
             .atMost(Duration.ofSeconds(5))
@@ -181,19 +186,13 @@ class EndToEndFlowTest @Autowired constructor(
                 current["status"] != "PENDING"
             }
 
-        // 5. Assert the terminal state's placeholder fields, branching on CONFIRMED vs
-        // REJECTED since the real ReportAnalysisJob's outcome is a genuine random 80/20
-        // draw - never assume a specific run lands on CONFIRMED.
-        val finalStatus = terminalStatusBody["status"] as String
-        assertThat(finalStatus).isIn("CONFIRMED", "REJECTED")
-        if (finalStatus == "CONFIRMED") {
-            assertThat(terminalStatusBody["license_plate"]).isNotNull()
-            assertThat(terminalStatusBody["confidence"]).isNotNull()
-        } else {
-            assertThat(terminalStatusBody["license_plate"]).isNull()
-            assertThat(terminalStatusBody["confidence"]).isNull()
-        }
-        assertThat(terminalStatusBody["message"]).isNotNull()
+        // 5. This request never included compass_heading_degrees, so the real
+        // ReportAnalysisJob deterministically rejects it as insufficient data - not a
+        // random draw, and never reaches the real OSM/video-analysis network.
+        assertThat(terminalStatusBody["status"]).isEqualTo("REJECTED")
+        assertThat(terminalStatusBody["license_plate"]).isNull()
+        assertThat(terminalStatusBody["confidence"]).isNull()
+        assertThat(terminalStatusBody["message"]).isEqualTo("Device compass heading unavailable for this report")
 
         // 6. GET /reports (list) - the submitted report shows up for this user.
         val listResponse = listReports(token)

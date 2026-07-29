@@ -21,6 +21,7 @@ import org.springframework.data.domain.Sort
 import org.springframework.mock.web.MockMultipartFile
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken
 import org.springframework.security.core.context.SecurityContextHolder
+import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.math.BigDecimal
 import java.time.LocalDateTime
 import java.time.OffsetDateTime
@@ -33,6 +34,13 @@ import java.util.UUID
  * `com.trafficwatch.server.common.CurrentUser`, which reads the [SecurityContextHolder]
  * directly (exactly as [com.trafficwatch.server.auth.JwtAuthFilter] populates it for a
  * real request), so each test seeds/clears that context manually.
+ *
+ * [submit] now registers [ReportAnalysisJob.analyze] via
+ * [TransactionSynchronizationManager.registerSynchronization]'s `afterCommit` callback
+ * rather than calling it directly - `registerSynchronization` throws unless a transaction
+ * synchronization is active, which this plain (non-Spring-context) test has to set up and
+ * tear down itself, mimicking what the real `@Transactional` proxy does in production.
+ * [simulateCommit] then plays the role of "the transaction actually committed."
  */
 class ReportServiceTest {
 
@@ -47,11 +55,20 @@ class ReportServiceTest {
     fun authenticateAsCurrentUser() {
         SecurityContextHolder.getContext().authentication =
             UsernamePasswordAuthenticationToken(currentUserId, null, emptyList())
+        TransactionSynchronizationManager.initSynchronization()
     }
 
     @AfterEach
     fun clearSecurityContext() {
         SecurityContextHolder.clearContext()
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.clearSynchronization()
+        }
+    }
+
+    /** Simulates the real `@Transactional` proxy's post-commit callback firing. */
+    private fun simulateCommit() {
+        TransactionSynchronizationManager.getSynchronizations().forEach { it.afterCommit() }
     }
 
     // ReportService.submit() saves the report twice (once to obtain the generated id,
@@ -92,7 +109,9 @@ class ReportServiceTest {
             recordedAt = "2026-07-25T10:15:30Z",
             durationMs = 15000L,
             deviceId = "device-123",
+            compassHeadingDegrees = null,
         )
+        simulateCommit()
 
         verify(exactly = 2) { reportRepository.save(any()) }
         val persisted = savedReport
@@ -129,7 +148,9 @@ class ReportServiceTest {
             recordedAt = "2026-07-25T14:30:45Z",
             durationMs = 1000L,
             deviceId = "device-x",
+            compassHeadingDegrees = null,
         )
+        simulateCommit()
 
         verify(exactly = 2) { reportRepository.save(any()) }
 
@@ -174,13 +195,16 @@ class ReportServiceTest {
                 recordedAt = "2026-07-25T14:30:45Z",
                 durationMs = 1000L,
                 deviceId = "device-x",
+                compassHeadingDegrees = null,
             )
         }.isSameAs(dbFailure)
+        simulateCommit()
 
         verify(exactly = 1) { videoStorageService.delete(storedPath) }
         verify(exactly = 2) { reportRepository.save(any()) }
-        // The failure happens before the analysis job would be kicked off, so it must
-        // never fire for a report that was never durably persisted with its real video path.
+        // The failure happens before the analysis job would even be registered for
+        // afterCommit, so it must never fire for a report that was never durably
+        // persisted with its real video path.
         verify(exactly = 0) { reportAnalysisJob.analyze(any()) }
     }
 

@@ -5,10 +5,12 @@ import androidx.hilt.work.HiltWorker
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
+import androidx.work.Data
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequest
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkerParameters
+import androidx.work.hasKeyWithValueOfType
 import androidx.work.workDataOf
 import com.trafficwatch.app.core.data.remote.ApiService
 import com.trafficwatch.app.core.data.repository.ReportRepository
@@ -51,6 +53,14 @@ class UploadWorker @AssistedInject constructor(
         val speed = inputData.getFloat(KEY_SPEED, 0f)
         val recordedAt = inputData.getLong(KEY_RECORDED_AT, 0L)
         val durationMs = inputData.getLong(KEY_DURATION_MS, 0L)
+        // WorkManager's Data can't store a null Float directly - the key is simply omitted
+        // by buildInputData when absent, so presence (not a sentinel value) is what
+        // distinguishes "unavailable" from "present with any value."
+        val compassHeadingDegrees = if (inputData.hasKeyWithValueOfType<Float>(KEY_COMPASS_HEADING)) {
+            inputData.getFloat(KEY_COMPASS_HEADING, 0f)
+        } else {
+            null
+        }
 
         val videoFile = File(videoPath)
         if (!videoFile.exists()) return Result.failure(workDataOf("error" to "Video file not found"))
@@ -76,7 +86,8 @@ class UploadWorker @AssistedInject constructor(
                 speed = speed.toString().toRequestBody(),
                 recordedAt = isoDate.toRequestBody(),
                 durationMs = durationMs.toString().toRequestBody(),
-                deviceId = tokenStore.getOrCreateDeviceId().toRequestBody()
+                deviceId = tokenStore.getOrCreateDeviceId().toRequestBody(),
+                compassHeadingDegrees = compassHeadingDegrees?.toString()?.toRequestBody()
             )
 
             setProgress(workDataOf(KEY_PROGRESS to 100))
@@ -105,6 +116,7 @@ class UploadWorker @AssistedInject constructor(
         const val KEY_SPEED = "speed"
         const val KEY_RECORDED_AT = "recorded_at"
         const val KEY_DURATION_MS = "duration_ms"
+        const val KEY_COMPASS_HEADING = "compass_heading_degrees"
         const val KEY_PROGRESS = "progress"
         const val KEY_SERVER_ID = "server_id"
 
@@ -114,18 +126,27 @@ class UploadWorker @AssistedInject constructor(
             location: LocationData,
             recordingStartedAt: Long,
             durationMs: Long
-        ) = workDataOf(
-            KEY_REPORT_ID to reportId,
-            KEY_VIDEO_PATH to videoPath,
-            KEY_LATITUDE to location.latitude,
-            KEY_LONGITUDE to location.longitude,
-            KEY_ACCURACY to location.accuracy,
-            KEY_ALTITUDE to location.altitude,
-            KEY_BEARING to location.bearing,
-            KEY_SPEED to location.speed,
-            KEY_RECORDED_AT to recordingStartedAt,
-            KEY_DURATION_MS to durationMs
-        )
+        ): Data {
+            val builder = Data.Builder().putAll(
+                workDataOf(
+                    KEY_REPORT_ID to reportId,
+                    KEY_VIDEO_PATH to videoPath,
+                    KEY_LATITUDE to location.latitude,
+                    KEY_LONGITUDE to location.longitude,
+                    KEY_ACCURACY to location.accuracy,
+                    KEY_ALTITUDE to location.altitude,
+                    KEY_BEARING to location.bearing,
+                    KEY_SPEED to location.speed,
+                    KEY_RECORDED_AT to recordingStartedAt,
+                    KEY_DURATION_MS to durationMs
+                )
+            )
+            // Omitted entirely when null - workDataOf/Data.Builder cannot store a null
+            // Float, so presence of the key (checked via hasKeyWithValueOfType in doWork)
+            // is what distinguishes "unavailable" from "present."
+            location.compassHeadingDegrees?.let { builder.putFloat(KEY_COMPASS_HEADING, it) }
+            return builder.build()
+        }
 
         /** Unique WorkManager work name for [reportId], so retries/re-enqueues can be deduped. */
         fun uniqueWorkName(reportId: String): String = "upload_$reportId"

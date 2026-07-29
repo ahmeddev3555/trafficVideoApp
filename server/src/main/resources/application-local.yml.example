@@ -13,3 +13,7 @@ app:
     expiration-days: 30
   storage:
     video-directory: "storage/videos"
+  video-analysis:
+    # IMPORTANT: Replace this with a real shared secret matching the Python service's
+    # own API_KEY (see video-analysis/.env.example).
+    api-key: "replace-with-a-real-shared-secret-change-me-now"

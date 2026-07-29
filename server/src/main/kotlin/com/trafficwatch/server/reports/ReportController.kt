@@ -40,6 +40,10 @@ class ReportController(
         @RequestParam("recorded_at") recordedAt: String,
         @RequestParam("duration_ms") durationMs: Long,
         @RequestParam("device_id") deviceId: String,
+        // Absent on submissions from app versions predating compass capture - required =
+        // false rather than rejecting the request outright, so ReportAnalysisJob's "no
+        // compass heading" rejection path handles it as an analysis outcome instead.
+        @RequestParam("compass_heading_degrees", required = false) compassHeadingDegrees: BigDecimal?,
     ): SubmitReportResponse =
         reportService.submit(
             video = video,
@@ -52,6 +56,7 @@ class ReportController(
             recordedAt = recordedAt,
             durationMs = durationMs,
             deviceId = deviceId,
+            compassHeadingDegrees = compassHeadingDegrees,
         )
 
     /**

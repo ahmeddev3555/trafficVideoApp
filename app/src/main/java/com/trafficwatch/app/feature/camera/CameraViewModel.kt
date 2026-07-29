@@ -5,6 +5,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.trafficwatch.app.core.domain.model.LocationData
+import com.trafficwatch.app.core.util.CompassProvider
 import com.trafficwatch.app.core.util.FileUtil
 import com.trafficwatch.app.core.util.LocationUtil
 import com.trafficwatch.app.core.util.MAX_ACCEPTABLE_ACCURACY_METERS
@@ -35,6 +36,7 @@ data class CameraUiState(
 class CameraViewModel @Inject constructor(
     private val cameraController: CameraController,
     private val locationUtil: LocationUtil,
+    private val compassProvider: CompassProvider,
     private val fileUtil: FileUtil
 ) : ViewModel() {
 
@@ -44,6 +46,7 @@ class CameraViewModel @Inject constructor(
 
     private var maxDurationJob: Job? = null
     private var snapshotLocation: LocationData? = null
+    private var snapshotCompassHeading: Float? = null
     private var recordingStartedAt: Long = 0L
 
     init {
@@ -79,9 +82,29 @@ class CameraViewModel @Inject constructor(
 
     fun onStartRecording(outputFile: File) {
         recordingStartedAt = System.currentTimeMillis()
+
+        // The record button only enables once locationState is Fixed, so this is a real
+        // fix, not a stale/placeholder one - used for magnetic declination without waiting
+        // on a fresh GPS read (which would otherwise serialize behind the compass read).
+        val declinationReference = (uiState.value.locationState as? LocationState.Fixed)?.data
+
         viewModelScope.launch {
             snapshotLocation = locationUtil.getSnapshot()
         }
+        viewModelScope.launch {
+            snapshotCompassHeading = if (declinationReference != null) {
+                compassProvider.getSnapshot(
+                    latitude = declinationReference.latitude,
+                    longitude = declinationReference.longitude,
+                    altitude = declinationReference.altitude,
+                )
+            } else {
+                // No location fix available for declination correction - falls back to a
+                // magnetic-north-only heading rather than skipping compass capture entirely.
+                compassProvider.getSnapshot(latitude = 0.0, longitude = 0.0, altitude = 0.0)
+            }
+        }
+
         cameraController.startRecording(outputFile) { error ->
             _uiState.update { it.copy(cameraError = error) }
         }
@@ -96,7 +119,8 @@ class CameraViewModel @Inject constructor(
         cameraController.stopRecording()
     }
 
-    fun getSnapshotLocation(): LocationData? = snapshotLocation
+    fun getSnapshotLocation(): LocationData? =
+        snapshotLocation?.copy(compassHeadingDegrees = snapshotCompassHeading)
 
     fun getRecordingStartedAt(): Long = recordingStartedAt
 

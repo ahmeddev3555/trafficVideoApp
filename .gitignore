@@ -95,3 +95,10 @@ server/.env
 server/storage/videos/*
 !server/storage/videos/.gitkeep
 !server/gradle/wrapper/gradle-wrapper.jar
+
+# video-analysis (Python) ignores
+video-analysis/.venv/
+video-analysis/.env
+video-analysis/__pycache__/
+video-analysis/**/__pycache__/
+video-analysis/.pytest_cache/

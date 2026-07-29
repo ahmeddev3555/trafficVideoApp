@@ -32,6 +32,7 @@ data class ReportStatusResponse(
     val confidence: BigDecimal?,
     val message: String?,
     val updatedAt: OffsetDateTime,
+    val streetName: String?,
 )
 
 /**

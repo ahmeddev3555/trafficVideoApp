@@ -37,6 +37,10 @@ dependencies {
 	// Bounded poll-with-timeout for asserting @Async completion (Task 11's
 	// ReportAnalysisJob) - not present transitively via spring-boot-starter-test.
 	testImplementation("org.awaitility:awaitility:4.2.2")
+	// Stubs Nominatim/Overpass/video-analysis HTTP responses deterministically, without
+	// live network or a running Python service - see StreetDirectionResolverTest,
+	// VideoAnalysisClientTest, and the rewritten ReportAnalysisIntegrationTest.
+	testImplementation("org.wiremock:wiremock-standalone:3.9.1")
 	testRuntimeOnly("com.h2database:h2")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }

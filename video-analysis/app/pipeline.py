@@ -4,7 +4,8 @@ from collections import defaultdict
 from typing import TYPE_CHECKING
 
 from app.config import Settings
-from app.schemas import VehicleResult
+from app.frame_encoding import encode_frame_to_base64_jpeg
+from app.schemas import BoundingBox, VehicleResult
 from app.tracking_bearing import compute_bearing_degrees
 
 if TYPE_CHECKING:
@@ -14,6 +15,11 @@ if TYPE_CHECKING:
 # Bound OCR cost: only the largest-bounding-box frames per track are read, keeping the
 # single highest-confidence result above this floor.
 OCR_CROPS_PER_TRACK = 3
+
+
+def _bbox_area(frame: "TrackedFrame") -> float:
+    x1, y1, x2, y2 = frame.bbox
+    return max(0.0, x2 - x1) * max(0.0, y2 - y1)
 
 
 class AnalysisPipeline:
@@ -39,6 +45,11 @@ class AnalysisPipeline:
 
         plate_text, plate_confidence = self._read_best_plate(frames_sorted)
 
+        representative_frame = max(frames_sorted, key=_bbox_area)
+        x1, y1, x2, y2 = representative_frame.bbox
+        bounding_box = BoundingBox(x1=x1, y1=y1, x2=x2, y2=y2)
+        frame_jpeg_base64 = encode_frame_to_base64_jpeg(representative_frame.frame)
+
         return VehicleResult(
             track_id=track_id,
             vehicle_type=vehicle_type,
@@ -46,14 +57,12 @@ class AnalysisPipeline:
             bearing_degrees=bearing,
             plate_text=plate_text,
             plate_confidence=plate_confidence,
+            bounding_box=bounding_box,
+            frame_jpeg_base64=frame_jpeg_base64,
         )
 
     def _read_best_plate(self, frames_sorted: list["TrackedFrame"]) -> tuple[str | None, float | None]:
-        def bbox_area(frame: "TrackedFrame") -> float:
-            x1, y1, x2, y2 = frame.bbox
-            return max(0.0, x2 - x1) * max(0.0, y2 - y1)
-
-        largest_frames = sorted(frames_sorted, key=bbox_area, reverse=True)[:OCR_CROPS_PER_TRACK]
+        largest_frames = sorted(frames_sorted, key=_bbox_area, reverse=True)[:OCR_CROPS_PER_TRACK]
 
         best_text: str | None = None
         best_confidence = 0.0

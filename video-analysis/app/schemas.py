@@ -3,6 +3,13 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
+class BoundingBox(BaseModel):
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+
+
 class VehicleResult(BaseModel):
     track_id: int
     vehicle_type: str
@@ -14,6 +21,11 @@ class VehicleResult(BaseModel):
     bearing_degrees: float | None = None
     plate_text: str | None = None
     plate_confidence: float | None = None
+    # The representative (largest-bounding-box) frame's box, and that same frame encoded
+    # as a base64 JPEG - returned for every vehicle since this service can't know in
+    # advance which one (if any) the Kotlin server will decide is wrong-way.
+    bounding_box: BoundingBox | None = None
+    frame_jpeg_base64: str | None = None
 
 
 class AnalyzeResponse(BaseModel):

@@ -30,11 +30,21 @@ fun LocationMapView(latitude: Double, longitude: Double, modifier: Modifier = Mo
                     ViewGroup.LayoutParams.MATCH_PARENT,
                 )
                 setMultiTouchControls(false)
+                setOnTouchListener { _, _ -> true }
                 val point = GeoPoint(latitude, longitude)
                 controller.setZoom(DEFAULT_ZOOM)
                 controller.setCenter(point)
                 overlays.add(Marker(this).apply { position = point })
             }
+        },
+        update = { mapView ->
+            val point = GeoPoint(latitude, longitude)
+            mapView.controller.setCenter(point)
+            mapView.overlays.clear()
+            mapView.overlays.add(Marker(mapView).apply { position = point })
+        },
+        onRelease = { mapView ->
+            mapView.onDetach()
         },
     )
 }

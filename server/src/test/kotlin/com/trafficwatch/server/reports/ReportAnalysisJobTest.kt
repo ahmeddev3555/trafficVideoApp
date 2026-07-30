@@ -3,11 +3,15 @@ package com.trafficwatch.server.reports
 import com.trafficwatch.server.geo.DirectionResolution
 import com.trafficwatch.server.geo.StreetDirectionResolver
 import com.trafficwatch.server.storage.VideoStorageService
+import com.trafficwatch.server.storage.WrongWayFrameStorageService
 import com.trafficwatch.server.videoanalysis.VideoAnalysisClient
 import com.trafficwatch.server.videoanalysis.VideoAnalysisException
+import com.trafficwatch.server.videoanalysis.dto.BoundingBox
 import com.trafficwatch.server.videoanalysis.dto.VehicleAnalysisResult
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.mockkObject
+import io.mockk.unmockkObject
 import io.mockk.verify
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.BeforeEach
@@ -16,6 +20,7 @@ import java.math.BigDecimal
 import java.nio.file.Path
 import java.time.LocalDateTime
 import java.time.OffsetDateTime
+import java.util.Base64
 import java.util.UUID
 
 /**
@@ -33,6 +38,7 @@ class ReportAnalysisJobTest {
     private val streetDirectionResolver = mockk<StreetDirectionResolver>()
     private val videoAnalysisClient = mockk<VideoAnalysisClient>()
     private val videoStorageService = mockk<VideoStorageService>()
+    private val wrongWayFrameStorageService = mockk<WrongWayFrameStorageService>()
 
     private val job = ReportAnalysisJob(
         reportRepository,
@@ -40,6 +46,7 @@ class ReportAnalysisJobTest {
         streetDirectionResolver,
         videoAnalysisClient,
         videoStorageService,
+        wrongWayFrameStorageService,
     )
 
     private val fakeVideoPath: Path = Path.of("/videos/fake.mp4")
@@ -75,6 +82,8 @@ class ReportAnalysisJobTest {
         bearingDegrees: Double? = 90.0,
         plateText: String? = "LEA-1234",
         plateConfidence: Double? = 0.9,
+        boundingBox: BoundingBox? = null,
+        frameJpegBase64: String? = null,
     ) = VehicleAnalysisResult(
         trackId = trackId,
         vehicleType = "car",
@@ -82,6 +91,8 @@ class ReportAnalysisJobTest {
         bearingDegrees = bearingDegrees,
         plateText = plateText,
         plateConfidence = plateConfidence,
+        boundingBox = boundingBox,
+        frameJpegBase64 = frameJpegBase64,
     )
 
     @Test
@@ -292,5 +303,107 @@ class ReportAnalysisJobTest {
         job.analyze(reportId)
 
         verify(exactly = 0) { reportRepository.save(any()) }
+    }
+
+    @Test
+    fun `applyOutcome computes wrong-way confidence from detection confidence and bearing match tightness`() {
+        val report = sampleReport(compassHeadingDegrees = BigDecimal("0.0"))
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude)
+        } returns DirectionResolution.OneWay("Main Boulevard", 0.0)
+        // Illegal bearing is 180 (legal 0 + 180); a vehicle at exactly 180 has
+        // angularDistance 0 -> bearingMatchScore 1.0 -> confidence == detectionConfidence (0.8).
+        every {
+            videoAnalysisClient.analyze(fakeVideoPath, any())
+        } returns listOf(vehicle(bearingDegrees = 180.0, plateConfidence = null))
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.wrongWayConfidence).isEqualByComparingTo(BigDecimal("0.8"))
+    }
+
+    @Test
+    fun `applyOutcome gives a borderline wrong-way vehicle a lower confidence than a dead-on one`() {
+        val report = sampleReport(compassHeadingDegrees = BigDecimal("0.0"))
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude)
+        } returns DirectionResolution.OneWay("Main Boulevard", 0.0)
+        // 150 is 30 degrees off the illegal bearing of 180 - within the 60-degree
+        // tolerance, but not dead-on, so its confidence must be lower than 0.8.
+        every {
+            videoAnalysisClient.analyze(fakeVideoPath, any())
+        } returns listOf(vehicle(bearingDegrees = 150.0, plateConfidence = null))
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.wrongWayConfidence).isLessThan(BigDecimal("0.8"))
+    }
+
+    @Test
+    fun `applyOutcome stores an annotated frame and records its path for a wrong-way vehicle`() {
+        val report = sampleReport(compassHeadingDegrees = BigDecimal("0.0"))
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude)
+        } returns DirectionResolution.OneWay("Main Boulevard", 0.0)
+        val boundingBox = BoundingBox(x1 = 10.0, y1 = 10.0, x2 = 50.0, y2 = 50.0)
+        val fakeJpegBytes = byteArrayOf(1, 2, 3)
+        val fakeFrameBase64 = Base64.getEncoder().encodeToString(fakeJpegBytes)
+        every {
+            videoAnalysisClient.analyze(fakeVideoPath, any())
+        } returns listOf(vehicle(bearingDegrees = 180.0, boundingBox = boundingBox, frameJpegBase64 = fakeFrameBase64))
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        mockkObject(FrameAnnotator)
+        try {
+            every { FrameAnnotator.annotate(fakeJpegBytes, boundingBox) } returns byteArrayOf(9, 9, 9)
+            every { wrongWayFrameStorageService.store(any(), byteArrayOf(9, 9, 9)) } returns "stored-frame.jpg"
+
+            job.applyOutcome(report)
+
+            assertThat(report.status).isEqualTo(ReportStatus.CONFIRMED)
+            assertThat(report.wrongWayFramePath).isEqualTo("stored-frame.jpg")
+        } finally {
+            unmockkObject(FrameAnnotator)
+        }
+    }
+
+    @Test
+    fun `applyOutcome still confirms but leaves wrongWayFramePath null when frame storage fails`() {
+        val report = sampleReport(compassHeadingDegrees = BigDecimal("0.0"))
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude)
+        } returns DirectionResolution.OneWay("Main Boulevard", 0.0)
+        val boundingBox = BoundingBox(x1 = 10.0, y1 = 10.0, x2 = 50.0, y2 = 50.0)
+        val fakeFrameBase64 = Base64.getEncoder().encodeToString(byteArrayOf(1, 2, 3))
+        every {
+            videoAnalysisClient.analyze(fakeVideoPath, any())
+        } returns listOf(vehicle(bearingDegrees = 180.0, boundingBox = boundingBox, frameJpegBase64 = fakeFrameBase64))
+        every { reportRepository.save(any()) } answers { firstArg() }
+        every { wrongWayFrameStorageService.store(any(), any()) } throws RuntimeException("disk full")
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.CONFIRMED)
+        assertThat(report.wrongWayFramePath).isNull()
+    }
+
+    @Test
+    fun `applyOutcome leaves wrongWayFramePath null when the vehicle has no frame data`() {
+        val report = sampleReport(compassHeadingDegrees = BigDecimal("0.0"))
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude)
+        } returns DirectionResolution.OneWay("Main Boulevard", 0.0)
+        every {
+            videoAnalysisClient.analyze(fakeVideoPath, any())
+        } returns listOf(vehicle(bearingDegrees = 180.0, boundingBox = null, frameJpegBase64 = null))
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.CONFIRMED)
+        assertThat(report.wrongWayFramePath).isNull()
+        verify(exactly = 0) { wrongWayFrameStorageService.store(any(), any()) }
     }
 }

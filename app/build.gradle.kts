@@ -131,6 +131,9 @@ dependencies {
     // Coil
     implementation(libs.coil.compose)
 
+    // Maps
+    implementation(libs.osmdroid)
+
     // Security
     implementation(libs.security.crypto)
 

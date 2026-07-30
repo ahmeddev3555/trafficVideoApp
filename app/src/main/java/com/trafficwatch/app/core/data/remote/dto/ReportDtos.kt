@@ -14,7 +14,9 @@ data class ReportStatusResponse(
     @SerializedName("license_plate") val licensePlate: String?,
     @SerializedName("confidence") val confidence: Float?,
     @SerializedName("message") val message: String?,
-    @SerializedName("updated_at") val updatedAt: String
+    @SerializedName("updated_at") val updatedAt: String,
+    @SerializedName("has_wrong_way_frame") val hasWrongWayFrame: Boolean,
+    @SerializedName("wrong_way_confidence") val wrongWayConfidence: Float?
 )
 
 data class ReportListResponse(

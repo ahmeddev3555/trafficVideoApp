@@ -47,6 +47,8 @@ class ReportRepository @Inject constructor(
                     licensePlate = response.licensePlate,
                     confidence = response.confidence,
                     message = response.message,
+                    hasWrongWayFrame = response.hasWrongWayFrame,
+                    wrongWayConfidence = response.wrongWayConfidence,
                     updatedAt = System.currentTimeMillis()
                 )
             }

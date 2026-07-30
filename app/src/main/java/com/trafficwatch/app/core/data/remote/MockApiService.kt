@@ -87,7 +87,9 @@ class MockApiService @Inject constructor() : ApiService {
             licensePlate = null,
             confidence = null,
             message = "Analysis in progress",
-            updatedAt = java.time.Instant.now().toString()
+            updatedAt = java.time.Instant.now().toString(),
+            hasWrongWayFrame = false,
+            wrongWayConfidence = null
         )
     }
 

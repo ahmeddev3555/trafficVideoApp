@@ -32,7 +32,8 @@ interface ReportDao {
     @Query("""
         UPDATE reports
         SET status = :status, licensePlate = :licensePlate, confidence = :confidence,
-            analysisMessage = :message, updatedAt = :updatedAt
+            analysisMessage = :message, hasWrongWayFrame = :hasWrongWayFrame,
+            wrongWayConfidence = :wrongWayConfidence, updatedAt = :updatedAt
         WHERE id = :id
     """)
     suspend fun updateAnalysisResult(
@@ -41,6 +42,8 @@ interface ReportDao {
         licensePlate: String?,
         confidence: Float?,
         message: String?,
+        hasWrongWayFrame: Boolean,
+        wrongWayConfidence: Float?,
         updatedAt: Long
     )
 

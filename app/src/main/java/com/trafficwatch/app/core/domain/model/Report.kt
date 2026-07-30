@@ -12,6 +12,8 @@ data class Report(
     val licensePlate: String? = null,
     val confidence: Float? = null,
     val analysisMessage: String? = null,
+    val hasWrongWayFrame: Boolean = false,
+    val wrongWayConfidence: Float? = null,
     val createdAt: Long,
     val updatedAt: Long
 )

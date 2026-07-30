@@ -27,6 +27,8 @@ data class ReportEntity(
     val licensePlate: String?,
     val confidence: Float?,
     val analysisMessage: String?,
+    val hasWrongWayFrame: Boolean,
+    val wrongWayConfidence: Float?,
     val createdAt: Long,
     val updatedAt: Long
 ) {
@@ -50,6 +52,8 @@ data class ReportEntity(
         licensePlate = licensePlate,
         confidence = confidence,
         analysisMessage = analysisMessage,
+        hasWrongWayFrame = hasWrongWayFrame,
+        wrongWayConfidence = wrongWayConfidence,
         createdAt = createdAt,
         updatedAt = updatedAt
     )
@@ -73,6 +77,8 @@ data class ReportEntity(
             licensePlate = report.licensePlate,
             confidence = report.confidence,
             analysisMessage = report.analysisMessage,
+            hasWrongWayFrame = report.hasWrongWayFrame,
+            wrongWayConfidence = report.wrongWayConfidence,
             createdAt = report.createdAt,
             updatedAt = report.updatedAt
         )

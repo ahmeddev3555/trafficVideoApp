@@ -32,10 +32,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
+import com.trafficwatch.app.BuildConfig
 import com.trafficwatch.app.core.domain.model.Report
+import com.trafficwatch.app.core.domain.model.ReportStatus
+import com.trafficwatch.app.core.ui.components.LocationMapView
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -97,7 +102,10 @@ fun ReportDetailScreen(
                             DetailRow("License Plate", r.licensePlate)
                         }
                         if (r.confidence != null) {
-                            DetailRow("Confidence", "%.0f%%".format(r.confidence * 100))
+                            DetailRow("Plate Read Confidence", "%.0f%%".format(r.confidence * 100))
+                        }
+                        if (r.wrongWayConfidence != null) {
+                            DetailRow("Wrong-Way Confidence", "${(r.wrongWayConfidence * 100).roundToInt()}%")
                         }
                     }
                 }
@@ -120,6 +128,35 @@ fun ReportDetailScreen(
                         if (r.serverId != null) {
                             HorizontalDivider()
                             DetailRow("Report ID", r.serverId)
+                        }
+                    }
+                }
+
+                // The map pin and flagged-vehicle image only make sense once a violation has
+                // actually been confirmed - PENDING/REJECTED reports keep the layout above
+                // unchanged.
+                if (r.status == ReportStatus.CONFIRMED) {
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text("Location", style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Spacer(Modifier.height(8.dp))
+                            LocationMapView(latitude = r.location.latitude, longitude = r.location.longitude)
+                        }
+                    }
+
+                    if (r.hasWrongWayFrame && r.serverId != null) {
+                        Card(modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text("Flagged Vehicle", style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Spacer(Modifier.height(8.dp))
+                                AsyncImage(
+                                    model = "${BuildConfig.BASE_URL}reports/${r.serverId}/wrong-way-frame",
+                                    contentDescription = "Flagged vehicle, wrong-way direction highlighted in red",
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
                         }
                     }
                 }

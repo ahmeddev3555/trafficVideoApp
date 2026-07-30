@@ -9,6 +9,13 @@ data class VideoAnalysisResponse(
     val vehicles: List<VehicleAnalysisResult> = emptyList(),
 )
 
+data class BoundingBox(
+    val x1: Double,
+    val y1: Double,
+    val x2: Double,
+    val y2: Double,
+)
+
 data class VehicleAnalysisResult(
     val trackId: Long,
     val vehicleType: String,
@@ -16,4 +23,6 @@ data class VehicleAnalysisResult(
     val bearingDegrees: Double?,
     val plateText: String?,
     val plateConfidence: Double?,
+    val boundingBox: BoundingBox? = null,
+    val frameJpegBase64: String? = null,
 )

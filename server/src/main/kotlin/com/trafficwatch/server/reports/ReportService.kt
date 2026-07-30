@@ -7,6 +7,7 @@ import com.trafficwatch.server.reports.dto.SubmitReportResponse
 import com.trafficwatch.server.reports.exception.InvalidPaginationException
 import com.trafficwatch.server.reports.exception.ReportNotFoundException
 import com.trafficwatch.server.storage.VideoStorageService
+import com.trafficwatch.server.storage.WrongWayFrameStorageService
 import org.springframework.data.domain.PageRequest
 import org.springframework.data.domain.Sort
 import org.springframework.stereotype.Service
@@ -15,6 +16,7 @@ import org.springframework.transaction.support.TransactionSynchronization
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.web.multipart.MultipartFile
 import java.math.BigDecimal
+import java.nio.file.Path
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.UUID
@@ -34,6 +36,7 @@ class ReportService(
     private val reportRepository: ReportRepository,
     private val videoStorageService: VideoStorageService,
     private val reportAnalysisJob: ReportAnalysisJob,
+    private val wrongWayFrameStorageService: WrongWayFrameStorageService,
 ) {
 
     /**
@@ -137,6 +140,20 @@ class ReportService(
     }
 
     /**
+     * Backs `GET /reports/{reportId}/wrong-way-frame`. Same per-user scoping as [getStatus]
+     * - and the same [ReportNotFoundException] (mapped to a 404) when the report has no
+     * stored frame at all (old report predating this feature, or annotation/storage failed)
+     * - the caller has no way to distinguish "wrong owner", "doesn't exist", and "no frame
+     * yet", by design.
+     */
+    fun getWrongWayFramePath(reportId: UUID, currentUserId: UUID): Path {
+        val report = reportRepository.findByIdAndUserId(reportId, currentUserId)
+            ?: throw ReportNotFoundException(reportId)
+        val framePath = report.wrongWayFramePath ?: throw ReportNotFoundException(reportId)
+        return wrongWayFrameStorageService.resolve(framePath)
+    }
+
+    /**
      * Backs `GET /reports`. `page` is the 1-indexed page number as sent by the Android
      * client; Spring Data's [PageRequest] is 0-indexed, so `page - 1` is what's actually
      * passed to the repository. [ReportListResponse.page] echoes back the original
@@ -187,6 +204,8 @@ class ReportService(
             message = analysisMessage,
             updatedAt = updatedAt,
             streetName = streetName,
+            hasWrongWayFrame = wrongWayFramePath != null,
+            wrongWayConfidence = wrongWayConfidence,
         )
     }
 }

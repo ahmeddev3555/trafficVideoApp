@@ -3,6 +3,7 @@ package com.trafficwatch.server.reports
 import com.trafficwatch.server.reports.exception.InvalidPaginationException
 import com.trafficwatch.server.reports.exception.ReportNotFoundException
 import com.trafficwatch.server.storage.VideoStorageService
+import com.trafficwatch.server.storage.WrongWayFrameStorageService
 import io.mockk.every
 import io.mockk.just
 import io.mockk.mockk
@@ -47,7 +48,10 @@ class ReportServiceTest {
     private val reportRepository = mockk<ReportRepository>()
     private val videoStorageService = mockk<VideoStorageService>()
     private val reportAnalysisJob = mockk<ReportAnalysisJob>()
-    private val reportService = ReportService(reportRepository, videoStorageService, reportAnalysisJob)
+    private val wrongWayFrameStorageService = mockk<WrongWayFrameStorageService>()
+    private val reportService = ReportService(
+        reportRepository, videoStorageService, reportAnalysisJob, wrongWayFrameStorageService,
+    )
 
     private val currentUserId = UUID.randomUUID()
 
@@ -257,6 +261,8 @@ class ReportServiceTest {
         assertThat(response.confidence).isEqualTo(BigDecimal("0.95"))
         assertThat(response.message).isEqualTo("Plate matched")
         assertThat(response.updatedAt).isEqualTo(OffsetDateTime.parse("2026-07-25T10:05:00Z"))
+        assertThat(response.hasWrongWayFrame).isFalse()
+        assertThat(response.wrongWayConfidence).isNull()
     }
 
     @Test

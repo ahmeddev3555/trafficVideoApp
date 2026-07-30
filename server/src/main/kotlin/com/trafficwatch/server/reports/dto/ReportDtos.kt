@@ -33,6 +33,8 @@ data class ReportStatusResponse(
     val message: String?,
     val updatedAt: OffsetDateTime,
     val streetName: String?,
+    val hasWrongWayFrame: Boolean,
+    val wrongWayConfidence: BigDecimal?,
 )
 
 /**

@@ -124,6 +124,8 @@ class ReportControllerTest {
             message = "Plate matched",
             updatedAt = updatedAt,
             streetName = null,
+            hasWrongWayFrame = true,
+            wrongWayConfidence = BigDecimal("0.87"),
         )
 
         mockMvc.perform(
@@ -158,6 +160,8 @@ class ReportControllerTest {
             message = null,
             updatedAt = OffsetDateTime.now(),
             streetName = null,
+            hasWrongWayFrame = false,
+            wrongWayConfidence = null,
         )
 
         mockMvc.perform(

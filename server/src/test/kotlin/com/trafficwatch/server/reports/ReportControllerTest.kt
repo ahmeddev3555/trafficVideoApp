@@ -22,9 +22,12 @@ import org.springframework.mock.web.MockMultipartFile
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart
+import org.springframework.http.MediaType
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.content
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import java.math.BigDecimal
+import java.nio.file.Files
 import java.time.OffsetDateTime
 import java.util.UUID
 
@@ -298,5 +301,41 @@ class ReportControllerTest {
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.error").value("INVALID_PAGINATION"))
             .andExpect(jsonPath("$.message").exists())
+    }
+
+    @Test
+    fun `getWrongWayFrame with a valid token returns 200 with image bytes`() {
+        val reportId = UUID.randomUUID()
+        val tempFile = Files.createTempFile("wrong-way-frame-test", ".jpg")
+        Files.write(tempFile, byteArrayOf(1, 2, 3, 4))
+        every { reportService.getWrongWayFramePath(reportId, any()) } returns tempFile
+
+        try {
+            mockMvc.perform(
+                get("/reports/$reportId/wrong-way-frame").header("Authorization", "Bearer ${bearerToken()}"),
+            )
+                .andExpect(status().isOk)
+                .andExpect(content().contentType(MediaType.IMAGE_JPEG))
+        } finally {
+            Files.deleteIfExists(tempFile)
+        }
+    }
+
+    @Test
+    fun `getWrongWayFrame for a report with no stored frame returns 404 with ApiError body`() {
+        val reportId = UUID.randomUUID()
+        every { reportService.getWrongWayFramePath(reportId, any()) } throws ReportNotFoundException(reportId)
+
+        mockMvc.perform(
+            get("/reports/$reportId/wrong-way-frame").header("Authorization", "Bearer ${bearerToken()}"),
+        )
+            .andExpect(status().isNotFound)
+            .andExpect(jsonPath("$.error").value("REPORT_NOT_FOUND"))
+    }
+
+    @Test
+    fun `getWrongWayFrame without an Authorization header is rejected with 401`() {
+        mockMvc.perform(get("/reports/${UUID.randomUUID()}/wrong-way-frame"))
+            .andExpect(status().isUnauthorized)
     }
 }

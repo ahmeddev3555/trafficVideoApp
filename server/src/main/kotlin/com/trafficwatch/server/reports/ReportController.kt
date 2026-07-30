@@ -4,7 +4,11 @@ import com.trafficwatch.server.common.CurrentUser
 import com.trafficwatch.server.reports.dto.ReportListResponse
 import com.trafficwatch.server.reports.dto.ReportStatusResponse
 import com.trafficwatch.server.reports.dto.SubmitReportResponse
+import org.springframework.core.io.FileSystemResource
+import org.springframework.core.io.Resource
 import org.springframework.http.HttpStatus
+import org.springframework.http.MediaType
+import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
@@ -80,4 +84,18 @@ class ReportController(
         @RequestParam("status", required = false) status: ReportStatus?,
     ): ReportListResponse =
         reportService.listReports(CurrentUser.id(), page, pageSize, status)
+
+    /**
+     * `GET /reports/{reportId}/wrong-way-frame` - same per-user scoping/404 behavior as
+     * `GET /reports/{reportId}/status` (see [ReportService.getWrongWayFramePath]). Returns
+     * the annotated (red-boxed) frame image as raw JPEG bytes - the first endpoint in this
+     * API to serve back binary media.
+     */
+    @GetMapping("/reports/{reportId}/wrong-way-frame", produces = [MediaType.IMAGE_JPEG_VALUE])
+    fun getWrongWayFrame(@PathVariable reportId: UUID): ResponseEntity<Resource> {
+        val path = reportService.getWrongWayFramePath(reportId, CurrentUser.id())
+        return ResponseEntity.ok()
+            .contentType(MediaType.IMAGE_JPEG)
+            .body(FileSystemResource(path) as Resource)
+    }
 }

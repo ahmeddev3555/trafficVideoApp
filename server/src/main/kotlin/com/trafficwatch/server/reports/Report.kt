@@ -77,6 +77,19 @@ class Report(
     @Column(name = "street_name")
     var streetName: String? = null,
 
+    // Path to the annotated (red-boxed) frame image of the flagged wrong-way vehicle, in
+    // the same storage convention as videoPath - see WrongWayFrameStorageService. Null
+    // means "no frame available" (report predates this feature, or annotation/storage
+    // failed even though a wrong-way vehicle was found) - the app treats both the same.
+    @Column(name = "wrong_way_frame_path")
+    var wrongWayFramePath: String? = null,
+
+    // How confident the analysis is that the flagged vehicle was genuinely moving the
+    // wrong way (0.0-1.0) - separate from `confidence`, which is the license-plate OCR
+    // confidence. See ReportAnalysisJob for the formula.
+    @Column(name = "wrong_way_confidence")
+    var wrongWayConfidence: BigDecimal? = null,
+
     @Column(name = "created_at", nullable = false)
     var createdAt: OffsetDateTime = OffsetDateTime.now(),
 

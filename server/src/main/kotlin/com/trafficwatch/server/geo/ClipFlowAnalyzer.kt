@@ -1,0 +1,121 @@
+package com.trafficwatch.server.geo
+
+import com.trafficwatch.server.reports.AnalysisProperties
+import com.trafficwatch.server.videoanalysis.dto.VehicleAnalysisResult
+import org.springframework.stereotype.Component
+import kotlin.math.hypot
+import kotlin.math.min
+
+/** Fraction of the frame diagonal below which a track's displacement is noise. */
+private const val MIN_DISPLACEMENT_FRACTION = 0.05
+
+/** Minimum observed frames for a track to vote in a consensus. */
+private const val MIN_TRACK_FRAMES = 3
+
+/** Frame count at which trackQuality's frame factor saturates to 1.0. */
+private const val TRACK_FRAMES_SATURATION = 5.0
+
+/** A vehicle qualified for flow analysis: absolute bearing + quality facts. */
+data class FlowVehicle(
+    val vehicle: VehicleAnalysisResult,
+    val absoluteBearingDegrees: Double,
+    val trackQuality: Double,
+    val corridorId: Long,
+    val corridorCohesion: Double,
+) {
+    val candidateQuality: Double get() = trackQuality * corridorCohesion
+}
+
+/** One corridor's flow consensus (computed excluding any evaluated candidate). */
+data class CorridorConsensus(
+    val corridorId: Long,
+    val bearingDegrees: Double,
+    val resultantLength: Double,
+    val memberCount: Int,
+    val meanCohesion: Double,
+) {
+    /** Spec: clipConfidence = (n/(n+2)) x R x meanCohesion. */
+    val clipConfidence: Double
+        get() = (memberCount / (memberCount + 2.0)) * resultantLength * meanCohesion
+}
+
+/**
+ * Pure clip-flow statistics over corridor-annotated vehicles - no I/O, mirrors
+ * [BearingMath]'s testability contract. Which corridor a vehicle is in is
+ * Python's (frame-space geometry) answer; everything with judgment in it -
+ * who qualifies, what counts as consensus, who opposes whom - is decided here.
+ */
+@Component
+class ClipFlowAnalyzer(
+    private val properties: AnalysisProperties,
+) {
+
+    /**
+     * Vehicles usable for flow analysis: corridor-annotated, with a real bearing,
+     * above the quality floor. Requires frame dimensions (null = older Python
+     * service = no flow analysis at all, per the graceful-degradation contract).
+     */
+    fun qualifyVehicles(
+        vehicles: List<VehicleAnalysisResult>,
+        compassHeadingDegrees: Double,
+        frameWidth: Int?,
+        frameHeight: Int?,
+    ): List<FlowVehicle> {
+        if (frameWidth == null || frameHeight == null || frameWidth <= 0 || frameHeight <= 0) {
+            return emptyList()
+        }
+        val diagonal = hypot(frameWidth.toDouble(), frameHeight.toDouble())
+        val minDisplacement = MIN_DISPLACEMENT_FRACTION * diagonal
+
+        return vehicles.mapNotNull { vehicle ->
+            val frameBearing = vehicle.bearingDegrees ?: return@mapNotNull null
+            val corridorId = vehicle.corridorId ?: return@mapNotNull null
+            val cohesion = vehicle.corridorCohesion ?: return@mapNotNull null
+            val frames = vehicle.trackFrameCount ?: return@mapNotNull null
+            val displacement = vehicle.displacementPixels ?: return@mapNotNull null
+
+            if (frames < MIN_TRACK_FRAMES || displacement < minDisplacement) return@mapNotNull null
+
+            FlowVehicle(
+                vehicle = vehicle,
+                absoluteBearingDegrees = (compassHeadingDegrees + frameBearing) % 360.0,
+                trackQuality = min(frames / TRACK_FRAMES_SATURATION, 1.0) *
+                    min(displacement / minDisplacement, 1.0).coerceAtMost(1.0),
+                corridorId = corridorId,
+                corridorCohesion = cohesion,
+            )
+        }
+    }
+
+    /**
+     * The consensus of corridor [corridorId]'s members (minus [excluding], the
+     * candidate under evaluation - a suspected violator must never vote in the
+     * consensus it is judged against, nor ever be ingested from it). Null when
+     * no members remain or the bearings are too dispersed/bimodal
+     * (R < consensus-min-resultant-length) - a split flow never elects a winner.
+     */
+    fun corridorConsensus(
+        flowVehicles: List<FlowVehicle>,
+        corridorId: Long,
+        excluding: FlowVehicle?,
+    ): CorridorConsensus? {
+        val members = flowVehicles.filter { it.corridorId == corridorId && it !== excluding }
+        if (members.isEmpty()) return null
+
+        val stats = BearingMath.circularStats(members.map { it.absoluteBearingDegrees }) ?: return null
+        if (stats.resultantLength < properties.consensusMinResultantLength) return null
+
+        return CorridorConsensus(
+            corridorId = corridorId,
+            bearingDegrees = stats.meanDegrees,
+            resultantLength = stats.resultantLength,
+            memberCount = members.size,
+            meanCohesion = members.sumOf { it.corridorCohesion } / members.size,
+        )
+    }
+
+    /** True when [candidate] flows in the same direction as [consensus] (within agreement tolerance). */
+    fun movesWith(candidate: FlowVehicle, consensus: CorridorConsensus): Boolean =
+        BearingMath.angularDifferenceDegrees(candidate.absoluteBearingDegrees, consensus.bearingDegrees) <=
+            properties.agreementToleranceDegrees
+}

@@ -77,4 +77,35 @@ object BearingMath {
         val y = Math.toRadians(point.latitude - origin.latitude) * EARTH_RADIUS_METERS
         return x to y
     }
+
+    /**
+     * Circular mean + mean resultant length over [bearingsDegrees]. R near 1 means the
+     * bearings agree tightly; near 0 means dispersed or bimodal (e.g. two opposing
+     * traffic streams). Null for empty input - never a fabricated statistic.
+     */
+    fun circularStats(bearingsDegrees: List<Double>): CircularStats? {
+        if (bearingsDegrees.isEmpty()) return null
+        val sumSin = bearingsDegrees.sumOf { sin(Math.toRadians(it)) }
+        val sumCos = bearingsDegrees.sumOf { cos(Math.toRadians(it)) }
+        val n = bearingsDegrees.size.toDouble()
+        val mean = (Math.toDegrees(atan2(sumSin, sumCos)) + 360.0) % 360.0
+        val resultantLength = sqrt(sumSin * sumSin + sumCos * sumCos) / n
+        return CircularStats(mean, resultantLength)
+    }
+
+    /** Confidence-weighted circular mean; null when inputs are empty or all weights are zero. */
+    fun weightedCircularMeanDegrees(bearingsDegrees: List<Double>, weights: List<Double>): Double? {
+        if (bearingsDegrees.isEmpty() || bearingsDegrees.size != weights.size) return null
+        var sumSin = 0.0
+        var sumCos = 0.0
+        for (i in bearingsDegrees.indices) {
+            sumSin += weights[i] * sin(Math.toRadians(bearingsDegrees[i]))
+            sumCos += weights[i] * cos(Math.toRadians(bearingsDegrees[i]))
+        }
+        if (sumSin == 0.0 && sumCos == 0.0) return null
+        return (Math.toDegrees(atan2(sumSin, sumCos)) + 360.0) % 360.0
+    }
 }
+
+/** Circular mean bearing and mean resultant length R (1.0 = perfectly aligned, 0 = dispersed). */
+data class CircularStats(val meanDegrees: Double, val resultantLength: Double)

@@ -2,6 +2,9 @@ package com.trafficwatch.server.geo
 
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.within
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class BearingMathTest {
@@ -102,5 +105,48 @@ class BearingMathTest {
 
         val distance = BearingMath.distanceToSegmentMeters(offsetPoint, a, b)
         assertThat(distance).isCloseTo(85.0, within(15.0))
+    }
+
+    @Test
+    fun `circularStats of identical bearings has that mean and resultant length one`() {
+        val stats = BearingMath.circularStats(listOf(90.0, 90.0, 90.0))!!
+        assertEquals(90.0, stats.meanDegrees, 1e-9)
+        assertEquals(1.0, stats.resultantLength, 1e-9)
+    }
+
+    @Test
+    fun `circularStats averages correctly across the zero-360 wraparound`() {
+        val stats = BearingMath.circularStats(listOf(350.0, 10.0))!!
+        assertEquals(0.0, stats.meanDegrees, 1e-6)
+        assertTrue(stats.resultantLength > 0.9)
+    }
+
+    @Test
+    fun `circularStats of opposing bearings has near-zero resultant length`() {
+        val stats = BearingMath.circularStats(listOf(0.0, 180.0))!!
+        assertTrue(stats.resultantLength < 1e-9)
+    }
+
+    @Test
+    fun `circularStats of empty list is null`() {
+        assertNull(BearingMath.circularStats(emptyList()))
+    }
+
+    @Test
+    fun `weightedCircularMeanDegrees weights the heavier bearing closer`() {
+        val mean = BearingMath.weightedCircularMeanDegrees(listOf(0.0, 90.0), listOf(3.0, 1.0))!!
+        assertTrue(mean > 0.0 && mean < 45.0)
+    }
+
+    @Test
+    fun `weightedCircularMeanDegrees handles wraparound`() {
+        val mean = BearingMath.weightedCircularMeanDegrees(listOf(350.0, 10.0), listOf(1.0, 1.0))!!
+        assertEquals(0.0, mean, 1e-6)
+    }
+
+    @Test
+    fun `weightedCircularMeanDegrees of empty or zero-weight input is null`() {
+        assertNull(BearingMath.weightedCircularMeanDegrees(emptyList(), emptyList()))
+        assertNull(BearingMath.weightedCircularMeanDegrees(listOf(10.0), listOf(0.0)))
     }
 }

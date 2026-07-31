@@ -34,6 +34,8 @@ dependencies {
 	testImplementation("org.springframework.boot:spring-boot-starter-test")
 	testImplementation("org.springframework.security:spring-security-test")
 	testImplementation("io.mockk:mockk:1.13.11")
+	testImplementation("org.mockito.kotlin:mockito-kotlin:5.1.0")
+	testImplementation("org.mockito:mockito-core:5.1.0")
 	// Bounded poll-with-timeout for asserting @Async completion (Task 11's
 	// ReportAnalysisJob) - not present transitively via spring-boot-starter-test.
 	testImplementation("org.awaitility:awaitility:4.2.2")

@@ -1,5 +1,6 @@
 package com.trafficwatch.server.reports
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import com.trafficwatch.server.reports.exception.InvalidPaginationException
 import com.trafficwatch.server.reports.exception.ReportNotFoundException
 import com.trafficwatch.server.storage.VideoStorageService
@@ -12,6 +13,7 @@ import io.mockk.slot
 import io.mockk.verify
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
+import org.assertj.core.data.Offset
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -49,8 +51,9 @@ class ReportServiceTest {
     private val videoStorageService = mockk<VideoStorageService>()
     private val reportAnalysisJob = mockk<ReportAnalysisJob>()
     private val wrongWayFrameStorageService = mockk<WrongWayFrameStorageService>()
+    private val objectMapper = ObjectMapper()
     private val reportService = ReportService(
-        reportRepository, videoStorageService, reportAnalysisJob, wrongWayFrameStorageService,
+        reportRepository, videoStorageService, reportAnalysisJob, wrongWayFrameStorageService, objectMapper,
     )
 
     private val currentUserId = UUID.randomUUID()
@@ -420,5 +423,35 @@ class ReportServiceTest {
         assertThat(responseB.reports.map { it.reportId }).containsExactly(reportB.id)
         assertThat(responseA.reports.map { it.reportId }).doesNotContain(reportB.id)
         assertThat(responseB.reports.map { it.reportId }).doesNotContain(reportA.id)
+    }
+
+    // --- evidence breakdown ---------------------------------------------------------------
+
+    @Test
+    fun `status response carries the parsed evidence breakdown`() {
+        val reportId = UUID.randomUUID()
+        val report = sampleReport(id = reportId, userId = currentUserId)
+        report.directionEvidence = """{"final_score":0.57,"sources":[]}"""
+        every { reportRepository.findByIdAndUserId(reportId, currentUserId) } returns report
+
+        val response = reportService.getStatus(reportId, currentUserId)
+
+        assertThat(response.evidenceBreakdown).isNotNull()
+        assertThat(response.evidenceBreakdown!!.get("final_score").asDouble()).isCloseTo(0.57, Offset.offset(1e-9))
+    }
+
+    @Test
+    fun `status response has null breakdown for reports without one and for malformed json`() {
+        val reportId = UUID.randomUUID()
+        val report = sampleReport(id = reportId, userId = currentUserId)
+
+        // Test null directionEvidence
+        report.directionEvidence = null
+        every { reportRepository.findByIdAndUserId(reportId, currentUserId) } returns report
+        assertThat(reportService.getStatus(reportId, currentUserId).evidenceBreakdown).isNull()
+
+        // Test malformed JSON
+        report.directionEvidence = "{not json"
+        assertThat(reportService.getStatus(reportId, currentUserId).evidenceBreakdown).isNull()
     }
 }

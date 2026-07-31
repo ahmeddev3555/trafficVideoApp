@@ -1,5 +1,6 @@
 package com.trafficwatch.server.reports.dto
 
+import com.fasterxml.jackson.databind.JsonNode
 import com.trafficwatch.server.reports.ReportStatus
 import java.math.BigDecimal
 import java.time.OffsetDateTime
@@ -35,6 +36,9 @@ data class ReportStatusResponse(
     val streetName: String?,
     val hasWrongWayFrame: Boolean,
     val wrongWayConfidence: BigDecimal?,
+    // Full direction-evidence breakdown JSON (see ReportAnalysisJob's EvidenceBreakdown)
+    // - always present when the analysis stored one; rendered only by debug builds.
+    val evidenceBreakdown: JsonNode?,
 )
 
 /**

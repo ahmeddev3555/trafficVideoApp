@@ -129,6 +129,7 @@ class ReportControllerTest {
             streetName = null,
             hasWrongWayFrame = true,
             wrongWayConfidence = BigDecimal("0.87"),
+            evidenceBreakdown = null,
         )
 
         mockMvc.perform(
@@ -165,6 +166,7 @@ class ReportControllerTest {
             streetName = null,
             hasWrongWayFrame = false,
             wrongWayConfidence = null,
+            evidenceBreakdown = null,
         )
 
         mockMvc.perform(

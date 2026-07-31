@@ -1,5 +1,6 @@
 package com.trafficwatch.server.reports
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import com.trafficwatch.server.common.CurrentUser
 import com.trafficwatch.server.reports.dto.ReportListResponse
 import com.trafficwatch.server.reports.dto.ReportStatusResponse
@@ -37,6 +38,7 @@ class ReportService(
     private val videoStorageService: VideoStorageService,
     private val reportAnalysisJob: ReportAnalysisJob,
     private val wrongWayFrameStorageService: WrongWayFrameStorageService,
+    private val objectMapper: ObjectMapper,
 ) {
 
     /**
@@ -206,6 +208,13 @@ class ReportService(
             streetName = streetName,
             hasWrongWayFrame = wrongWayFramePath != null,
             wrongWayConfidence = wrongWayConfidence,
+            evidenceBreakdown = directionEvidence?.let {
+                try {
+                    objectMapper.readTree(it)
+                } catch (ex: Exception) {
+                    null
+                }
+            },
         )
     }
 }

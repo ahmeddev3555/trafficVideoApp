@@ -7,6 +7,10 @@ package com.trafficwatch.server.videoanalysis.dto
  */
 data class VideoAnalysisResponse(
     val vehicles: List<VehicleAnalysisResult> = emptyList(),
+    // Source video dimensions - null when talking to an older service version,
+    // in which case corridor/flow analysis is skipped entirely.
+    val frameWidth: Int? = null,
+    val frameHeight: Int? = null,
 )
 
 data class BoundingBox(
@@ -25,4 +29,10 @@ data class VehicleAnalysisResult(
     val plateConfidence: Double?,
     val boundingBox: BoundingBox? = null,
     val frameJpegBase64: String? = null,
+    // Corridor flow facts from app/corridors.py - null from older service
+    // versions; ClipFlowAnalyzer treats null as "vehicle not usable for flow".
+    val corridorId: Long? = null,
+    val corridorCohesion: Double? = null,
+    val trackFrameCount: Int? = null,
+    val displacementPixels: Double? = null,
 )

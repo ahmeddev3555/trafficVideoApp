@@ -1,6 +1,8 @@
 package com.trafficwatch.server.reports
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import com.github.tomakehurst.wiremock.WireMockServer
+import com.github.tomakehurst.wiremock.client.WireMock.get
 import com.github.tomakehurst.wiremock.client.WireMock.okJson
 import com.github.tomakehurst.wiremock.client.WireMock.post
 import com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo
@@ -8,6 +10,7 @@ import com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import com.trafficwatch.server.auth.User
 import com.trafficwatch.server.auth.UserRepository
+import com.trafficwatch.server.geo.FlowObservationRepository
 import org.assertj.core.api.Assertions.assertThat
 import org.awaitility.Awaitility.await
 import org.junit.jupiter.api.AfterAll
@@ -48,6 +51,8 @@ class ReportAnalysisIntegrationTest @Autowired constructor(
     private val reportService: ReportService,
     private val reportRepository: ReportRepository,
     private val userRepository: UserRepository,
+    private val flowObservationRepository: FlowObservationRepository,
+    private val objectMapper: ObjectMapper,
 ) {
 
     companion object {
@@ -85,6 +90,12 @@ class ReportAnalysisIntegrationTest @Autowired constructor(
     fun resetWireMockAndSecurityContext() {
         wireMockServer.resetAll()
         SecurityContextHolder.clearContext()
+        // flow_observations isn't otherwise touched by this class's other tests (they only
+        // ever stub a single vehicle, which can never reach the >=2-member consensus
+        // FlowObservationService requires to ingest a row) - cleared anyway so the
+        // corridor-consensus test's "exactly 1 row" assertion never depends on method
+        // execution order against the shared (DB_CLOSE_DELAY=-1) H2 instance.
+        flowObservationRepository.deleteAll()
     }
 
     private fun authenticateAsNewUser(): UUID {
@@ -191,6 +202,52 @@ class ReportAnalysisIntegrationTest @Autowired constructor(
                     """.trimIndent(),
                 ),
             ),
+        )
+    }
+
+    /** A way with neither a `name` nor an `oneway` tag, near [latitude] - forces both the
+     * Unknown-direction fallback (no oneway tag) AND the Nominatim reverse-geocode fallback
+     * (no name tag) that [stubNominatimReverse] answers. */
+    private fun stubOverpassWayNoTags(latitude: BigDecimal) {
+        wireMockServer.stubFor(
+            post(urlEqualTo("/")).willReturn(
+                okJson(
+                    """
+                    {
+                      "elements": [
+                        {
+                          "type": "way",
+                          "id": 3,
+                          "tags": {},
+                          "geometry": [
+                            {"lat": ${latitude.toDouble() - 0.001}, "lon": 74.358749},
+                            {"lat": ${latitude.toDouble() + 0.001}, "lon": 74.358749}
+                          ]
+                        }
+                      ]
+                    }
+                    """.trimIndent(),
+                ),
+            ),
+        )
+    }
+
+    /** Answers StreetDirectionResolver's Nominatim fallback (used only when the nearest
+     * Overpass way has no `name` tag) with [road] as the resolved street name. */
+    private fun stubNominatimReverse(road: String) {
+        wireMockServer.stubFor(
+            get(urlPathEqualTo("/reverse")).willReturn(
+                okJson("""{"address": {"road": "$road"}}"""),
+            ),
+        )
+    }
+
+    /** Overload of [stubVideoAnalysis] for tests that need full control over the response
+     * body (e.g. multiple vehicles sharing a corridor for consensus scoring) rather than the
+     * single-vehicle shape the other overload builds. */
+    private fun stubVideoAnalysis(rawResponseBody: String) {
+        wireMockServer.stubFor(
+            post(urlPathEqualTo("/v1/analyze")).willReturn(okJson(rawResponseBody)),
         )
     }
 
@@ -304,5 +361,61 @@ class ReportAnalysisIntegrationTest @Autowired constructor(
         assertThat(finalReport.analysisMessage)
             .isEqualTo("Legal traffic direction could not be established for this street")
         assertThat(finalReport.streetName).isEqualTo("Untagged Street")
+    }
+
+    @Test
+    fun `report confirms from clip consensus alone when osm has no oneway tag and writes an observation`() {
+        val latitude = BigDecimal("31.5500")
+        stubOverpassWayNoTags(latitude)
+        stubNominatimReverse(road = "Street No 06")
+        // Three vehicles tightly clustered around 90 degrees form corridor 0's consensus (R
+        // close to 1.0, meanCohesion 1.0); the fourth (bearing 270, opposite the consensus)
+        // is the suspected violator, in the SAME corridor - ClipFlowAnalyzer.corridorConsensus
+        // excludes only the candidate under evaluation, so when this vehicle is scored, the
+        // other three (not itself) form its corridor's consensus. There's no OSM oneway tag
+        // (Unknown resolution) and no learned history at this fresh lat/lon bucket, so
+        // CLIP_CONSENSUS is the only evidence source - the confirmation rests on the clip
+        // alone: clipConfidence = (3/5) x R x 1.0 (~0.60), carried through fusion unchanged as
+        // the sole source, then scaled by candidate quality/detection confidence/bearing
+        // match into a final score comfortably past the 0.5 confirmation threshold.
+        stubVideoAnalysis(
+            """
+            {
+              "vehicles": [
+                {"track_id": 1, "vehicle_type": "car", "detection_confidence": 0.95, "bearing_degrees": 88.0,
+                 "plate_text": null, "plate_confidence": null, "corridor_id": 0, "corridor_cohesion": 1.0,
+                 "track_frame_count": 10, "displacement_pixels": 300.0},
+                {"track_id": 2, "vehicle_type": "car", "detection_confidence": 0.95, "bearing_degrees": 90.0,
+                 "plate_text": null, "plate_confidence": null, "corridor_id": 0, "corridor_cohesion": 1.0,
+                 "track_frame_count": 10, "displacement_pixels": 300.0},
+                {"track_id": 3, "vehicle_type": "car", "detection_confidence": 0.95, "bearing_degrees": 92.0,
+                 "plate_text": null, "plate_confidence": null, "corridor_id": 0, "corridor_cohesion": 1.0,
+                 "track_frame_count": 10, "displacement_pixels": 300.0},
+                {"track_id": 4, "vehicle_type": "car", "detection_confidence": 0.95, "bearing_degrees": 270.0,
+                 "plate_text": "LEB-5678", "plate_confidence": 0.8, "corridor_id": 0, "corridor_cohesion": 1.0,
+                 "track_frame_count": 10, "displacement_pixels": 300.0}
+              ],
+              "frame_width": 1920,
+              "frame_height": 1080
+            }
+            """.trimIndent(),
+        )
+
+        val reportId = submitReport(latitude, compassHeadingDegrees = BigDecimal.ZERO)
+        val finalReport = waitForTerminalStatus(reportId)
+
+        assertThat(finalReport.status).isEqualTo(ReportStatus.CONFIRMED)
+        assertThat(finalReport.licensePlate).isEqualTo("LEB-5678")
+        assertThat(finalReport.wrongWayConfidence).isNotNull()
+        assertThat(finalReport.wrongWayConfidence!!.toDouble()).isGreaterThanOrEqualTo(0.5)
+
+        val evidenceJson = finalReport.directionEvidence
+        assertThat(evidenceJson).isNotNull()
+        val evidenceBreakdown = objectMapper.readTree(evidenceJson)
+        assertThat(evidenceBreakdown.get("sources").get(0).get("kind").asText()).isEqualTo("CLIP_CONSENSUS")
+
+        val observations = flowObservationRepository.findAll()
+        assertThat(observations).hasSize(1)
+        assertThat(observations[0].vehicleCount).isEqualTo(3)
     }
 }

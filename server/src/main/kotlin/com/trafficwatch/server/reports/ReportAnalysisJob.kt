@@ -1,7 +1,17 @@
 package com.trafficwatch.server.reports
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import com.trafficwatch.server.geo.BearingMath
+import com.trafficwatch.server.geo.ClipFlowAnalyzer
+import com.trafficwatch.server.geo.CorridorConsensus
+import com.trafficwatch.server.geo.DirectionEvidence
+import com.trafficwatch.server.geo.DirectionEvidenceResolver
 import com.trafficwatch.server.geo.DirectionResolution
+import com.trafficwatch.server.geo.EvidenceEntry
+import com.trafficwatch.server.geo.EvidenceKind
+import com.trafficwatch.server.geo.FlowObservationService
+import com.trafficwatch.server.geo.FlowVehicle
+import com.trafficwatch.server.geo.FusionResult
 import com.trafficwatch.server.geo.StreetDirectionResolver
 import com.trafficwatch.server.storage.VideoStorageService
 import com.trafficwatch.server.storage.WrongWayFrameStorageService
@@ -32,6 +42,10 @@ class ReportAnalysisJob(
     private val videoAnalysisClient: VideoAnalysisClient,
     private val videoStorageService: VideoStorageService,
     private val wrongWayFrameStorageService: WrongWayFrameStorageService,
+    private val clipFlowAnalyzer: ClipFlowAnalyzer,
+    private val directionEvidenceResolver: DirectionEvidenceResolver,
+    private val flowObservationService: FlowObservationService,
+    private val objectMapper: ObjectMapper,
 ) {
     private val logger = LoggerFactory.getLogger(ReportAnalysisJob::class.java)
 
@@ -70,6 +84,7 @@ class ReportAnalysisJob(
         report.streetName = outcome.streetName
         report.wrongWayConfidence = outcome.wrongWayConfidence
         report.wrongWayFramePath = outcome.wrongWayFramePath
+        report.directionEvidence = outcome.directionEvidenceJson
         report.updatedAt = OffsetDateTime.now()
 
         reportRepository.save(report)
@@ -80,25 +95,27 @@ class ReportAnalysisJob(
             ?: return AnalysisOutcome.rejected("Device compass heading unavailable for this report")
 
         val resolution = streetDirectionResolver.resolve(report.latitude, report.longitude)
-        val (legalBearingDegrees, streetName) = when (resolution) {
-            is DirectionResolution.NotFound ->
-                return AnalysisOutcome.rejected("Could not identify a street at this location")
-            is DirectionResolution.Unknown ->
-                return AnalysisOutcome.rejected(
-                    "Legal traffic direction unknown for this street",
-                    resolution.streetName,
-                )
-            is DirectionResolution.TwoWay ->
-                return AnalysisOutcome.rejected(
-                    "Street is two-way; no wrong-way violation is possible here",
-                    resolution.streetName,
-                )
-            is DirectionResolution.LookupFailed ->
-                return AnalysisOutcome.rejected("Street lookup temporarily failed: ${resolution.reason}")
-            is DirectionResolution.OneWay -> resolution.legalBearingDegrees to resolution.streetName
+
+        // TwoWay is the one terminal OSM outcome: an explicit oneway=no means
+        // opposing traffic is legal, and video inference must never run (the
+        // quiet-two-way-street false-positive guard). Everything else - Unknown,
+        // NotFound, LookupFailed - just means the OSM evidence source is absent.
+        if (resolution is DirectionResolution.TwoWay) {
+            return AnalysisOutcome.rejected(
+                "Street is two-way; no wrong-way violation is possible here",
+                resolution.streetName,
+            )
+        }
+        val osmEvidence = (resolution as? DirectionResolution.OneWay)?.let {
+            DirectionEvidence(EvidenceKind.OSM_TAG, it.legalBearingDegrees, 1.0)
+        }
+        val streetName = when (resolution) {
+            is DirectionResolution.OneWay -> resolution.streetName
+            is DirectionResolution.Unknown -> resolution.streetName
+            else -> null
         }
 
-        val vehicles = try {
+        val analysis = try {
             videoAnalysisClient.analyze(
                 videoStorageService.resolve(report.videoPath),
                 requireNotNull(report.id) { "Report must have a generated id before analysis" },
@@ -107,28 +124,164 @@ class ReportAnalysisJob(
             return AnalysisOutcome.rejected("Video analysis service unavailable: ${ex.message}", streetName)
         }
 
-        val candidate = findBestWrongWayVehicle(vehicles, compassHeadingDegrees.toDouble(), legalBearingDegrees)
+        val flowVehicles = clipFlowAnalyzer.qualifyVehicles(
+            analysis.vehicles,
+            compassHeadingDegrees.toDouble(),
+            analysis.frameWidth,
+            analysis.frameHeight,
+        )
+        val historyEvidence = flowObservationService.historyEvidence(report.latitude, report.longitude)
 
-        return if (candidate == null) {
-            AnalysisOutcome.rejected("No vehicles detected moving against the legal direction", streetName)
-        } else {
-            val bearingMatchScore =
-                1.0 - (candidate.angularDistanceDegrees / analysisProperties.wrongWayToleranceDegrees)
-            val wrongWayConfidence = candidate.vehicle.detectionConfidence * bearingMatchScore
+        val evaluation = evaluateCandidates(flowVehicles, osmEvidence, historyEvidence)
 
-            AnalysisOutcome(
+        val outcome = buildOutcome(report, evaluation, osmEvidence, historyEvidence, flowVehicles, streetName)
+
+        ingestObservations(report, flowVehicles, evaluation.best?.flowVehicle)
+
+        return outcome
+    }
+
+    private data class CandidateEvaluation(
+        val best: ScoredCandidate?,
+        val sawConflict: Boolean,
+        val sawInsufficient: Boolean,
+    )
+
+    /**
+     * Evaluates every qualified vehicle as a potential violator. Per spec:
+     * a candidate moving WITH its own corridor's consensus is never a violator
+     * (legal opposing stream on a divided road); a violator moves against its
+     * corridor's consensus, or against the fused legal bearing when alone.
+     * Fusion is per-candidate because the clip-consensus source is the
+     * candidate's own corridor (excluding the candidate itself).
+     */
+    private fun evaluateCandidates(
+        flowVehicles: List<FlowVehicle>,
+        osmEvidence: DirectionEvidence?,
+        historyEvidence: DirectionEvidence?,
+    ): CandidateEvaluation {
+        var best: ScoredCandidate? = null
+        var sawConflict = false
+        var sawInsufficient = false
+
+        for (candidate in flowVehicles) {
+            val consensus = clipFlowAnalyzer.corridorConsensus(flowVehicles, candidate.corridorId, candidate)
+            if (consensus != null && clipFlowAnalyzer.movesWith(candidate, consensus)) {
+                continue // gate 1: flows with its own corridor - never a violator
+            }
+            val clipEvidence = consensus?.let {
+                DirectionEvidence(EvidenceKind.CLIP_CONSENSUS, it.bearingDegrees, it.clipConfidence)
+            }
+
+            when (val fusion = directionEvidenceResolver.fuse(listOfNotNull(osmEvidence, clipEvidence, historyEvidence))) {
+                is FusionResult.Insufficient -> {
+                    if (fusion.conflict) sawConflict = true else sawInsufficient = true
+                }
+                is FusionResult.Fused -> {
+                    val illegalBearing = (fusion.bearingDegrees + 180.0) % 360.0
+                    val angularDistance = BearingMath.angularDifferenceDegrees(
+                        candidate.absoluteBearingDegrees,
+                        illegalBearing,
+                    )
+                    if (angularDistance > analysisProperties.wrongWayToleranceDegrees) continue
+
+                    val bearingMatchScore = 1.0 - (angularDistance / analysisProperties.wrongWayToleranceDegrees)
+                    val finalScore = fusion.directionConfidence *
+                        candidate.candidateQuality *
+                        candidate.vehicle.detectionConfidence *
+                        bearingMatchScore
+
+                    if (best == null || finalScore > best!!.finalScore) {
+                        best = ScoredCandidate(candidate, fusion, angularDistance, bearingMatchScore, finalScore)
+                    }
+                }
+            }
+        }
+        return CandidateEvaluation(best, sawConflict, sawInsufficient)
+    }
+
+    private fun buildOutcome(
+        report: Report,
+        evaluation: CandidateEvaluation,
+        osmEvidence: DirectionEvidence?,
+        historyEvidence: DirectionEvidence?,
+        flowVehicles: List<FlowVehicle>,
+        streetName: String?,
+    ): AnalysisOutcome {
+        val best = evaluation.best
+        if (best != null && best.finalScore >= analysisProperties.confirmationThreshold) {
+            return AnalysisOutcome(
                 status = ReportStatus.CONFIRMED,
-                licensePlate = candidate.vehicle.plateText,
-                confidence = candidate.vehicle.plateConfidence?.let { BigDecimal.valueOf(it) },
+                licensePlate = best.flowVehicle.vehicle.plateText,
+                confidence = best.flowVehicle.vehicle.plateConfidence?.let { BigDecimal.valueOf(it) },
                 message = "Wrong-way vehicle detected on ${streetName ?: "this street"}",
                 streetName = streetName,
-                wrongWayConfidence = BigDecimal.valueOf(wrongWayConfidence),
+                wrongWayConfidence = BigDecimal.valueOf(best.finalScore),
                 wrongWayFramePath = annotateAndStoreFrame(
-                    candidate.vehicle,
+                    best.flowVehicle.vehicle,
                     requireNotNull(report.id) { "Report must have a generated id before analysis" },
                 ),
+                directionEvidenceJson = breakdownJson(best.fusion.entries, best),
             )
         }
+
+        // No confirmation. The fallback fusion must still include the clip's
+        // strongest corridor consensus (computed with NO exclusion): when every
+        // vehicle flows legally with its corridor, no per-candidate fusion ever
+        // ran - yet a corridor unanimously opposing the OSM tag is exactly the
+        // cross-check case, and the conflict veto must still surface here.
+        val strongestClipEvidence = flowVehicles.map { it.corridorId }.distinct()
+            .mapNotNull { clipFlowAnalyzer.corridorConsensus(flowVehicles, it, excluding = null) }
+            .maxByOrNull { it.clipConfidence }
+            ?.let { DirectionEvidence(EvidenceKind.CLIP_CONSENSUS, it.bearingDegrees, it.clipConfidence) }
+        val fallbackFusion = directionEvidenceResolver.fuse(
+            listOfNotNull(osmEvidence, strongestClipEvidence, historyEvidence),
+        )
+        val entries = best?.fusion?.entries ?: fallbackFusion.entries
+
+        val message = when {
+            best != null -> "Possible wrong-way vehicle detected, but confidence was too low to confirm"
+            evaluation.sawConflict || (fallbackFusion as? FusionResult.Insufficient)?.conflict == true ->
+                "Conflicting direction evidence for this street"
+            fallbackFusion is FusionResult.Fused -> "No vehicles detected moving against the legal direction"
+            else -> "Legal traffic direction could not be established for this street"
+        }
+        return AnalysisOutcome.rejected(
+            message,
+            streetName,
+            directionEvidenceJson = breakdownJson(entries, best),
+        )
+    }
+
+    /**
+     * Ingestion happens for every analyzed report regardless of outcome - each
+     * corridor's consensus computed EXCLUDING the evaluated (winning) candidate,
+     * so a violator never teaches the learned DB. Failures are logged inside
+     * FlowObservationService and never affect the report.
+     */
+    private fun ingestObservations(report: Report, flowVehicles: List<FlowVehicle>, excluded: FlowVehicle?) {
+        val consensuses = flowVehicles.map { it.corridorId }.distinct().mapNotNull { corridorId ->
+            clipFlowAnalyzer.corridorConsensus(flowVehicles, corridorId, excluded)
+        }
+        flowObservationService.ingest(report, consensuses)
+    }
+
+    private fun breakdownJson(entries: List<EvidenceEntry>, best: ScoredCandidate?): String? = try {
+        objectMapper.writeValueAsString(
+            EvidenceBreakdown(
+                sources = entries,
+                fusedBearingDegrees = best?.fusion?.bearingDegrees,
+                directionConfidence = best?.fusion?.directionConfidence,
+                candidateQuality = best?.flowVehicle?.candidateQuality,
+                detectionConfidence = best?.flowVehicle?.vehicle?.detectionConfidence,
+                bearingMatchScore = best?.bearingMatchScore,
+                finalScore = best?.finalScore,
+                confirmationThreshold = analysisProperties.confirmationThreshold,
+            ),
+        )
+    } catch (ex: Exception) {
+        logger.warn("ReportAnalysisJob: failed to serialize evidence breakdown", ex)
+        null
     }
 
     /**
@@ -152,40 +305,27 @@ class ReportAnalysisJob(
             null
         }
     }
-
-    /**
-     * Among [vehicles] whose absolute (compass-corrected) bearing falls within
-     * [AnalysisProperties.wrongWayToleranceDegrees] of the illegal (opposite-of-legal)
-     * direction, returns the one with the highest plate-read confidence (vehicles with no
-     * plate read rank lowest, not excluded outright - a wrong-way detection with no
-     * readable plate is still a real detection), paired with its angular distance from the
-     * illegal bearing (used to compute the wrong-way confidence score).
-     */
-    private fun findBestWrongWayVehicle(
-        vehicles: List<VehicleAnalysisResult>,
-        compassHeadingDegrees: Double,
-        legalBearingDegrees: Double,
-    ): WrongWayCandidate? {
-        val illegalBearingDegrees = (legalBearingDegrees + 180.0) % 360.0
-
-        return vehicles
-            .mapNotNull { vehicle ->
-                val frameBearing = vehicle.bearingDegrees ?: return@mapNotNull null
-                val absoluteBearing = (compassHeadingDegrees + frameBearing) % 360.0
-                val angularDistance = BearingMath.angularDifferenceDegrees(absoluteBearing, illegalBearingDegrees)
-                if (angularDistance <= analysisProperties.wrongWayToleranceDegrees) {
-                    WrongWayCandidate(vehicle, angularDistance)
-                } else {
-                    null
-                }
-            }
-            .maxByOrNull { it.vehicle.plateConfidence ?: -1.0 }
-    }
 }
 
-internal data class WrongWayCandidate(
-    val vehicle: VehicleAnalysisResult,
+/** Serialized (snake_case) into reports.direction_evidence - see the plan's breakdown shape. */
+internal data class EvidenceBreakdown(
+    val sources: List<EvidenceEntry>,
+    val fusedBearingDegrees: Double?,
+    val directionConfidence: Double?,
+    val candidateQuality: Double?,
+    val detectionConfidence: Double?,
+    val bearingMatchScore: Double?,
+    val finalScore: Double?,
+    val confirmationThreshold: Double,
+)
+
+/** One fully-evaluated violation candidate. */
+internal data class ScoredCandidate(
+    val flowVehicle: FlowVehicle,
+    val fusion: FusionResult.Fused,
     val angularDistanceDegrees: Double,
+    val bearingMatchScore: Double,
+    val finalScore: Double,
 )
 
 internal data class AnalysisOutcome(
@@ -196,14 +336,17 @@ internal data class AnalysisOutcome(
     val streetName: String?,
     val wrongWayConfidence: BigDecimal? = null,
     val wrongWayFramePath: String? = null,
+    val directionEvidenceJson: String? = null,
 ) {
     companion object {
-        fun rejected(message: String, streetName: String? = null) = AnalysisOutcome(
-            status = ReportStatus.REJECTED,
-            licensePlate = null,
-            confidence = null,
-            message = message,
-            streetName = streetName,
-        )
+        fun rejected(message: String, streetName: String? = null, directionEvidenceJson: String? = null) =
+            AnalysisOutcome(
+                status = ReportStatus.REJECTED,
+                licensePlate = null,
+                confidence = null,
+                message = message,
+                streetName = streetName,
+                directionEvidenceJson = directionEvidenceJson,
+            )
     }
 }

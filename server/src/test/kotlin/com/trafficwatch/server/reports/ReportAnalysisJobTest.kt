@@ -1,6 +1,14 @@
 package com.trafficwatch.server.reports
 
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.PropertyNamingStrategies
+import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import com.trafficwatch.server.geo.ClipFlowAnalyzer
+import com.trafficwatch.server.geo.DirectionEvidence
+import com.trafficwatch.server.geo.DirectionEvidenceResolver
 import com.trafficwatch.server.geo.DirectionResolution
+import com.trafficwatch.server.geo.EvidenceKind
+import com.trafficwatch.server.geo.FlowObservationService
 import com.trafficwatch.server.geo.StreetDirectionResolver
 import com.trafficwatch.server.storage.VideoStorageService
 import com.trafficwatch.server.storage.WrongWayFrameStorageService
@@ -8,7 +16,10 @@ import com.trafficwatch.server.videoanalysis.VideoAnalysisClient
 import com.trafficwatch.server.videoanalysis.VideoAnalysisException
 import com.trafficwatch.server.videoanalysis.dto.BoundingBox
 import com.trafficwatch.server.videoanalysis.dto.VehicleAnalysisResult
+import com.trafficwatch.server.videoanalysis.dto.VideoAnalysisResponse
+import io.mockk.Runs
 import io.mockk.every
+import io.mockk.just
 import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.unmockkObject
@@ -30,6 +41,11 @@ import java.util.UUID
  * the old stub's 80/20 dice roll this test used to assert). The full async plumbing
  * (afterCommit registration, thread pool) is covered separately by
  * `ReportAnalysisIntegrationTest`.
+ *
+ * [ClipFlowAnalyzer] and [DirectionEvidenceResolver] are used as real (pure, no-I/O)
+ * collaborators rather than mocked - only [FlowObservationService] (the DB-backed learned
+ * history source) is a MockK mock, defaulted in [stubVideoResolution] to "no history yet"
+ * (`historyEvidence` returns null) and "ingestion always succeeds" (`ingest` is a no-op).
  */
 class ReportAnalysisJobTest {
 
@@ -39,6 +55,12 @@ class ReportAnalysisJobTest {
     private val videoAnalysisClient = mockk<VideoAnalysisClient>()
     private val videoStorageService = mockk<VideoStorageService>()
     private val wrongWayFrameStorageService = mockk<WrongWayFrameStorageService>()
+    private val clipFlowAnalyzer = ClipFlowAnalyzer(analysisProperties)
+    private val directionEvidenceResolver = DirectionEvidenceResolver(analysisProperties)
+    private val flowObservationService = mockk<FlowObservationService>()
+    private val objectMapper = ObjectMapper()
+        .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
+        .registerKotlinModule()
 
     private val job = ReportAnalysisJob(
         reportRepository,
@@ -47,6 +69,10 @@ class ReportAnalysisJobTest {
         videoAnalysisClient,
         videoStorageService,
         wrongWayFrameStorageService,
+        clipFlowAnalyzer,
+        directionEvidenceResolver,
+        flowObservationService,
+        objectMapper,
     )
 
     private val fakeVideoPath: Path = Path.of("/videos/fake.mp4")
@@ -54,6 +80,8 @@ class ReportAnalysisJobTest {
     @BeforeEach
     fun stubVideoResolution() {
         every { videoStorageService.resolve(any()) } returns fakeVideoPath
+        every { flowObservationService.historyEvidence(any(), any()) } returns null
+        every { flowObservationService.ingest(any(), any()) } just Runs
     }
 
     private fun sampleReport(
@@ -80,20 +108,36 @@ class ReportAnalysisJobTest {
     private fun vehicle(
         trackId: Long = 1,
         bearingDegrees: Double? = 90.0,
+        detectionConfidence: Double = 0.8,
         plateText: String? = "LEA-1234",
         plateConfidence: Double? = 0.9,
         boundingBox: BoundingBox? = null,
         frameJpegBase64: String? = null,
+        corridorId: Long? = 0L,
+        corridorCohesion: Double? = 1.0,
+        trackFrameCount: Int? = 10,
+        displacementPixels: Double? = 300.0,
     ) = VehicleAnalysisResult(
         trackId = trackId,
         vehicleType = "car",
-        detectionConfidence = 0.8,
+        detectionConfidence = detectionConfidence,
         bearingDegrees = bearingDegrees,
         plateText = plateText,
         plateConfidence = plateConfidence,
         boundingBox = boundingBox,
         frameJpegBase64 = frameJpegBase64,
+        corridorId = corridorId,
+        corridorCohesion = corridorCohesion,
+        trackFrameCount = trackFrameCount,
+        displacementPixels = displacementPixels,
     )
+
+    /** Wraps [vehicles] into a full video-analysis response with usable frame dimensions. */
+    private fun analysisResponse(
+        vehicles: List<VehicleAnalysisResult>,
+        frameWidth: Int? = 1920,
+        frameHeight: Int? = 1080,
+    ) = VideoAnalysisResponse(vehicles = vehicles, frameWidth = frameWidth, frameHeight = frameHeight)
 
     @Test
     fun `applyOutcome rejects with a specific message when compass heading is missing`() {
@@ -113,12 +157,13 @@ class ReportAnalysisJobTest {
     fun `applyOutcome rejects when no street can be identified at the location`() {
         val report = sampleReport()
         every { streetDirectionResolver.resolve(report.latitude, report.longitude) } returns DirectionResolution.NotFound
+        every { videoAnalysisClient.analyze(fakeVideoPath, any()) } returns analysisResponse(emptyList())
         every { reportRepository.save(any()) } answers { firstArg() }
 
         job.applyOutcome(report)
 
         assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
-        assertThat(report.analysisMessage).isEqualTo("Could not identify a street at this location")
+        assertThat(report.analysisMessage).isEqualTo("Legal traffic direction could not be established for this street")
         assertThat(report.streetName).isNull()
     }
 
@@ -128,12 +173,13 @@ class ReportAnalysisJobTest {
         every {
             streetDirectionResolver.resolve(report.latitude, report.longitude)
         } returns DirectionResolution.Unknown("Side Street")
+        every { videoAnalysisClient.analyze(fakeVideoPath, any()) } returns analysisResponse(emptyList())
         every { reportRepository.save(any()) } answers { firstArg() }
 
         job.applyOutcome(report)
 
         assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
-        assertThat(report.analysisMessage).isEqualTo("Legal traffic direction unknown for this street")
+        assertThat(report.analysisMessage).isEqualTo("Legal traffic direction could not be established for this street")
         assertThat(report.streetName).isEqualTo("Side Street")
     }
 
@@ -153,18 +199,22 @@ class ReportAnalysisJobTest {
     }
 
     @Test
-    fun `applyOutcome rejects without caching-relevant side effects when the OSM lookup fails`() {
+    fun `applyOutcome rejects on OSM lookup failure but still proceeds to video evaluation`() {
         val report = sampleReport()
         every {
             streetDirectionResolver.resolve(report.latitude, report.longitude)
         } returns DirectionResolution.LookupFailed("Overpass timed out")
+        every { videoAnalysisClient.analyze(fakeVideoPath, any()) } returns analysisResponse(emptyList())
         every { reportRepository.save(any()) } answers { firstArg() }
 
         job.applyOutcome(report)
 
         assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
-        assertThat(report.analysisMessage).isEqualTo("Street lookup temporarily failed: Overpass timed out")
-        verify(exactly = 0) { videoAnalysisClient.analyze(any(), any()) }
+        assertThat(report.analysisMessage).isEqualTo("Legal traffic direction could not be established for this street")
+        // Unlike the old terminal-on-lookup-failure behavior, the OSM outage no longer skips
+        // video analysis - clip consensus/history can still resolve the direction (see the
+        // "lookup failure with mature history proceeds to evaluation" test below).
+        verify(exactly = 1) { videoAnalysisClient.analyze(fakeVideoPath, any()) }
     }
 
     @Test
@@ -193,7 +243,7 @@ class ReportAnalysisJobTest {
         // (same direction as legal) is not a wrong-way vehicle.
         every {
             videoAnalysisClient.analyze(fakeVideoPath, any())
-        } returns listOf(vehicle(bearingDegrees = 0.0))
+        } returns analysisResponse(listOf(vehicle(bearingDegrees = 0.0)))
         every { reportRepository.save(any()) } answers { firstArg() }
 
         job.applyOutcome(report)
@@ -213,7 +263,7 @@ class ReportAnalysisJobTest {
         // (added to the 0-degree compass heading) lands on 180 is moving the wrong way.
         every {
             videoAnalysisClient.analyze(fakeVideoPath, any())
-        } returns listOf(vehicle(bearingDegrees = 180.0, plateText = "LEA-1234", plateConfidence = 0.9))
+        } returns analysisResponse(listOf(vehicle(bearingDegrees = 180.0, plateText = "LEA-1234", plateConfidence = 0.9)))
         every { reportRepository.save(any()) } answers { firstArg() }
 
         job.applyOutcome(report)
@@ -226,18 +276,24 @@ class ReportAnalysisJobTest {
     }
 
     @Test
-    fun `applyOutcome picks the wrong-way vehicle with the highest plate confidence among several`() {
+    fun `applyOutcome picks the wrong-way vehicle with the highest final score among several`() {
         val report = sampleReport(compassHeadingDegrees = BigDecimal("0.0"))
         every {
             streetDirectionResolver.resolve(report.latitude, report.longitude)
         } returns DirectionResolution.OneWay("Main Boulevard", 0.0)
+        // Distinct corridors so no cross-vehicle corridor consensus applies - each candidate
+        // is scored on OSM evidence alone. Winner is decided by bearing proximity to the
+        // illegal bearing (180), not plate confidence: track 2 (2 degrees off) beats track 1
+        // (30 degrees off, still within the 60-degree tolerance).
         every {
             videoAnalysisClient.analyze(fakeVideoPath, any())
-        } returns listOf(
-            vehicle(trackId = 1, bearingDegrees = 180.0, plateText = "AAA-1111", plateConfidence = 0.4),
-            vehicle(trackId = 2, bearingDegrees = 175.0, plateText = "BBB-2222", plateConfidence = 0.95),
-            // Not a wrong-way vehicle at all (bearing near 0, same as legal direction).
-            vehicle(trackId = 3, bearingDegrees = 5.0, plateText = "CCC-3333", plateConfidence = 0.99),
+        } returns analysisResponse(
+            listOf(
+                vehicle(trackId = 1, corridorId = 1, bearingDegrees = 150.0, plateText = "AAA-1111", plateConfidence = 0.4),
+                vehicle(trackId = 2, corridorId = 2, bearingDegrees = 178.0, plateText = "BBB-2222", plateConfidence = 0.95),
+                // Not a wrong-way vehicle at all (bearing near 0, same as legal direction).
+                vehicle(trackId = 3, corridorId = 3, bearingDegrees = 5.0, plateText = "CCC-3333", plateConfidence = 0.99),
+            ),
         )
         every { reportRepository.save(any()) } answers { firstArg() }
 
@@ -255,7 +311,7 @@ class ReportAnalysisJobTest {
         } returns DirectionResolution.OneWay("Main Boulevard", 0.0)
         every {
             videoAnalysisClient.analyze(fakeVideoPath, any())
-        } returns listOf(vehicle(bearingDegrees = 180.0, plateText = null, plateConfidence = null))
+        } returns analysisResponse(listOf(vehicle(bearingDegrees = 180.0, plateText = null, plateConfidence = null)))
         every { reportRepository.save(any()) } answers { firstArg() }
 
         job.applyOutcome(report)
@@ -273,7 +329,7 @@ class ReportAnalysisJobTest {
         } returns DirectionResolution.OneWay("Main Boulevard", 0.0)
         every {
             videoAnalysisClient.analyze(fakeVideoPath, any())
-        } returns listOf(vehicle(bearingDegrees = null))
+        } returns analysisResponse(listOf(vehicle(bearingDegrees = null)))
         every { reportRepository.save(any()) } answers { firstArg() }
 
         job.applyOutcome(report)
@@ -315,7 +371,7 @@ class ReportAnalysisJobTest {
         // angularDistance 0 -> bearingMatchScore 1.0 -> confidence == detectionConfidence (0.8).
         every {
             videoAnalysisClient.analyze(fakeVideoPath, any())
-        } returns listOf(vehicle(bearingDegrees = 180.0, plateConfidence = null))
+        } returns analysisResponse(listOf(vehicle(bearingDegrees = 180.0, plateConfidence = null)))
         every { reportRepository.save(any()) } answers { firstArg() }
 
         job.applyOutcome(report)
@@ -329,15 +385,17 @@ class ReportAnalysisJobTest {
         every {
             streetDirectionResolver.resolve(report.latitude, report.longitude)
         } returns DirectionResolution.OneWay("Main Boulevard", 0.0)
-        // 150 is 30 degrees off the illegal bearing of 180 - within the 60-degree
-        // tolerance, but not dead-on, so its confidence must be lower than 0.8.
+        // 170 is 10 degrees off the illegal bearing of 180 - within the 60-degree tolerance,
+        // and (unlike a 30-degree offset) still scores above the 0.5 confirmation threshold,
+        // so wrongWayConfidence is populated and comparable to the dead-on case.
         every {
             videoAnalysisClient.analyze(fakeVideoPath, any())
-        } returns listOf(vehicle(bearingDegrees = 150.0, plateConfidence = null))
+        } returns analysisResponse(listOf(vehicle(bearingDegrees = 170.0, plateConfidence = null)))
         every { reportRepository.save(any()) } answers { firstArg() }
 
         job.applyOutcome(report)
 
+        assertThat(report.status).isEqualTo(ReportStatus.CONFIRMED)
         assertThat(report.wrongWayConfidence).isLessThan(BigDecimal("0.8"))
     }
 
@@ -352,7 +410,9 @@ class ReportAnalysisJobTest {
         val fakeFrameBase64 = Base64.getEncoder().encodeToString(fakeJpegBytes)
         every {
             videoAnalysisClient.analyze(fakeVideoPath, any())
-        } returns listOf(vehicle(bearingDegrees = 180.0, boundingBox = boundingBox, frameJpegBase64 = fakeFrameBase64))
+        } returns analysisResponse(
+            listOf(vehicle(bearingDegrees = 180.0, boundingBox = boundingBox, frameJpegBase64 = fakeFrameBase64)),
+        )
         every { reportRepository.save(any()) } answers { firstArg() }
 
         mockkObject(FrameAnnotator)
@@ -379,7 +439,9 @@ class ReportAnalysisJobTest {
         val fakeFrameBase64 = Base64.getEncoder().encodeToString(byteArrayOf(1, 2, 3))
         every {
             videoAnalysisClient.analyze(fakeVideoPath, any())
-        } returns listOf(vehicle(bearingDegrees = 180.0, boundingBox = boundingBox, frameJpegBase64 = fakeFrameBase64))
+        } returns analysisResponse(
+            listOf(vehicle(bearingDegrees = 180.0, boundingBox = boundingBox, frameJpegBase64 = fakeFrameBase64)),
+        )
         every { reportRepository.save(any()) } answers { firstArg() }
         every { wrongWayFrameStorageService.store(any(), any()) } throws RuntimeException("disk full")
 
@@ -397,7 +459,7 @@ class ReportAnalysisJobTest {
         } returns DirectionResolution.OneWay("Main Boulevard", 0.0)
         every {
             videoAnalysisClient.analyze(fakeVideoPath, any())
-        } returns listOf(vehicle(bearingDegrees = 180.0, boundingBox = null, frameJpegBase64 = null))
+        } returns analysisResponse(listOf(vehicle(bearingDegrees = 180.0, boundingBox = null, frameJpegBase64 = null)))
         every { reportRepository.save(any()) } answers { firstArg() }
 
         job.applyOutcome(report)
@@ -405,5 +467,135 @@ class ReportAnalysisJobTest {
         assertThat(report.status).isEqualTo(ReportStatus.CONFIRMED)
         assertThat(report.wrongWayFramePath).isNull()
         verify(exactly = 0) { wrongWayFrameStorageService.store(any(), any()) }
+    }
+
+    @Test
+    fun `unknown street with strong clip consensus confirms with breakdown`() {
+        val report = sampleReport(compassHeadingDegrees = BigDecimal.ZERO)
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude)
+        } returns DirectionResolution.Unknown("Khayaban-e-Jinnah")
+        // 3 consensus vehicles east (~90), violator west (270) in the same corridor.
+        every {
+            videoAnalysisClient.analyze(fakeVideoPath, any())
+        } returns analysisResponse(
+            listOf(
+                vehicle(trackId = 1, bearingDegrees = 88.0, detectionConfidence = 0.95),
+                vehicle(trackId = 2, bearingDegrees = 90.0, detectionConfidence = 0.95),
+                vehicle(trackId = 3, bearingDegrees = 92.0, detectionConfidence = 0.95),
+                vehicle(
+                    trackId = 4,
+                    bearingDegrees = 270.0,
+                    detectionConfidence = 0.95,
+                    plateText = "LEA-1234",
+                    plateConfidence = 0.8,
+                ),
+            ),
+        )
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.CONFIRMED)
+        assertThat(report.licensePlate).isEqualTo("LEA-1234")
+        assertThat(report.directionEvidence).isNotNull()
+        assertThat(report.directionEvidence).contains("CLIP_CONSENSUS")
+        // clipConfidence = (3/5)*~1*1 = ~0.6; score = 0.6*1*0.95*~1 = ~0.57 >= 0.5
+        assertThat(report.wrongWayConfidence!!.toDouble()).isGreaterThanOrEqualTo(0.5)
+    }
+
+    @Test
+    fun `candidate moving with its corridor is not a violator even against osm`() {
+        val report = sampleReport(compassHeadingDegrees = BigDecimal.ZERO)
+        // OSM says legal=90, so illegal=270. All three vehicles flow 270 together -
+        // a legal opposing stream (divided road), NOT three violators.
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude)
+        } returns DirectionResolution.OneWay("Main Blvd", 90.0)
+        every {
+            videoAnalysisClient.analyze(fakeVideoPath, any())
+        } returns analysisResponse(
+            listOf(
+                vehicle(trackId = 1, bearingDegrees = 268.0, detectionConfidence = 0.95),
+                vehicle(trackId = 2, bearingDegrees = 270.0, detectionConfidence = 0.95),
+                vehicle(trackId = 3, bearingDegrees = 272.0, detectionConfidence = 0.95),
+            ),
+        )
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
+        // The corridor's consensus (270) conflicts with OSM (90) -> conflict message.
+        assertThat(report.analysisMessage).isEqualTo("Conflicting direction evidence for this street")
+    }
+
+    @Test
+    fun `below-threshold candidate rejects with the too-low message`() {
+        val report = sampleReport(compassHeadingDegrees = BigDecimal.ZERO)
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude)
+        } returns DirectionResolution.Unknown(null)
+        // Single consensus partner -> clipConfidence = (1/3)*1*1 = 0.33; score
+        // = 0.33 * 1 * 0.9 * 1 = ~0.3 < 0.5 threshold.
+        every {
+            videoAnalysisClient.analyze(fakeVideoPath, any())
+        } returns analysisResponse(
+            listOf(
+                vehicle(trackId = 1, bearingDegrees = 90.0, detectionConfidence = 0.9),
+                vehicle(trackId = 2, bearingDegrees = 270.0, detectionConfidence = 0.9),
+            ),
+        )
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
+        assertThat(report.analysisMessage).isEqualTo(
+            "Possible wrong-way vehicle detected, but confidence was too low to confirm",
+        )
+        assertThat(report.directionEvidence).isNotNull()
+    }
+
+    @Test
+    fun `lookup failure with mature history proceeds to evaluation`() {
+        val report = sampleReport(compassHeadingDegrees = BigDecimal.ZERO)
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude)
+        } returns DirectionResolution.LookupFailed("Overpass lookup failed")
+        every {
+            flowObservationService.historyEvidence(any(), any())
+        } returns DirectionEvidence(EvidenceKind.LEARNED_HISTORY, 90.0, 0.6)
+        every {
+            videoAnalysisClient.analyze(fakeVideoPath, any())
+        } returns analysisResponse(listOf(vehicle(bearingDegrees = 270.0, detectionConfidence = 0.95)))
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        // score = 0.6 * 1 * 0.95 * 1.0 = 0.57 >= 0.5 -> confirmed despite the OSM outage.
+        assertThat(report.status).isEqualTo(ReportStatus.CONFIRMED)
+    }
+
+    @Test
+    fun `observations are ingested for rejected reports too`() {
+        val report = sampleReport(compassHeadingDegrees = BigDecimal.ZERO)
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude)
+        } returns DirectionResolution.Unknown(null)
+        every {
+            videoAnalysisClient.analyze(fakeVideoPath, any())
+        } returns analysisResponse(
+            listOf(
+                vehicle(trackId = 1, bearingDegrees = 88.0, detectionConfidence = 0.95),
+                vehicle(trackId = 2, bearingDegrees = 92.0, detectionConfidence = 0.95),
+            ),
+        )
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.REJECTED) // nobody moves against the flow
+        verify { flowObservationService.ingest(report, match { it.isNotEmpty() }) }
     }
 }

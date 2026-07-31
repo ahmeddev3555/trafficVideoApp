@@ -1,6 +1,5 @@
 package com.trafficwatch.server.videoanalysis
 
-import com.trafficwatch.server.videoanalysis.dto.VehicleAnalysisResult
 import com.trafficwatch.server.videoanalysis.dto.VideoAnalysisResponse
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.beans.factory.annotation.Value
@@ -29,14 +28,19 @@ class VideoAnalysisClient(
     @Value("\${app.video-analysis.api-key}") private val apiKey: String,
 ) {
 
-    /** Uploads the video at [videoPath] for analysis. [reportId] is echoed/logged only by the Python side. */
-    fun analyze(videoPath: Path, reportId: UUID): List<VehicleAnalysisResult> {
+    /**
+     * Uploads the video at [videoPath] for analysis. [reportId] is echoed/logged only by the
+     * Python side. Returns the full response (vehicles plus frame dimensions) - callers such
+     * as [com.trafficwatch.server.reports.ReportAnalysisJob] need `frameWidth`/`frameHeight`
+     * for corridor/flow analysis, not just the vehicle list.
+     */
+    fun analyze(videoPath: Path, reportId: UUID): VideoAnalysisResponse {
         val body = LinkedMultiValueMap<String, Any>()
         body.add("video", FileSystemResource(videoPath))
         body.add("report_id", reportId.toString())
 
         try {
-            val response = restClient.post()
+            return restClient.post()
                 .uri("/v1/analyze")
                 .header("X-API-Key", apiKey)
                 .contentType(MediaType.MULTIPART_FORM_DATA)
@@ -44,7 +48,6 @@ class VideoAnalysisClient(
                 .retrieve()
                 .body<VideoAnalysisResponse>()
                 ?: throw VideoAnalysisException("Video analysis service returned an empty body")
-            return response.vehicles
         } catch (ex: RestClientResponseException) {
             throw VideoAnalysisException("Video analysis request failed with HTTP ${ex.statusCode}", ex)
         } catch (ex: RestClientException) {

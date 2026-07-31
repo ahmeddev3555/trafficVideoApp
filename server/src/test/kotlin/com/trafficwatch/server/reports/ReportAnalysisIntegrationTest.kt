@@ -160,6 +160,11 @@ class ReportAnalysisIntegrationTest @Autowired constructor(
         )
     }
 
+    // Includes frame dimensions and corridor/flow fields (single vehicle, alone in its own
+    // corridor) so ClipFlowAnalyzer.qualifyVehicles treats it as a usable flow candidate -
+    // without these, the new corridor-gated determineOutcome never scores any candidate at
+    // all, regardless of bearing (see ReportAnalysisJobTest for the corridor-consensus cases
+    // this single-vehicle-per-report suite deliberately doesn't exercise).
     private fun stubVideoAnalysis(bearingDegrees: Double, plateText: String?, plateConfidence: Double?) {
         wireMockServer.stubFor(
             post(urlPathEqualTo("/v1/analyze")).willReturn(
@@ -173,9 +178,15 @@ class ReportAnalysisIntegrationTest @Autowired constructor(
                           "detection_confidence": 0.9,
                           "bearing_degrees": $bearingDegrees,
                           "plate_text": ${plateText?.let { "\"$it\"" } ?: "null"},
-                          "plate_confidence": ${plateConfidence ?: "null"}
+                          "plate_confidence": ${plateConfidence ?: "null"},
+                          "corridor_id": 1,
+                          "corridor_cohesion": 1.0,
+                          "track_frame_count": 10,
+                          "displacement_pixels": 300.0
                         }
-                      ]
+                      ],
+                      "frame_width": 1920,
+                      "frame_height": 1080
                     }
                     """.trimIndent(),
                 ),
@@ -275,12 +286,23 @@ class ReportAnalysisIntegrationTest @Autowired constructor(
                 ),
             ),
         )
+        // No OSM tag AND (deliberately, unlike stubVideoAnalysis) no corridor/flow fields on
+        // the vehicle either, so ClipFlowAnalyzer.qualifyVehicles finds nothing usable -
+        // determineOutcome now proceeds past the missing OSM tag into video analysis, but
+        // with no evidence source able to fuse at all, the final message reflects total
+        // absence of direction evidence, not specifically an "unknown OSM tag".
+        wireMockServer.stubFor(
+            post(urlPathEqualTo("/v1/analyze")).willReturn(
+                okJson("""{"vehicles": [{"track_id": 1, "vehicle_type": "car", "detection_confidence": 0.9, "bearing_degrees": 5.0, "plate_text": null, "plate_confidence": null}]}"""),
+            ),
+        )
 
         val reportId = submitReport(latitude, compassHeadingDegrees = BigDecimal("0.0"))
         val finalReport = waitForTerminalStatus(reportId)
 
         assertThat(finalReport.status).isEqualTo(ReportStatus.REJECTED)
-        assertThat(finalReport.analysisMessage).isEqualTo("Legal traffic direction unknown for this street")
+        assertThat(finalReport.analysisMessage)
+            .isEqualTo("Legal traffic direction could not be established for this street")
         assertThat(finalReport.streetName).isEqualTo("Untagged Street")
     }
 }

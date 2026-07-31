@@ -95,7 +95,7 @@ class VideoAnalysisClientTest {
                 ),
             )
 
-        val vehicles = client.analyze(fakeVideoPath, reportId)
+        val vehicles = client.analyze(fakeVideoPath, reportId).vehicles
 
         assertThat(vehicles).hasSize(2)
         assertThat(vehicles[0].trackId).isEqualTo(1L)
@@ -114,7 +114,7 @@ class VideoAnalysisClientTest {
         mockServer.expect(requestTo("http://video-analysis.test/v1/analyze"))
             .andRespond(withSuccess("""{"vehicles": []}""", MediaType.APPLICATION_JSON))
 
-        val vehicles = client.analyze(fakeVideoPath, UUID.randomUUID())
+        val vehicles = client.analyze(fakeVideoPath, UUID.randomUUID()).vehicles
 
         assertThat(vehicles).isEmpty()
     }

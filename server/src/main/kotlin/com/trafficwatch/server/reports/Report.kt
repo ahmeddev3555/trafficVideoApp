@@ -12,6 +12,8 @@ import java.math.BigDecimal
 import java.time.LocalDateTime
 import java.time.OffsetDateTime
 import java.util.UUID
+import org.hibernate.annotations.JdbcTypeCode
+import org.hibernate.type.SqlTypes
 
 @Entity
 @Table(name = "reports")
@@ -89,6 +91,13 @@ class Report(
     // confidence. See ReportAnalysisJob for the formula.
     @Column(name = "wrong_way_confidence")
     var wrongWayConfidence: BigDecimal? = null,
+
+    // Full direction-evidence breakdown for this analysis (sources, fates, fused
+    // values, per-factor scores) as JSON - always computed and stored; only the
+    // Android debug build renders it. See ReportAnalysisJob for the shape.
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "direction_evidence", columnDefinition = "jsonb")
+    var directionEvidence: String? = null,
 
     @Column(name = "created_at", nullable = false)
     var createdAt: OffsetDateTime = OffsetDateTime.now(),

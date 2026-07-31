@@ -26,10 +26,22 @@ class VehicleResult(BaseModel):
     # advance which one (if any) the Kotlin server will decide is wrong-way.
     bounding_box: BoundingBox | None = None
     frame_jpeg_base64: str | None = None
+    # Corridor assignment: tracks whose paths trace the same physical corridor of
+    # the frame share a corridor_id (direction-agnostic - see app/corridors.py).
+    # Raw frame-space facts only; all consensus/flow judgment is the Kotlin
+    # server's job.
+    corridor_id: int = 0
+    corridor_cohesion: float = 1.0
+    track_frame_count: int = 0
+    displacement_pixels: float = 0.0
 
 
 class AnalyzeResponse(BaseModel):
     vehicles: list[VehicleResult] = Field(default_factory=list)
+    # Source video frame dimensions in pixels - lets the server normalize
+    # displacement_pixels by frame diagonal. 0 x 0 when the video had no frames.
+    frame_width: int = 0
+    frame_height: int = 0
 
 
 class HealthResponse(BaseModel):

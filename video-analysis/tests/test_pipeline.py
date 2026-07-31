@@ -41,6 +41,7 @@ def _fake_settings() -> Settings:
         frame_stride=1,
         min_detection_confidence=0.5,
         plate_confidence_floor=0.3,
+        corridor_cluster_threshold_fraction=0.05,
     )
 
 
@@ -53,10 +54,12 @@ def test_summarize_track_attaches_bounding_box_and_frame_from_the_largest_bbox_f
         settings=_fake_settings(), detector=FakeDetector(frames), plate_reader=FakePlateReader()
     )
 
-    results = pipeline.analyze("unused.mp4")
+    response = pipeline.analyze("unused.mp4")
 
-    assert len(results) == 1
-    vehicle = results[0]
+    assert response.frame_width == 100
+    assert response.frame_height == 100
+    assert len(response.vehicles) == 1
+    vehicle = response.vehicles[0]
     assert vehicle.bounding_box is not None
     assert vehicle.bounding_box.x1 == 5.0
     assert vehicle.bounding_box.y1 == 5.0
@@ -64,3 +67,37 @@ def test_summarize_track_attaches_bounding_box_and_frame_from_the_largest_bbox_f
     assert vehicle.bounding_box.y2 == 30.0
     assert vehicle.frame_jpeg_base64 is not None
     assert len(vehicle.frame_jpeg_base64) > 0
+    assert vehicle.track_frame_count == 2
+    assert vehicle.displacement_pixels > 0.0
+
+
+def test_same_lane_tracks_share_a_corridor_and_opposite_lane_does_not():
+    frames = []
+    # Tracks 1 and 2: near-identical vertical paths around x=20.
+    for i in range(6):
+        frames.append(_make_frame(track_id=1, frame_index=i, bbox=(15.0, 10.0 * i, 25.0, 10.0 * i + 10.0)))
+        frames.append(_make_frame(track_id=2, frame_index=i, bbox=(17.0, 10.0 * i, 27.0, 10.0 * i + 10.0)))
+    # Track 3: vertical path far away around x=80 (distance > 5% of the 100x100
+    # frame's diagonal, ~7.07px threshold).
+    for i in range(6):
+        frames.append(_make_frame(track_id=3, frame_index=i, bbox=(75.0, 10.0 * i, 85.0, 10.0 * i + 10.0)))
+
+    pipeline = AnalysisPipeline(
+        settings=_fake_settings(), detector=FakeDetector(frames), plate_reader=FakePlateReader()
+    )
+    response = pipeline.analyze("unused.mp4")
+
+    by_track = {v.track_id: v for v in response.vehicles}
+    assert by_track[1].corridor_id == by_track[2].corridor_id
+    assert by_track[3].corridor_id != by_track[1].corridor_id
+    assert 0.0 <= by_track[1].corridor_cohesion <= 1.0
+
+
+def test_empty_video_returns_empty_response_with_zero_dimensions():
+    pipeline = AnalysisPipeline(
+        settings=_fake_settings(), detector=FakeDetector([]), plate_reader=FakePlateReader()
+    )
+    response = pipeline.analyze("unused.mp4")
+    assert response.vehicles == []
+    assert response.frame_width == 0
+    assert response.frame_height == 0

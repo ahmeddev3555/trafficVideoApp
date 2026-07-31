@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
 from app.config import Settings
+from app.corridors import cluster_tracks, corridor_cohesion
 from app.frame_encoding import encode_frame_to_base64_jpeg
-from app.schemas import BoundingBox, VehicleResult
+from app.schemas import AnalyzeResponse, BoundingBox, VehicleResult
 from app.tracking_bearing import compute_bearing_degrees
 
 if TYPE_CHECKING:
@@ -28,17 +30,46 @@ class AnalysisPipeline:
         self._detector = detector
         self._plate_reader = plate_reader
 
-    def analyze(self, video_path: str) -> list[VehicleResult]:
+    def analyze(self, video_path: str) -> AnalyzeResponse:
         tracks: dict[int, list["TrackedFrame"]] = defaultdict(list)
         for tracked_frame in self._detector.track_video(video_path):
             tracks[tracked_frame.track_id].append(tracked_frame)
 
-        return [self._summarize_track(track_id, frames) for track_id, frames in tracks.items()]
+        if not tracks:
+            return AnalyzeResponse()
 
-    def _summarize_track(self, track_id: int, frames: list["TrackedFrame"]) -> VehicleResult:
+        # All frames share the source video's dimensions; read them off any one.
+        any_frame = next(iter(tracks.values()))[0].frame
+        frame_height, frame_width = any_frame.shape[:2]
+
+        paths = {
+            track_id: [f.centroid for f in sorted(frames, key=lambda f: f.frame_index)]
+            for track_id, frames in tracks.items()
+        }
+        threshold_px = self._settings.corridor_cluster_threshold_fraction * math.hypot(
+            frame_width, frame_height
+        )
+        assignments = cluster_tracks(paths, threshold_px)
+
+        vehicles = [
+            self._summarize_track(
+                track_id,
+                frames,
+                corridor_id=assignments[track_id],
+                cohesion=corridor_cohesion(track_id, paths, assignments, threshold_px),
+            )
+            for track_id, frames in tracks.items()
+        ]
+        return AnalyzeResponse(vehicles=vehicles, frame_width=frame_width, frame_height=frame_height)
+
+    def _summarize_track(self, track_id: int, frames: list["TrackedFrame"], corridor_id: int, cohesion: float) -> VehicleResult:
         frames_sorted = sorted(frames, key=lambda f: f.frame_index)
         centroids = [f.centroid for f in frames_sorted]
         bearing = compute_bearing_degrees(centroids)
+
+        displacement = math.hypot(
+            centroids[-1][0] - centroids[0][0], centroids[-1][1] - centroids[0][1]
+        )
 
         vehicle_type = frames_sorted[0].vehicle_type
         detection_confidence = max(f.confidence for f in frames_sorted)
@@ -59,6 +90,10 @@ class AnalysisPipeline:
             plate_confidence=plate_confidence,
             bounding_box=bounding_box,
             frame_jpeg_base64=frame_jpeg_base64,
+            corridor_id=corridor_id,
+            corridor_cohesion=cohesion,
+            track_frame_count=len(frames_sorted),
+            displacement_pixels=displacement,
         )
 
     def _read_best_plate(self, frames_sorted: list["TrackedFrame"]) -> tuple[str | None, float | None]:

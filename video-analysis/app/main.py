@@ -54,6 +54,6 @@ async def analyze(
     with tempfile.NamedTemporaryFile(suffix=suffix) as tmp_file:
         tmp_file.write(await video.read())
         tmp_file.flush()
-        vehicles = pipeline.analyze(tmp_file.name)
+        response = pipeline.analyze(tmp_file.name)
 
-    return AnalyzeResponse(vehicles=vehicles)
+    return response

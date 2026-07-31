@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     # Floor below which an OCR read is discarded rather than returned as a guess.
     plate_confidence_floor: float = 0.3
 
+    # Corridor clustering: two tracks share a corridor when their paths run within
+    # this fraction of the frame diagonal of each other (see app/corridors.py).
+    corridor_cluster_threshold_fraction: float = 0.05
+
 
 @lru_cache
 def get_settings() -> Settings:

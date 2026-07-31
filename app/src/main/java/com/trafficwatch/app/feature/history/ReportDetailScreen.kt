@@ -30,8 +30,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.google.gson.GsonBuilder
+import com.google.gson.JsonParser
 import coil.compose.AsyncImage
 import com.trafficwatch.app.BuildConfig
 import com.trafficwatch.app.core.domain.model.Report
@@ -160,6 +163,25 @@ fun ReportDetailScreen(
                         }
                     }
                 }
+
+                // Debug builds only: the full evidence/score breakdown behind this
+                // report's outcome, for threshold tuning. Release builds never
+                // render this (and the data is harmless if present - it is the
+                // user's own report's analysis detail).
+                if (BuildConfig.DEBUG && r.evidenceBreakdownJson != null) {
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text("Score Breakdown (debug)", style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                prettyJson(r.evidenceBreakdownJson),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -176,3 +198,9 @@ private fun DetailRow(label: String, value: String) {
 
 private fun formatTs(epochMs: Long) =
     SimpleDateFormat("dd MMM yyyy, HH:mm:ss", Locale.getDefault()).format(Date(epochMs))
+
+private fun prettyJson(json: String): String = try {
+    GsonBuilder().setPrettyPrinting().create().toJson(JsonParser.parseString(json))
+} catch (e: Exception) {
+    json
+}

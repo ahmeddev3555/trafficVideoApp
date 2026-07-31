@@ -531,6 +531,42 @@ class ReportAnalysisJobTest {
     }
 
     @Test
+    fun `candidate in a contested (bimodal) corridor is skipped, never falsely confirmed`() {
+        val report = sampleReport(compassHeadingDegrees = BigDecimal.ZERO)
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude)
+        } returns DirectionResolution.OneWay("Main Blvd", 90.0)
+        // Three vehicles, one corridor, evenly spaced 120 degrees apart (270, 30, 150).
+        // Excluding any ONE candidate, the remaining pair is also 120 degrees apart:
+        // R = |sum of two unit vectors 120 degrees apart| / 2 = cos(60) = 0.5, below the
+        // 0.6 consensus gate -> null for every candidate's own-corridor consensus. The
+        // full (no-exclusion) consensus is null too: three unit vectors 120 degrees apart
+        // sum to exactly zero -> R = 0. The vehicle at 270 sits exactly on the illegal
+        // bearing (legal 90 + 180): before this fix, a null consensus was treated as
+        // "genuinely alone", so this vehicle would have fused against OSM alone
+        // (finalScore = 1.0 * 1.0 * 0.9 * 1.0 = 0.9) and wrongly CONFIRMED. With the fix,
+        // every candidate has >= 1 other corridor member and a null consensus, so all three
+        // are skipped outright; the fallback fusion (osm alone, since the full-set clip
+        // consensus is also null) is Fused, giving the ordinary "no violator" message.
+        every {
+            videoAnalysisClient.analyze(fakeVideoPath, any())
+        } returns analysisResponse(
+            listOf(
+                vehicle(trackId = 1, bearingDegrees = 270.0, detectionConfidence = 0.9),
+                vehicle(trackId = 2, bearingDegrees = 30.0, detectionConfidence = 0.9),
+                vehicle(trackId = 3, bearingDegrees = 150.0, detectionConfidence = 0.9),
+            ),
+        )
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
+        assertThat(report.status).isNotEqualTo(ReportStatus.CONFIRMED)
+        assertThat(report.analysisMessage).isEqualTo("No vehicles detected moving against the legal direction")
+    }
+
+    @Test
     fun `below-threshold candidate rejects with the too-low message`() {
         val report = sampleReport(compassHeadingDegrees = BigDecimal.ZERO)
         every {

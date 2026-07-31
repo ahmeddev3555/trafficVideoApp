@@ -166,6 +166,19 @@ class ReportAnalysisJob(
 
         for (candidate in flowVehicles) {
             val consensus = clipFlowAnalyzer.corridorConsensus(flowVehicles, candidate.corridorId, candidate)
+
+            // "Alone" must mean literally alone. A null consensus can mean either the
+            // corridor genuinely has no other qualified member (the quiet-street case,
+            // where OSM/history evidence alone may still score the candidate) or the
+            // corridor HAS other members but their bearings are bimodal/dispersed, so the
+            // R-gate refused to elect one (a divided road merged into one corridor). Gate 1
+            // can't protect a legally-flowing far-side vehicle in the second case, so a
+            // contested corridor must never elect a violator either - skip it outright.
+            val hasOtherCorridorMembers = flowVehicles.any { it.corridorId == candidate.corridorId && it !== candidate }
+            if (consensus == null && hasOtherCorridorMembers) {
+                continue
+            }
+
             if (consensus != null && clipFlowAnalyzer.movesWith(candidate, consensus)) {
                 continue // gate 1: flows with its own corridor - never a violator
             }

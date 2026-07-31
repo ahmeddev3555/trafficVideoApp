@@ -2,24 +2,22 @@ package com.trafficwatch.server.geo
 
 import com.trafficwatch.server.reports.AnalysisProperties
 import com.trafficwatch.server.reports.Report
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.slot
+import io.mockk.verify
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import org.mockito.kotlin.any
-import org.mockito.kotlin.argumentCaptor
-import org.mockito.kotlin.mock
-import org.mockito.kotlin.never
-import org.mockito.kotlin.verify
-import org.mockito.kotlin.whenever
 import java.math.BigDecimal
 import java.time.LocalDateTime
 import java.util.UUID
 
 class FlowObservationServiceTest {
 
-    private val repository = mock<FlowObservationRepository>()
+    private val repository = mockk<FlowObservationRepository>()
     private val service = FlowObservationService(repository, AnalysisProperties())
 
     private fun report(lat: String = "31.4685846", lon: String = "74.4057830") = Report(
@@ -52,11 +50,12 @@ class FlowObservationServiceTest {
 
     @Test
     fun `ingest writes one row per qualifying consensus with bucketed coordinates`() {
+        val slot = slot<FlowObservation>()
+        every { repository.save(capture(slot)) } returnsArgument 0
+
         service.ingest(report(), listOf(consensus(members = 3)))
 
-        val captor = argumentCaptor<FlowObservation>()
-        verify(repository).save(captor.capture())
-        val row = captor.firstValue
+        val row = slot.captured
         assertEquals(BigDecimal("31.4686"), row.latBucket)
         assertEquals(BigDecimal("74.4058"), row.lonBucket)
         assertEquals(3, row.vehicleCount)
@@ -64,42 +63,44 @@ class FlowObservationServiceTest {
 
     @Test
     fun `ingest skips consensuses with fewer than two members`() {
+        every { repository.save(any()) } returnsArgument 0
         service.ingest(report(), listOf(consensus(members = 1)))
-        verify(repository, never()).save(any())
+        verify(exactly = 0) { repository.save(any()) }
     }
 
     @Test
     fun `ingest skips consensuses below the resultant length gate`() {
+        every { repository.save(any()) } returnsArgument 0
         service.ingest(report(), listOf(consensus(members = 3, r = 0.5)))
-        verify(repository, never()).save(any())
+        verify(exactly = 0) { repository.save(any()) }
     }
 
     @Test
     fun `history evidence requires minimum observation count`() {
-        whenever(repository.findByLatBucketAndLonBucket(any(), any()))
-            .thenReturn(List(4) { observation(90.0) }) // below historyMinObservations = 5
+        every { repository.findByLatBucketAndLonBucket(any(), any()) }
+            .returns(List(4) { observation(90.0) }) // below historyMinObservations = 5
         assertNull(service.historyEvidence(BigDecimal("31.4685846"), BigDecimal("74.4057830")))
     }
 
     @Test
     fun `history evidence requires distinct reporters`() {
         val oneReporter = UUID.randomUUID()
-        whenever(repository.findByLatBucketAndLonBucket(any(), any()))
-            .thenReturn(List(6) { observation(90.0, reporter = oneReporter) })
+        every { repository.findByLatBucketAndLonBucket(any(), any()) }
+            .returns(List(6) { observation(90.0, reporter = oneReporter) })
         assertNull(service.historyEvidence(BigDecimal("31.4685846"), BigDecimal("74.4057830")))
     }
 
     @Test
     fun `history evidence requires unimodal distribution`() {
         val rows = List(3) { observation(90.0) } + List(3) { observation(270.0) }
-        whenever(repository.findByLatBucketAndLonBucket(any(), any())).thenReturn(rows)
+        every { repository.findByLatBucketAndLonBucket(any(), any()) }.returns(rows)
         assertNull(service.historyEvidence(BigDecimal("31.4685846"), BigDecimal("74.4057830")))
     }
 
     @Test
     fun `mature history yields evidence with the documented confidence curve`() {
-        whenever(repository.findByLatBucketAndLonBucket(any(), any()))
-            .thenReturn(List(5) { observation(90.0) })
+        every { repository.findByLatBucketAndLonBucket(any(), any()) }
+            .returns(List(5) { observation(90.0) })
         val evidence = service.historyEvidence(BigDecimal("31.4685846"), BigDecimal("74.4057830"))
 
         assertNotNull(evidence)

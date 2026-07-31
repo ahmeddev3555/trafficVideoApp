@@ -33,7 +33,7 @@ interface ReportDao {
         UPDATE reports
         SET status = :status, licensePlate = :licensePlate, confidence = :confidence,
             analysisMessage = :message, hasWrongWayFrame = :hasWrongWayFrame,
-            wrongWayConfidence = :wrongWayConfidence, updatedAt = :updatedAt
+            wrongWayConfidence = :wrongWayConfidence, evidenceBreakdownJson = :evidenceBreakdownJson, updatedAt = :updatedAt
         WHERE id = :id
     """)
     suspend fun updateAnalysisResult(
@@ -44,6 +44,7 @@ interface ReportDao {
         message: String?,
         hasWrongWayFrame: Boolean,
         wrongWayConfidence: Float?,
+        evidenceBreakdownJson: String?,
         updatedAt: Long
     )
 

@@ -1,5 +1,6 @@
 package com.trafficwatch.app.core.data.remote.dto
 
+import com.google.gson.JsonObject
 import com.google.gson.annotations.SerializedName
 
 data class SubmitReportResponse(
@@ -16,7 +17,8 @@ data class ReportStatusResponse(
     @SerializedName("message") val message: String?,
     @SerializedName("updated_at") val updatedAt: String,
     @SerializedName("has_wrong_way_frame") val hasWrongWayFrame: Boolean,
-    @SerializedName("wrong_way_confidence") val wrongWayConfidence: Float?
+    @SerializedName("wrong_way_confidence") val wrongWayConfidence: Float?,
+    @SerializedName("evidence_breakdown") val evidenceBreakdown: JsonObject?
 )
 
 data class ReportListResponse(

@@ -49,6 +49,7 @@ class ReportRepository @Inject constructor(
                     message = response.message,
                     hasWrongWayFrame = response.hasWrongWayFrame,
                     wrongWayConfidence = response.wrongWayConfidence,
+                    evidenceBreakdownJson = response.evidenceBreakdown?.toString(),
                     updatedAt = System.currentTimeMillis()
                 )
             }

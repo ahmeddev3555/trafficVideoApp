@@ -7,7 +7,7 @@ import com.trafficwatch.app.core.data.local.entity.ReportEntity
 
 @Database(
     entities = [ReportEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

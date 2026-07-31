@@ -14,6 +14,7 @@ data class Report(
     val analysisMessage: String? = null,
     val hasWrongWayFrame: Boolean = false,
     val wrongWayConfidence: Float? = null,
+    val evidenceBreakdownJson: String? = null,
     val createdAt: Long,
     val updatedAt: Long
 )

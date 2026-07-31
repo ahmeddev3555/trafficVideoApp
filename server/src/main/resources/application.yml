@@ -41,3 +41,10 @@ app:
     read-timeout-ms: 180000
   analysis:
     wrong-way-tolerance-degrees: 60
+    confirmation-threshold: 0.5
+    agreement-tolerance-degrees: 45
+    weak-evidence-floor: 0.2
+    consensus-min-resultant-length: 0.6
+    history-min-observations: 5
+    history-min-distinct-reporters: 3
+    history-min-resultant-length: 0.8

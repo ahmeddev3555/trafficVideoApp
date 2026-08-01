@@ -82,8 +82,13 @@ class CameraController @Inject constructor(
                 it.setSurfaceProvider(previewView.surfaceProvider)
             }
 
+            // Quality.HIGHEST previously recorded at the device's native max (4K on some
+            // phones), which made vehicles proportionally tiny once YOLO downscales the
+            // frame for inference - motorcycles in particular went completely undetected.
+            // FHD (1080p) is far more resolution than vehicle detection or plate OCR need
+            // at realistic bystander-filming distances.
             val recorder = Recorder.Builder()
-                .setQualitySelector(QualitySelector.from(Quality.HIGHEST))
+                .setQualitySelector(QualitySelector.from(Quality.FHD))
                 .build()
             videoCapture = VideoCapture.withOutput(recorder)
 

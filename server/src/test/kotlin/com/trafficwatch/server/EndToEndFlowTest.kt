@@ -39,13 +39,15 @@ import kotlin.random.Random
  * `@WebMvcTest`/`@SpringBootTest` (mock web environment) slices, which stub out
  * collaborators this test leaves wired for real.
  *
- * This test never sends `compass_heading_degrees` (an older-app-version-shaped request),
- * so the real [com.trafficwatch.server.reports.ReportAnalysisJob] deterministically lands
- * on `REJECTED` with its "compass heading unavailable" message, short-circuiting before it
- * would ever reach the real Nominatim/Overpass/video-analysis network calls - this is what
- * makes the terminal-status assertions below deterministic without any WireMock stubbing
- * (contrast with `ReportAnalysisIntegrationTest`, which does stub those to exercise the
- * CONFIRMED path).
+ * This test never sends `compass_heading_degrees` (an older-app-version-shaped request).
+ * The real [com.trafficwatch.server.reports.ReportAnalysisJob] still resolves the street
+ * and calls video analysis in this case (only candidate direction-scoring is skipped), so
+ * this class points `app.video-analysis.base-url` at a closed local port (see
+ * [overrideStorageDirectory]'s companion `@DynamicPropertySource`) to make that call fail
+ * fast and deterministically, landing on `REJECTED` with a "video analysis service
+ * unavailable" message without any WireMock stubbing (contrast with
+ * `ReportAnalysisIntegrationTest`, which does stub Nominatim/Overpass/video-analysis to
+ * exercise the CONFIRMED path and the specific "compass unavailable" rejection).
  *
  * The test-only H2 database (`jdbc:h2:mem:testdb;...;DB_CLOSE_DELAY=-1`, see
  * `application-test.yml`) is a single named in-memory instance that persists for the life
@@ -72,6 +74,14 @@ class EndToEndFlowTest @Autowired constructor(
         @DynamicPropertySource
         fun overrideStorageDirectory(registry: DynamicPropertyRegistry) {
             registry.add("app.storage.video-directory") { tempVideoDir.toString() }
+            // ReportAnalysisJob now resolves the street and calls video analysis even when
+            // compass heading is missing (only candidate scoring is skipped) - unlike
+            // before, this test's "no compass" submission no longer short-circuits before
+            // any network call. Pointed at a closed local port (not WireMock; this test
+            // doesn't need canned responses, just deterministic, instant failure) so the
+            // video-analysis call fails fast and consistently regardless of whatever the
+            // real public Nominatim/Overpass resolve for this coordinate.
+            registry.add("app.video-analysis.base-url") { "http://127.0.0.1:1" }
         }
     }
 
@@ -186,13 +196,13 @@ class EndToEndFlowTest @Autowired constructor(
                 current["status"] != "PENDING"
             }
 
-        // 5. This request never included compass_heading_degrees, so the real
+        // 5. video-analysis is pointed at a closed port (see the class doc), so the real
         // ReportAnalysisJob deterministically rejects it as insufficient data - not a
-        // random draw, and never reaches the real OSM/video-analysis network.
+        // random draw, and never depends on real external network behavior.
         assertThat(terminalStatusBody["status"]).isEqualTo("REJECTED")
         assertThat(terminalStatusBody["license_plate"]).isNull()
         assertThat(terminalStatusBody["confidence"]).isNull()
-        assertThat(terminalStatusBody["message"]).isEqualTo("Device compass heading unavailable for this report")
+        assertThat(terminalStatusBody["message"] as String).startsWith("Video analysis service unavailable")
 
         // 6. GET /reports (list) - the submitted report shows up for this user.
         val listResponse = listReports(token)

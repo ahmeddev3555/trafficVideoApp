@@ -140,17 +140,26 @@ class ReportAnalysisJobTest {
     ) = VideoAnalysisResponse(vehicles = vehicles, frameWidth = frameWidth, frameHeight = frameHeight)
 
     @Test
-    fun `applyOutcome rejects with a specific message when compass heading is missing`() {
+    fun `applyOutcome still resolves the street and calls video analysis when compass heading is missing, but rejects with a specific message`() {
         val report = sampleReport(compassHeadingDegrees = null)
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude)
+        } returns DirectionResolution.OneWay("Main Boulevard", 0.0)
+        every {
+            videoAnalysisClient.analyze(fakeVideoPath, any())
+        } returns analysisResponse(listOf(vehicle(bearingDegrees = 180.0)))
         every { reportRepository.save(any()) } answers { firstArg() }
 
         job.applyOutcome(report)
 
         assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
-        assertThat(report.analysisMessage).isEqualTo("Device compass heading unavailable for this report")
+        assertThat(report.analysisMessage)
+            .isEqualTo("Device compass heading unavailable; cannot determine vehicle direction")
+        assertThat(report.streetName).isEqualTo("Main Boulevard")
         assertThat(report.licensePlate).isNull()
         assertThat(report.confidence).isNull()
-        verify(exactly = 0) { streetDirectionResolver.resolve(any(), any()) }
+        verify(exactly = 1) { streetDirectionResolver.resolve(report.latitude, report.longitude) }
+        verify(exactly = 1) { videoAnalysisClient.analyze(fakeVideoPath, any()) }
     }
 
     @Test
@@ -344,6 +353,8 @@ class ReportAnalysisJobTest {
             compassHeadingDegrees = null,
             createdUpdatedAt = OffsetDateTime.parse("2020-01-01T00:00:00Z"),
         )
+        every { streetDirectionResolver.resolve(report.latitude, report.longitude) } returns DirectionResolution.NotFound
+        every { videoAnalysisClient.analyze(fakeVideoPath, any()) } returns analysisResponse(emptyList())
         every { reportRepository.save(any()) } answers { firstArg() }
 
         job.applyOutcome(report)

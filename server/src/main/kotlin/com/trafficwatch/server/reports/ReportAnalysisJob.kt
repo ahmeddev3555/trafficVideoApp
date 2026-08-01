@@ -91,9 +91,6 @@ class ReportAnalysisJob(
     }
 
     private fun determineOutcome(report: Report): AnalysisOutcome {
-        val compassHeadingDegrees = report.compassHeadingDegrees
-            ?: return AnalysisOutcome.rejected("Device compass heading unavailable for this report")
-
         val resolution = streetDirectionResolver.resolve(report.latitude, report.longitude)
 
         // TwoWay is the one terminal OSM outcome: an explicit oneway=no means
@@ -124,17 +121,32 @@ class ReportAnalysisJob(
             return AnalysisOutcome.rejected("Video analysis service unavailable: ${ex.message}", streetName)
         }
 
-        val flowVehicles = clipFlowAnalyzer.qualifyVehicles(
-            analysis.vehicles,
-            compassHeadingDegrees.toDouble(),
-            analysis.frameWidth,
-            analysis.frameHeight,
-        )
+        // A missing compass heading means no vehicle's frame-relative bearing can be
+        // converted to a real-world bearing at all - there is nothing to check against a
+        // legal direction. Rather than bailing out before OSM/video analysis even run (the
+        // pipeline's old behavior), street resolution and vehicle detection above still
+        // happen and are reflected in the stored evidence breakdown; only candidate
+        // direction-scoring is skipped, so this always lands on REJECTED with a message
+        // that says why, distinct from "no violation found."
+        val compassHeadingDegrees = report.compassHeadingDegrees
+        val flowVehicles = if (compassHeadingDegrees != null) {
+            clipFlowAnalyzer.qualifyVehicles(
+                analysis.vehicles,
+                compassHeadingDegrees.toDouble(),
+                analysis.frameWidth,
+                analysis.frameHeight,
+            )
+        } else {
+            emptyList()
+        }
         val historyEvidence = flowObservationService.historyEvidence(report.latitude, report.longitude)
 
         val evaluation = evaluateCandidates(flowVehicles, osmEvidence, historyEvidence)
 
-        val outcome = buildOutcome(report, evaluation, osmEvidence, historyEvidence, flowVehicles, streetName)
+        val outcome = buildOutcome(
+            report, evaluation, osmEvidence, historyEvidence, flowVehicles, streetName,
+            compassMissing = compassHeadingDegrees == null,
+        )
 
         ingestObservations(report, flowVehicles, evaluation.best?.flowVehicle)
 
@@ -220,6 +232,7 @@ class ReportAnalysisJob(
         historyEvidence: DirectionEvidence?,
         flowVehicles: List<FlowVehicle>,
         streetName: String?,
+        compassMissing: Boolean,
     ): AnalysisOutcome {
         val best = evaluation.best
         if (best != null && best.finalScore >= analysisProperties.confirmationThreshold) {
@@ -256,6 +269,7 @@ class ReportAnalysisJob(
             best != null -> "Possible wrong-way vehicle detected, but confidence was too low to confirm"
             evaluation.sawConflict || (fallbackFusion as? FusionResult.Insufficient)?.conflict == true ->
                 "Conflicting direction evidence for this street"
+            compassMissing -> "Device compass heading unavailable; cannot determine vehicle direction"
             fallbackFusion is FusionResult.Fused -> "No vehicles detected moving against the legal direction"
             else -> "Legal traffic direction could not be established for this street"
         }

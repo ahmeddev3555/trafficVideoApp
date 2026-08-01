@@ -309,14 +309,22 @@ class ReportAnalysisIntegrationTest @Autowired constructor(
     }
 
     @Test
-    fun `a report with no compass heading is REJECTED with a specific message, never reaching OSM or video analysis`() {
-        val reportId = submitReport(BigDecimal("31.5300"), compassHeadingDegrees = null)
+    fun `a report with no compass heading still resolves the street and calls video analysis, but is REJECTED with a specific message`() {
+        val latitude = BigDecimal("31.5300")
+        stubOverpassOneWayNorth(latitude)
+        // A vehicle that WOULD be a wrong-way violator if compass were known - proves the
+        // missing-compass rejection isn't a coincidence of no evidence being available.
+        stubVideoAnalysis(bearingDegrees = 180.0, plateText = "LEA-1234", plateConfidence = 0.9)
+
+        val reportId = submitReport(latitude, compassHeadingDegrees = null)
         val finalReport = waitForTerminalStatus(reportId)
 
         assertThat(finalReport.status).isEqualTo(ReportStatus.REJECTED)
-        assertThat(finalReport.analysisMessage).isEqualTo("Device compass heading unavailable for this report")
-        assertThat(finalReport.streetName).isNull()
-        assertThat(wireMockServer.allServeEvents).isEmpty()
+        assertThat(finalReport.analysisMessage)
+            .isEqualTo("Device compass heading unavailable; cannot determine vehicle direction")
+        assertThat(finalReport.streetName).isEqualTo("Test One Way")
+        assertThat(finalReport.licensePlate).isNull()
+        assertThat(wireMockServer.allServeEvents).isNotEmpty()
     }
 
     @Test

@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     # this fraction of the frame diagonal of each other (see app/corridors.py).
     corridor_cluster_threshold_fraction: float = 0.05
 
+    # YOLO's own default inference size (640px) shrinks a 4K-cropped-to-1080p frame's
+    # vehicles more than necessary; this modest bump gives extra margin for small/distant
+    # objects (e.g. motorcycles) without the steeper per-frame CPU cost of jumping straight
+    # to 1280+. Retune here alone if real-world testing shows it still needs adjustment -
+    # no app rebuild required.
+    detection_imgsz: int = 960
+
 
 @lru_cache
 def get_settings() -> Settings:

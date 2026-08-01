@@ -62,7 +62,7 @@ class VehicleDetector:
             capture.release()
 
     def _detect_frame(self, frame: np.ndarray, frame_index: int) -> Iterator[TrackedFrame]:
-        result = self._model(frame, verbose=False)[0]
+        result = self._model(frame, verbose=False, imgsz=self._settings.detection_imgsz)[0]
         detections = sv.Detections.from_ultralytics(result)
 
         vehicle_mask = np.isin(detections.class_id, list(VEHICLE_CLASS_IDS.keys()))

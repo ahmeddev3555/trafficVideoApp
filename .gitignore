@@ -102,3 +102,5 @@ video-analysis/.env
 video-analysis/__pycache__/
 video-analysis/**/__pycache__/
 video-analysis/.pytest_cache/
+# Downloaded model weights (ultralytics auto-downloads these at runtime; never checked in)
+video-analysis/*.pt

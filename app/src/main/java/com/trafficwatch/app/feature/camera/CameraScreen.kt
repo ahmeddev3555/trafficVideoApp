@@ -38,6 +38,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -57,6 +58,16 @@ fun CameraScreen(
     val context = LocalContext.current
     val previewView = remember { PreviewView(context) }
     val outputFile = remember { viewModel.newRawFile() }
+    val isRecording = recordingState is RecordingState.Recording
+
+    // Prevent the screen from dimming/sleeping mid-recording - a phone locking or the
+    // display dimming would interrupt the clip. Scoped to the recording window only, not
+    // the whole camera screen (e.g. while idle waiting for a GPS fix).
+    val view = LocalView.current
+    DisposableEffect(isRecording) {
+        view.keepScreenOn = isRecording
+        onDispose { view.keepScreenOn = false }
+    }
 
     // Reset state when entering this screen
     LaunchedEffect(Unit) {
@@ -125,7 +136,6 @@ fun CameraScreen(
         }
 
         // Record / Stop FAB (bottom-centre)
-        val isRecording = recordingState is RecordingState.Recording
         val locationReady = uiState.locationState is LocationState.Fixed
 
         FloatingActionButton(

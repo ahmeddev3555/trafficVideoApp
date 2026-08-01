@@ -217,8 +217,9 @@ fun TrimScreen(
 
             Spacer(Modifier.height(8.dp))
 
-            // Fixed 5s window scrub bar — only needed when there's actually something to
-            // scrub through; a clip already shorter than the max is entirely selected.
+            // Fixed-length (maxDurationMs) window scrub bar — only needed when there's
+            // actually something to scrub through; a clip already shorter than the max is
+            // entirely selected.
             if (uiState.totalDurationMs > uiState.maxDurationMs) {
                 TrimWindowScrubBar(
                     totalDurationMs = uiState.totalDurationMs,

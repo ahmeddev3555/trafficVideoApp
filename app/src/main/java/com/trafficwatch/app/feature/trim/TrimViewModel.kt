@@ -13,7 +13,7 @@ import kotlinx.coroutines.launch
 import java.io.File
 import javax.inject.Inject
 
-private const val MAX_TRIM_DURATION_MS = 5_000L
+private const val MAX_TRIM_DURATION_MS = 10_000L
 
 data class TrimUiState(
     val videoPath: String = "",

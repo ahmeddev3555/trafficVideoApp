@@ -6,6 +6,7 @@ import android.view.Surface
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.video.FallbackStrategy
 import androidx.camera.video.FileOutputOptions
 import androidx.camera.video.Quality
 import androidx.camera.video.QualitySelector
@@ -88,7 +89,9 @@ class CameraController @Inject constructor(
             // FHD (1080p) is far more resolution than vehicle detection or plate OCR need
             // at realistic bystander-filming distances.
             val recorder = Recorder.Builder()
-                .setQualitySelector(QualitySelector.from(Quality.FHD))
+                .setQualitySelector(
+                    QualitySelector.from(Quality.FHD, FallbackStrategy.lowerQualityOrHigherThan(Quality.FHD)),
+                )
                 .build()
             videoCapture = VideoCapture.withOutput(recorder)
 

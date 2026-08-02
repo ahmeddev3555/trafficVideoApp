@@ -67,13 +67,11 @@ def corridor_cohesion(
     are excluded from the average, so a genuinely tight local cluster scores
     well even when single-linkage has merged it into a much larger corridor
     elsewhere in the frame. Single-member corridors get 1.0 by definition
-    (harmless: their consensus size is 1 downstream). Every member of a
-    corridor with 2+ tracks is guaranteed at least one direct neighbor - the
-    specific track it originally linked through - so the direct-neighbor set
-    below is never empty, PROVIDED `assignments` was produced by
-    `cluster_tracks(paths, threshold_px)` with this same `threshold_px` (true
-    for this module's only caller, `pipeline.py`). The empty-set branch below
-    is a defensive fallback, not expected to trigger. The clamp guards only
+    (harmless: their consensus size is 1 downstream). Every member of a corridor with 2+ tracks is guaranteed at least one direct
+    neighbor - a connected component of size 2+ cannot contain a vertex with no
+    within-threshold edge to another member of that component - so the
+    direct-neighbor set below is never empty (given a consistent threshold_px;
+    see the fallback below for the inconsistent case). The clamp guards only
     against floating-point rounding (a mean of values each <= threshold_px
     cannot exceed it).
     """

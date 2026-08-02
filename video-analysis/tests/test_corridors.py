@@ -88,3 +88,16 @@ def test_cohesion_only_counts_direct_neighbors_not_chain_reached_ones():
     # The old whole-corridor average (including chain-only track 3 at
     # distance 18) would have driven this to a clamped 0.0.
     assert abs(corridor_cohesion(1, paths, assignments, 10.0) - 0.1) < 1e-9
+
+
+def test_cohesion_returns_zero_when_no_direct_neighbor_exists_in_corridor():
+    # Deliberately inconsistent inputs: assignments groups 1 and 2 into the same
+    # corridor, but querying cohesion with a threshold_px smaller than their
+    # actual distance means neither is a "direct" neighbor of the other under
+    # this call's threshold. This can't happen via cluster_tracks() itself
+    # (see the docstring's precondition) - it's the defensive fallback for a
+    # caller that passes a threshold_px inconsistent with the one used to
+    # produce assignments.
+    paths = {1: _line(50.0, 0.0, 100.0), 2: _line(59.0, 0.0, 100.0)}
+    assignments = {1: 0, 2: 0}  # hand-constructed, not from cluster_tracks
+    assert corridor_cohesion(1, paths, assignments, threshold_px=1.0) == 0.0

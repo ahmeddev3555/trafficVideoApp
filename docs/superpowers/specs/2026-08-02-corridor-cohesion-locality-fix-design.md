@@ -68,12 +68,14 @@ approach didn't anticipate, revealed by production data.
 ## The fix
 
 Every member of a corridor with 2+ tracks is guaranteed at least one direct
-neighbor - the specific other track it originally linked through during
-`cluster_tracks()`'s pairwise union step (union only ever fires between two
-tracks whose direct path-distance is `<= threshold_px`). So restricting the
-cohesion average to only directly-close members never produces an empty set
-for a real multi-member corridor; there is no new "no direct neighbors"
-edge case to handle beyond the existing single-member-corridor special case.
+neighbor - a connected component of size 2+ cannot contain a vertex with no
+within-threshold edge to another member of that component - PROVIDED
+`corridor_cohesion()` is called with the same `threshold_px` that produced
+the `assignments` dict (true for this module's only caller, `pipeline.py`,
+which computes `threshold_px` once and passes the identical value to both
+`cluster_tracks()` and `corridor_cohesion()`). The shipped function still
+includes a defensive `if not direct_distances: return 0.0` fallback for a
+caller that violates this precondition, rather than dividing by zero.
 
 ```python
 def corridor_cohesion(
@@ -89,10 +91,13 @@ def corridor_cohesion(
     well even when single-linkage has merged it into a much larger corridor
     elsewhere in the frame. Single-member corridors get 1.0 by definition
     (harmless: their consensus size is 1 downstream). Every member of a
-    corridor with 2+ tracks is guaranteed at least one direct neighbor - the
-    specific track it originally linked through - so the direct-neighbor set
-    below is never empty. The clamp guards only against floating-point
-    rounding (a mean of values each <= threshold_px cannot exceed it).
+    corridor with 2+ tracks is guaranteed at least one direct neighbor - a
+    connected component of size 2+ cannot contain a vertex with no
+    within-threshold edge to another member of that component - so the
+    direct-neighbor set below is never empty (given a consistent threshold_px;
+    see the fallback below for the inconsistent case). The clamp guards only
+    against floating-point rounding (a mean of values each <= threshold_px
+    cannot exceed it).
     """
     corridor_id = assignments[track_id]
     others = [tid for tid, cid in assignments.items() if cid == corridor_id and tid != track_id]
@@ -103,6 +108,10 @@ def corridor_cohesion(
         d for o in others
         if (d := path_distance(paths[track_id], paths[o])) <= threshold_px
     ]
+    if not direct_distances:
+        # Should not happen when assignments/threshold_px are consistent (see
+        # docstring precondition) - defensive fallback rather than a crash.
+        return 0.0
     mean_distance = sum(direct_distances) / len(direct_distances)
     return max(0.0, min(1.0, 1.0 - mean_distance / threshold_px))
 ```

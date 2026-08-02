@@ -27,7 +27,7 @@
 - Consumes: `path_distance(a, b) -> float` (unchanged, existing function in the same file).
 - Produces: `corridor_cohesion(track_id: int, paths: dict[int, Sequence[Point]], assignments: dict[int, int], threshold_px: float) -> float` - same signature as before; only the internal computation changes. No other file calls this function today except `app/pipeline.py`'s `AnalysisPipeline._summarize_track` (unchanged call site, unaffected by this signature-preserving change).
 
-- [ ] **Step 1: Replace the failing test**
+- [x] **Step 1: Replace the failing test**
 
 In `video-analysis/tests/test_corridors.py`, delete this existing test (its premise is no longer reachable under the fix - see Step 2's docstring for why):
 
@@ -68,12 +68,12 @@ def test_cohesion_only_counts_direct_neighbors_not_chain_reached_ones():
     assert abs(corridor_cohesion(1, paths, assignments, 10.0) - 0.1) < 1e-9
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run (from `video-analysis/`): `.venv/Scripts/python.exe -m pytest tests/test_corridors.py::test_cohesion_only_counts_direct_neighbors_not_chain_reached_ones -v`
 Expected: FAIL. Under the current (unfixed) implementation, `corridor_cohesion(1, ...)` averages distances to *both* other members (`[9, 18]`, mean `13.5`), giving `1 - 13.5/10 = -0.35`, clamped to `0.0` - not the `0.1` the new test expects.
 
-- [ ] **Step 3: Replace `corridor_cohesion()`**
+- [x] **Step 3: Replace `corridor_cohesion()`**
 
 In `video-analysis/app/corridors.py`, replace the entire function (lines 58-74):
 
@@ -113,10 +113,13 @@ def corridor_cohesion(
     well even when single-linkage has merged it into a much larger corridor
     elsewhere in the frame. Single-member corridors get 1.0 by definition
     (harmless: their consensus size is 1 downstream). Every member of a
-    corridor with 2+ tracks is guaranteed at least one direct neighbor - the
-    specific track it originally linked through - so the direct-neighbor set
-    below is never empty. The clamp guards only against floating-point
-    rounding (a mean of values each <= threshold_px cannot exceed it).
+    corridor with 2+ tracks is guaranteed at least one direct neighbor - a
+    connected component of size 2+ cannot contain a vertex with no
+    within-threshold edge to another member of that component - so the
+    direct-neighbor set below is never empty (given a consistent threshold_px;
+    see the fallback below for the inconsistent case). The clamp guards only
+    against floating-point rounding (a mean of values each <= threshold_px
+    cannot exceed it).
     """
     corridor_id = assignments[track_id]
     others = [tid for tid, cid in assignments.items() if cid == corridor_id and tid != track_id]
@@ -127,21 +130,25 @@ def corridor_cohesion(
         d for o in others
         if (d := path_distance(paths[track_id], paths[o])) <= threshold_px
     ]
+    if not direct_distances:
+        # Should not happen when assignments/threshold_px are consistent (see
+        # docstring precondition) - defensive fallback rather than a crash.
+        return 0.0
     mean_distance = sum(direct_distances) / len(direct_distances)
     return max(0.0, min(1.0, 1.0 - mean_distance / threshold_px))
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/test_corridors.py::test_cohesion_only_counts_direct_neighbors_not_chain_reached_ones -v`
 Expected: PASS.
 
-- [ ] **Step 5: Run the full existing test suite to confirm no regressions**
+- [x] **Step 5: Run the full existing test suite to confirm no regressions**
 
 Run: `.venv/Scripts/python.exe -m pytest -v`
 Expected: all tests PASS (24 existing minus the 1 deleted plus the 1 new = same total count as before this task; every other test in `test_corridors.py` and `test_pipeline.py` was hand-verified against the new formula during design and requires no changes).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add video-analysis/app/corridors.py video-analysis/tests/test_corridors.py
@@ -154,7 +161,7 @@ real traffic. Restrict the average to directly-close members only -
 every multi-member corridor guarantees at least one."
 ```
 
-- [ ] **Step 7: Deploy to production and manually verify**
+- [x] **Step 7: Deploy to production and manually verify**
 
 Copy the updated file to the server and rebuild the `video-analysis` container:
 

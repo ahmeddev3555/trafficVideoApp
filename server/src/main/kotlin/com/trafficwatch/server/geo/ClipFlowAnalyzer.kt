@@ -71,6 +71,18 @@ class ClipFlowAnalyzer(
             val bbox = vehicle.boundingBox ?: return@mapNotNull null
 
             val bboxDiagonal = hypot(bbox.x2 - bbox.x1, bbox.y2 - bbox.y1)
+            // Defensive: a zero-diagonal bbox (malformed upstream data - real YOLO boxes
+            // are never degenerate) would otherwise make minDisplacement 0.0 and let a
+            // zero-displacement vehicle through, then produce NaN in trackQuality's
+            // division below (0.0/0.0), which can silently corrupt candidate scoring
+            // downstream. Drop it here instead.
+            if (bboxDiagonal <= 0.0) return@mapNotNull null
+            // Note: vehicle.boundingBox is the track's LARGEST-area frame (see Python's
+            // pipeline.py representative_frame selection), not a typical/average size -
+            // for a vehicle whose apparent size changes a lot across the clip (e.g.
+            // approaching or receding the camera), this makes the effective floor
+            // stricter than "15% of typical size" might suggest. Worth knowing if
+            // minDisplacementFraction is ever retuned.
             val minDisplacement = properties.minDisplacementFraction * bboxDiagonal
 
             if (frames < MIN_TRACK_FRAMES || displacement < minDisplacement) return@mapNotNull null

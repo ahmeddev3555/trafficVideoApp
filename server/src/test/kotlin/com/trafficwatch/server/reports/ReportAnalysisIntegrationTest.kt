@@ -364,7 +364,7 @@ class ReportAnalysisIntegrationTest @Autowired constructor(
         // absence of direction evidence, not specifically an "unknown OSM tag".
         wireMockServer.stubFor(
             post(urlPathEqualTo("/v1/analyze")).willReturn(
-                okJson("""{"vehicles": [{"track_id": 1, "vehicle_type": "car", "detection_confidence": 0.9, "bearing_degrees": 5.0, "plate_text": null, "plate_confidence": null, "bounding_box": {"x1": 0.0, "y1": 0.0, "x2": 1414.0, "y2": 1414.0}}]}"""),
+                okJson("""{"vehicles": [{"track_id": 1, "vehicle_type": "car", "detection_confidence": 0.9, "bearing_degrees": 5.0, "plate_text": null, "plate_confidence": null}]}"""),
             ),
         )
 

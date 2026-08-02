@@ -38,8 +38,10 @@ class VehicleResult(BaseModel):
 
 class AnalyzeResponse(BaseModel):
     vehicles: list[VehicleResult] = Field(default_factory=list)
-    # Source video frame dimensions in pixels - lets the server normalize
-    # displacement_pixels by frame diagonal. 0 x 0 when the video had no frames.
+    # Source video frame dimensions in pixels, used by the server only to validate
+    # that a real frame was analyzed (non-null, non-zero). Displacement is
+    # normalized against the vehicle's own bounding-box diagonal, not the frame
+    # diagonal. 0 x 0 when the video had no frames.
     frame_width: int = 0
     frame_height: int = 0
 

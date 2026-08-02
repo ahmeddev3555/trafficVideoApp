@@ -126,6 +126,21 @@ var minDisplacementFraction: Double = 0.15,
 min-displacement-fraction: 0.15
 ```
 
+## Known trade-off: large near-camera vehicles
+
+Normalizing by the vehicle's own bounding-box size removes the bias against
+small/distant vehicles, but introduces a different one: a vehicle whose own
+bbox diagonal exceeds ~734px (the crossover point where `0.15 * diagonal`
+equals the old frame-relative floor of ~110.1px, for a 1920x1080 frame) now
+needs MORE absolute displacement to qualify than the old floor required -
+e.g. a large bus or truck close to the camera. This is an accepted,
+inherent consequence of the size-relative approach, not a defect - the
+whole point is that displacement should scale with the vehicle's own
+apparent size. Worth checking during manual production verification: look
+at the full set of qualified vehicles before and after this change, not
+just whether the originally-diagnosed motorcycle now qualifies - confirm
+no previously-qualified large vehicle silently drops out.
+
 ## Testing
 
 - `ClipFlowAnalyzerTest.kt`'s `vehicle()` helper gains a `boundingBox`

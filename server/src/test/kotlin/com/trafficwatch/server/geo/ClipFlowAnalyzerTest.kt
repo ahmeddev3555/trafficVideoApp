@@ -39,8 +39,6 @@ class ClipFlowAnalyzerTest {
         displacementPixels = displacement,
     )
 
-    // frame 1920x1080 -> diagonal ~2202.9, 5% floor ~110.1px
-
     @Test
     fun `qualifyVehicles converts frame bearing to absolute with compass heading`() {
         val result = analyzer.qualifyVehicles(listOf(vehicle(1, bearing = 90.0)), 45.0, 1920, 1080)

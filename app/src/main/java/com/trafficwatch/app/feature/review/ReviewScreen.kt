@@ -32,6 +32,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -79,8 +80,9 @@ fun ReviewScreen(
 
     DisposableEffect(Unit) { onDispose { exoPlayer.release() } }
 
+    val currentOnSubmit by rememberUpdatedState(onSubmit)
     LaunchedEffect(Unit) {
-        viewModel.submitted.collect { onSubmit() }
+        viewModel.submitted.collect { currentOnSubmit() }
     }
 
     if (uiState.showCellularPrompt) {
@@ -152,6 +154,7 @@ fun ReviewScreen(
 
                 Button(
                     onClick = viewModel::submit,
+                    enabled = !uiState.isSubmitting,
                     modifier = Modifier.fillMaxWidth().height(48.dp)
                 ) { Text("Submit Report") }
 

@@ -89,6 +89,18 @@ class ReviewViewModelTest {
     }
 
     @Test
+    fun `double-tapping submit before it resolves only invokes the use case once`() = runTest {
+        coEvery { submitReportUseCase(any(), any(), any(), any()) } returns
+            SubmitReportResult(reportId = "r1", effectiveLocation = location, onWifi = true)
+
+        viewModel.submit()
+        viewModel.submit()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        coVerify(exactly = 1) { submitReportUseCase(any(), any(), any(), any()) }
+    }
+
+    @Test
     fun `dismissCellularPrompt clears prompt and fires submitted without re-enqueuing`() = runTest {
         coEvery { submitReportUseCase(any(), any(), any(), any()) } returns
             SubmitReportResult(reportId = "r1", effectiveLocation = location, onWifi = false)

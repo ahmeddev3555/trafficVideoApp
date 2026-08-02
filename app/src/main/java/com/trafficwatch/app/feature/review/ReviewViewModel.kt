@@ -21,7 +21,8 @@ data class ReviewUiState(
     val recordingStartedAt: Long = 0L,
     val durationMs: Long = 0L,
     val fileSizeBytes: Long = 0L,
-    val showCellularPrompt: Boolean = false
+    val showCellularPrompt: Boolean = false,
+    val isSubmitting: Boolean = false
 )
 
 @HiltViewModel
@@ -59,7 +60,9 @@ class ReviewViewModel @Inject constructor(
     }
 
     fun submit() {
+        if (_uiState.value.isSubmitting) return
         val state = _uiState.value
+        _uiState.update { it.copy(isSubmitting = true) }
         viewModelScope.launch {
             val result = submitReportUseCase(
                 File(state.trimmedFilePath), state.location, state.recordingStartedAt, state.durationMs
@@ -67,23 +70,26 @@ class ReviewViewModel @Inject constructor(
             lastReportId = result.reportId
             lastEffectiveLocation = result.effectiveLocation
             if (result.onWifi) {
+                _uiState.update { it.copy(isSubmitting = false) }
                 _submitted.send(Unit)
             } else {
-                _uiState.update { it.copy(showCellularPrompt = true) }
+                _uiState.update { it.copy(showCellularPrompt = true, isSubmitting = false) }
             }
         }
     }
 
     /** User explicitly confirmed uploading over cellular data for the current submission. */
     fun confirmCellularSubmit() {
+        if (_uiState.value.isSubmitting) return
         val reportId = lastReportId ?: return
         val location = lastEffectiveLocation ?: return
         val state = _uiState.value
+        _uiState.update { it.copy(isSubmitting = true) }
         viewModelScope.launch {
             submitReportUseCase.confirmCellular(
                 reportId, state.trimmedFilePath, location, state.recordingStartedAt, state.durationMs
             )
-            _uiState.update { it.copy(showCellularPrompt = false) }
+            _uiState.update { it.copy(showCellularPrompt = false, isSubmitting = false) }
             _submitted.send(Unit)
         }
     }

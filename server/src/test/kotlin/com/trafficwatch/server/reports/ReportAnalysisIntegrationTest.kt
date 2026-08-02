@@ -190,10 +190,16 @@ class ReportAnalysisIntegrationTest @Autowired constructor(
                           "bearing_degrees": $bearingDegrees,
                           "plate_text": ${plateText?.let { "\"$it\"" } ?: "null"},
                           "plate_confidence": ${plateConfidence ?: "null"},
+                          "bounding_box": {
+                            "x1": 0.0,
+                            "y1": 0.0,
+                            "x2": 1414.0,
+                            "y2": 1414.0
+                          },
                           "corridor_id": 1,
                           "corridor_cohesion": 1.0,
                           "track_frame_count": 10,
-                          "displacement_pixels": 300.0
+                          "displacement_pixels": 310.0
                         }
                       ],
                       "frame_width": 1920,
@@ -358,7 +364,7 @@ class ReportAnalysisIntegrationTest @Autowired constructor(
         // absence of direction evidence, not specifically an "unknown OSM tag".
         wireMockServer.stubFor(
             post(urlPathEqualTo("/v1/analyze")).willReturn(
-                okJson("""{"vehicles": [{"track_id": 1, "vehicle_type": "car", "detection_confidence": 0.9, "bearing_degrees": 5.0, "plate_text": null, "plate_confidence": null}]}"""),
+                okJson("""{"vehicles": [{"track_id": 1, "vehicle_type": "car", "detection_confidence": 0.9, "bearing_degrees": 5.0, "plate_text": null, "plate_confidence": null, "bounding_box": {"x1": 0.0, "y1": 0.0, "x2": 1414.0, "y2": 1414.0}}]}"""),
             ),
         )
 
@@ -391,17 +397,21 @@ class ReportAnalysisIntegrationTest @Autowired constructor(
             {
               "vehicles": [
                 {"track_id": 1, "vehicle_type": "car", "detection_confidence": 0.95, "bearing_degrees": 88.0,
-                 "plate_text": null, "plate_confidence": null, "corridor_id": 0, "corridor_cohesion": 1.0,
-                 "track_frame_count": 10, "displacement_pixels": 300.0},
+                 "plate_text": null, "plate_confidence": null, "bounding_box": {"x1": 0.0, "y1": 0.0, "x2": 1414.0, "y2": 1414.0},
+                 "corridor_id": 0, "corridor_cohesion": 1.0,
+                 "track_frame_count": 10, "displacement_pixels": 310.0},
                 {"track_id": 2, "vehicle_type": "car", "detection_confidence": 0.95, "bearing_degrees": 90.0,
-                 "plate_text": null, "plate_confidence": null, "corridor_id": 0, "corridor_cohesion": 1.0,
-                 "track_frame_count": 10, "displacement_pixels": 300.0},
+                 "plate_text": null, "plate_confidence": null, "bounding_box": {"x1": 0.0, "y1": 0.0, "x2": 1414.0, "y2": 1414.0},
+                 "corridor_id": 0, "corridor_cohesion": 1.0,
+                 "track_frame_count": 10, "displacement_pixels": 310.0},
                 {"track_id": 3, "vehicle_type": "car", "detection_confidence": 0.95, "bearing_degrees": 92.0,
-                 "plate_text": null, "plate_confidence": null, "corridor_id": 0, "corridor_cohesion": 1.0,
-                 "track_frame_count": 10, "displacement_pixels": 300.0},
+                 "plate_text": null, "plate_confidence": null, "bounding_box": {"x1": 0.0, "y1": 0.0, "x2": 1414.0, "y2": 1414.0},
+                 "corridor_id": 0, "corridor_cohesion": 1.0,
+                 "track_frame_count": 10, "displacement_pixels": 310.0},
                 {"track_id": 4, "vehicle_type": "car", "detection_confidence": 0.95, "bearing_degrees": 270.0,
-                 "plate_text": "LEB-5678", "plate_confidence": 0.8, "corridor_id": 0, "corridor_cohesion": 1.0,
-                 "track_frame_count": 10, "displacement_pixels": 300.0}
+                 "plate_text": "LEB-5678", "plate_confidence": 0.8, "bounding_box": {"x1": 0.0, "y1": 0.0, "x2": 1414.0, "y2": 1414.0},
+                 "corridor_id": 0, "corridor_cohesion": 1.0,
+                 "track_frame_count": 10, "displacement_pixels": 310.0}
               ],
               "frame_width": 1920,
               "frame_height": 1080

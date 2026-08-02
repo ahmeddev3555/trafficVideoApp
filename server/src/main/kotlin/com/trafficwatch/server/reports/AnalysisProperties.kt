@@ -7,8 +7,8 @@ import org.springframework.stereotype.Component
  * Binds `app.analysis.*` configuration for [ReportAnalysisJob]. Includes direction validation
  * thresholds ([wrongWayToleranceDegrees], [agreementToleranceDegrees]), evidence-fusion
  * controls ([confirmationThreshold], [weakEvidenceFloor], [consensusMinResultantLength]),
- * and learned-history maturity gates ([historyMinObservations], [historyMinDistinctReporters],
- * [historyMinResultantLength]).
+ * track-quality gating ([minDisplacementFraction]), and learned-history maturity gates
+ * ([historyMinObservations], [historyMinDistinctReporters], [historyMinResultantLength]).
  */
 @Component
 @ConfigurationProperties(prefix = "app.analysis")
@@ -22,6 +22,11 @@ data class AnalysisProperties(
     var weakEvidenceFloor: Double = 0.2,
     // A corridor's consensus requires at least this mean resultant length R.
     var consensusMinResultantLength: Double = 0.6,
+    // A track's displacement must clear this fraction of its OWN bounding-box diagonal to
+    // count as real motion rather than detection jitter - scaled to the vehicle's own
+    // apparent size so nearby (large-in-frame) and distant (small-in-frame) vehicles are
+    // held to a comparable standard.
+    var minDisplacementFraction: Double = 0.15,
     // Learned-history maturity gates - ALL must hold before history testifies.
     var historyMinObservations: Int = 5,
     var historyMinDistinctReporters: Int = 3,

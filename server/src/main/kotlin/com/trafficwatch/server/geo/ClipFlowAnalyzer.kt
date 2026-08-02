@@ -6,9 +6,6 @@ import org.springframework.stereotype.Component
 import kotlin.math.hypot
 import kotlin.math.min
 
-/** Fraction of the frame diagonal below which a track's displacement is noise. */
-private const val MIN_DISPLACEMENT_FRACTION = 0.05
-
 /** Minimum observed frames for a track to vote in a consensus. */
 private const val MIN_TRACK_FRAMES = 3
 
@@ -64,8 +61,6 @@ class ClipFlowAnalyzer(
         if (frameWidth == null || frameHeight == null || frameWidth <= 0 || frameHeight <= 0) {
             return emptyList()
         }
-        val diagonal = hypot(frameWidth.toDouble(), frameHeight.toDouble())
-        val minDisplacement = MIN_DISPLACEMENT_FRACTION * diagonal
 
         return vehicles.mapNotNull { vehicle ->
             val frameBearing = vehicle.bearingDegrees ?: return@mapNotNull null
@@ -73,6 +68,10 @@ class ClipFlowAnalyzer(
             val cohesion = vehicle.corridorCohesion ?: return@mapNotNull null
             val frames = vehicle.trackFrameCount ?: return@mapNotNull null
             val displacement = vehicle.displacementPixels ?: return@mapNotNull null
+            val bbox = vehicle.boundingBox ?: return@mapNotNull null
+
+            val bboxDiagonal = hypot(bbox.x2 - bbox.x1, bbox.y2 - bbox.y1)
+            val minDisplacement = properties.minDisplacementFraction * bboxDiagonal
 
             if (frames < MIN_TRACK_FRAMES || displacement < minDisplacement) return@mapNotNull null
 

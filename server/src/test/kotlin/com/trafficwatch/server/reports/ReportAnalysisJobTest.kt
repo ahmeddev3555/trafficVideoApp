@@ -111,12 +111,12 @@ class ReportAnalysisJobTest {
         detectionConfidence: Double = 0.8,
         plateText: String? = "LEA-1234",
         plateConfidence: Double? = 0.9,
-        boundingBox: BoundingBox? = null,
+        boundingBox: BoundingBox? = BoundingBox(x1 = 0.0, y1 = 0.0, x2 = 1414.0, y2 = 1414.0),
         frameJpegBase64: String? = null,
         corridorId: Long? = 0L,
         corridorCohesion: Double? = 1.0,
         trackFrameCount: Int? = 10,
-        displacementPixels: Double? = 300.0,
+        displacementPixels: Double? = 310.0,
     ) = VehicleAnalysisResult(
         trackId = trackId,
         vehicleType = "car",
@@ -470,7 +470,7 @@ class ReportAnalysisJobTest {
         } returns DirectionResolution.OneWay("Main Boulevard", 0.0)
         every {
             videoAnalysisClient.analyze(fakeVideoPath, any())
-        } returns analysisResponse(listOf(vehicle(bearingDegrees = 180.0, boundingBox = null, frameJpegBase64 = null)))
+        } returns analysisResponse(listOf(vehicle(bearingDegrees = 180.0, frameJpegBase64 = null)))
         every { reportRepository.save(any()) } answers { firstArg() }
 
         job.applyOutcome(report)

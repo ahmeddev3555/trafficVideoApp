@@ -45,6 +45,7 @@ app:
     agreement-tolerance-degrees: 45
     weak-evidence-floor: 0.2
     consensus-min-resultant-length: 0.6
+    min-displacement-fraction: 0.15
     history-min-observations: 5
     history-min-distinct-reporters: 3
     history-min-resultant-length: 0.8

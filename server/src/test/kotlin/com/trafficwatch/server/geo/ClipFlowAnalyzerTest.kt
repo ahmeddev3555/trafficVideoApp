@@ -1,6 +1,7 @@
 package com.trafficwatch.server.geo
 
 import com.trafficwatch.server.reports.AnalysisProperties
+import com.trafficwatch.server.videoanalysis.dto.BoundingBox
 import com.trafficwatch.server.videoanalysis.dto.VehicleAnalysisResult
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -20,6 +21,10 @@ class ClipFlowAnalyzerTest {
         frames: Int? = 10,
         displacement: Double? = 200.0,
         detectionConfidence: Double = 0.9,
+        // 50x50 -> diagonal ~70.7px, so the 0.15 floor is ~10.6px; the default
+        // displacement of 200.0 clears it trivially, same as it cleared the old
+        // frame-relative floor, so unrelated tests need no other changes.
+        boundingBox: BoundingBox? = BoundingBox(x1 = 0.0, y1 = 0.0, x2 = 50.0, y2 = 50.0),
     ) = VehicleAnalysisResult(
         trackId = trackId,
         vehicleType = "car",
@@ -27,6 +32,7 @@ class ClipFlowAnalyzerTest {
         bearingDegrees = bearing,
         plateText = null,
         plateConfidence = null,
+        boundingBox = boundingBox,
         corridorId = corridorId,
         corridorCohesion = cohesion,
         trackFrameCount = frames,
@@ -43,9 +49,10 @@ class ClipFlowAnalyzerTest {
     }
 
     @Test
-    fun `qualifyVehicles drops null bearings null corridor fields and null frame dims`() {
+    fun `qualifyVehicles drops null bearings null corridor fields null bounding box and null frame dims`() {
         assertTrue(analyzer.qualifyVehicles(listOf(vehicle(1, bearing = null)), 0.0, 1920, 1080).isEmpty())
         assertTrue(analyzer.qualifyVehicles(listOf(vehicle(1, 90.0, corridorId = null)), 0.0, 1920, 1080).isEmpty())
+        assertTrue(analyzer.qualifyVehicles(listOf(vehicle(1, 90.0, boundingBox = null)), 0.0, 1920, 1080).isEmpty())
         assertTrue(analyzer.qualifyVehicles(listOf(vehicle(1, 90.0)), 0.0, null, null).isEmpty())
     }
 
@@ -53,8 +60,23 @@ class ClipFlowAnalyzerTest {
     fun `qualifyVehicles enforces the quality floor`() {
         // Too few frames.
         assertTrue(analyzer.qualifyVehicles(listOf(vehicle(1, 90.0, frames = 2)), 0.0, 1920, 1080).isEmpty())
-        // Displacement under 5% of diagonal (~110.1px).
-        assertTrue(analyzer.qualifyVehicles(listOf(vehicle(1, 90.0, displacement = 50.0)), 0.0, 1920, 1080).isEmpty())
+        // Displacement under 15% of the vehicle's own bbox diagonal (default 50x50 bbox,
+        // diagonal ~70.7px, floor ~10.6px).
+        assertTrue(analyzer.qualifyVehicles(listOf(vehicle(1, 90.0, displacement = 5.0)), 0.0, 1920, 1080).isEmpty())
+    }
+
+    @Test
+    fun `a small close-up vehicle qualifies on modest absolute displacement relative to its own size`() {
+        // Mirrors a real production case: a motorcycle close to the camera with a small
+        // bounding box (~100.1px diagonal) and a displacement (34.6px) that would have
+        // failed the OLD frame-relative floor (5% of a 1920x1080 frame's ~2202.9px
+        // diagonal = ~110.1px) but is ~35% of its OWN bbox diagonal - clearly real
+        // motion, not jitter.
+        val closeBbox = BoundingBox(x1 = 453.6, y1 = 1049.4, x2 = 508.8, y2 = 1132.9)
+        val result = analyzer.qualifyVehicles(
+            listOf(vehicle(1, 171.0, displacement = 34.6, boundingBox = closeBbox)), 0.0, 1920, 1080
+        )
+        assertEquals(1, result.size)
     }
 
     @Test

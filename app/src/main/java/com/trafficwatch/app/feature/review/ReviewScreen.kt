@@ -44,6 +44,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.trafficwatch.app.core.domain.model.LocationData
+import com.trafficwatch.app.core.ui.components.CellularConfirmDialog
 import com.trafficwatch.app.core.util.FileUtil
 import java.io.File
 import java.text.SimpleDateFormat
@@ -77,6 +78,17 @@ fun ReviewScreen(
     }
 
     DisposableEffect(Unit) { onDispose { exoPlayer.release() } }
+
+    LaunchedEffect(Unit) {
+        viewModel.submitted.collect { onSubmit() }
+    }
+
+    if (uiState.showCellularPrompt) {
+        CellularConfirmDialog(
+            onConfirm = viewModel::confirmCellularSubmit,
+            onDismiss = viewModel::dismissCellularPrompt
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -139,7 +151,7 @@ fun ReviewScreen(
                 Spacer(Modifier.height(24.dp))
 
                 Button(
-                    onClick = onSubmit,
+                    onClick = viewModel::submit,
                     modifier = Modifier.fillMaxWidth().height(48.dp)
                 ) { Text("Submit Report") }
 

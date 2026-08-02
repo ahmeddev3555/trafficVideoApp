@@ -25,7 +25,6 @@ import com.trafficwatch.app.feature.history.ReportDetailScreen
 import com.trafficwatch.app.feature.permissions.PermissionsScreen
 import com.trafficwatch.app.feature.review.ReviewScreen
 import com.trafficwatch.app.feature.trim.TrimScreen
-import com.trafficwatch.app.feature.upload.UploadScreen
 import java.io.File
 
 private object Routes {
@@ -35,7 +34,6 @@ private object Routes {
     const val CAMERA = "camera"
     const val TRIM = "trim"
     const val REVIEW = "review"
-    const val UPLOAD = "upload"
     const val HISTORY = "history"
     const val REPORT_DETAIL = "report_detail/{reportId}"
     fun reportDetail(id: String) = "report_detail/$id"
@@ -54,7 +52,6 @@ fun AppNavigation(
     var trimmedVideoFile by rememberSaveable { mutableStateOf<String?>(null) }
     var snapshotLocation by remember { mutableStateOf<LocationData?>(null) }
     var recordingStartedAt by rememberSaveable { mutableLongStateOf(0L) }
-    var trimDurationMs by rememberSaveable { mutableLongStateOf(0L) }
     var permissionsNextRoute by rememberSaveable { mutableStateOf(Routes.HISTORY) }
 
     val startDestination = if (isLoggedIn) Routes.HISTORY else Routes.LOGIN
@@ -155,27 +152,13 @@ fun AppNavigation(
                     ms
                 }
             }
-            trimDurationMs = duration
 
             ReviewScreen(
                 trimmedFile = File(trimmed),
                 location = snapshotLocation,
                 recordingStartedAt = recordingStartedAt,
                 durationMs = duration,
-                onSubmit = { navController.navigate(Routes.UPLOAD) },
-                onRetrim = { navController.popBackStack() },
-                onNavigateBack = { navController.popBackStack() }
-            )
-        }
-
-        composable(Routes.UPLOAD) {
-            val trimmed = trimmedVideoFile ?: return@composable
-            UploadScreen(
-                trimmedFile = File(trimmed),
-                location = snapshotLocation,
-                recordingStartedAt = recordingStartedAt,
-                durationMs = trimDurationMs,
-                onUploadSuccess = {
+                onSubmit = {
                     rawVideoFile = null
                     trimmedVideoFile = null
                     snapshotLocation = null
@@ -183,11 +166,8 @@ fun AppNavigation(
                         popUpTo(Routes.HISTORY) { inclusive = true }
                     }
                 },
-                onRetry = {
-                    navController.navigate(Routes.UPLOAD) {
-                        popUpTo(Routes.UPLOAD) { inclusive = true }
-                    }
-                }
+                onRetrim = { navController.popBackStack() },
+                onNavigateBack = { navController.popBackStack() }
             )
         }
     }

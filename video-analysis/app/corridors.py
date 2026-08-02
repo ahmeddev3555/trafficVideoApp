@@ -70,8 +70,12 @@ def corridor_cohesion(
     (harmless: their consensus size is 1 downstream). Every member of a
     corridor with 2+ tracks is guaranteed at least one direct neighbor - the
     specific track it originally linked through - so the direct-neighbor set
-    below is never empty. The clamp guards only against floating-point
-    rounding (a mean of values each <= threshold_px cannot exceed it).
+    below is never empty, PROVIDED `assignments` was produced by
+    `cluster_tracks(paths, threshold_px)` with this same `threshold_px` (true
+    for this module's only caller, `pipeline.py`). The empty-set branch below
+    is a defensive fallback, not expected to trigger. The clamp guards only
+    against floating-point rounding (a mean of values each <= threshold_px
+    cannot exceed it).
     """
     corridor_id = assignments[track_id]
     others = [tid for tid, cid in assignments.items() if cid == corridor_id and tid != track_id]
@@ -82,5 +86,9 @@ def corridor_cohesion(
         d for o in others
         if (d := path_distance(paths[track_id], paths[o])) <= threshold_px
     ]
+    if not direct_distances:
+        # Should not happen when assignments/threshold_px are consistent (see
+        # docstring precondition) - defensive fallback rather than a crash.
+        return 0.0
     mean_distance = sum(direct_distances) / len(direct_distances)
     return max(0.0, min(1.0, 1.0 - mean_distance / threshold_px))

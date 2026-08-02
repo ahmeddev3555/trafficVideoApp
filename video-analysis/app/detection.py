@@ -45,6 +45,12 @@ class VehicleDetector:
 
     def track_video(self, video_path: str) -> Iterator[TrackedFrame]:
         capture = cv2.VideoCapture(video_path)
+        # Phones recording in portrait store landscape pixel data plus a rotation flag
+        # (e.g. 90 degrees) that players apply automatically at display time - without
+        # this, cv2 hands YOLO the raw sideways frame, which collapses detection
+        # confidence for everything in it (confirmed: a real motorcycle went from a
+        # spurious 0.08 to a solid 0.73+ once this was enabled on the same clip).
+        capture.set(cv2.CAP_PROP_ORIENTATION_AUTO, 1)
         frame_index = 0
         try:
             while True:

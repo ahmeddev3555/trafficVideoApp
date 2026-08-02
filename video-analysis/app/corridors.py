@@ -61,14 +61,26 @@ def corridor_cohesion(
     assignments: dict[int, int],
     threshold_px: float,
 ) -> float:
-    """1 - (mean path distance to the corridor's other members / threshold),
-    clamped to [0, 1]. Single-member corridors get 1.0 by definition (harmless:
-    their consensus size is 1 downstream, so this can never inflate a score).
+    """1 - (mean path distance to the corridor's DIRECT neighbors / threshold),
+    clamped to [0, 1]. "Direct" means within threshold_px of track_id itself -
+    members reached only transitively through a chain of intermediate tracks
+    are excluded from the average, so a genuinely tight local cluster scores
+    well even when single-linkage has merged it into a much larger corridor
+    elsewhere in the frame. Single-member corridors get 1.0 by definition
+    (harmless: their consensus size is 1 downstream). Every member of a
+    corridor with 2+ tracks is guaranteed at least one direct neighbor - the
+    specific track it originally linked through - so the direct-neighbor set
+    below is never empty. The clamp guards only against floating-point
+    rounding (a mean of values each <= threshold_px cannot exceed it).
     """
     corridor_id = assignments[track_id]
     others = [tid for tid, cid in assignments.items() if cid == corridor_id and tid != track_id]
     if not others:
         return 1.0
 
-    mean_distance = sum(path_distance(paths[track_id], paths[o]) for o in others) / len(others)
+    direct_distances = [
+        d for o in others
+        if (d := path_distance(paths[track_id], paths[o])) <= threshold_px
+    ]
+    mean_distance = sum(direct_distances) / len(direct_distances)
     return max(0.0, min(1.0, 1.0 - mean_distance / threshold_px))

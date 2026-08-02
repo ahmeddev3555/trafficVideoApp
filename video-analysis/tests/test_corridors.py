@@ -70,14 +70,21 @@ def test_cohesion_decreases_with_distance_from_corridor_mates():
     assert corridor_cohesion(2, paths, assignments, 10.0) > corridor_cohesion(3, paths, assignments, 10.0)
 
 
-def test_cohesion_is_clamped_to_zero_floor():
-    # Chained single-linkage can include a member whose mean distance to the
-    # others exceeds the threshold; cohesion must clamp at 0, never negative.
+def test_cohesion_only_counts_direct_neighbors_not_chain_reached_ones():
+    # 1-2 directly linked (9px apart), 2-3 directly linked (9px apart), but
+    # 1 and 3 are NOT directly close (18px apart, over the 10px threshold) -
+    # only chain-reached through 2. Single-linkage still merges all three
+    # into one corridor, but track 1's cohesion must come only from its
+    # direct neighbor (2), not diluted by the far, chain-only track 3.
     paths = {
         1: _line(50.0, 0.0, 100.0),
         2: _line(59.0, 0.0, 100.0),
         3: _line(68.0, 0.0, 100.0),
     }
     assignments = cluster_tracks(paths, threshold_px=10.0)
-    assert assignments[1] == assignments[3]
-    assert corridor_cohesion(3, paths, assignments, 10.0) >= 0.0
+    assert assignments[1] == assignments[3]  # merged via chain through 2
+
+    # Only direct neighbor is 2, at distance 9: cohesion = 1 - 9/10 = 0.1.
+    # The old whole-corridor average (including chain-only track 3 at
+    # distance 18) would have driven this to a clamped 0.0.
+    assert abs(corridor_cohesion(1, paths, assignments, 10.0) - 0.1) < 1e-9

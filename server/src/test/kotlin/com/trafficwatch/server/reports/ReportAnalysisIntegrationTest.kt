@@ -134,6 +134,7 @@ class ReportAnalysisIntegrationTest @Autowired constructor(
             durationMs = 15000L,
             deviceId = "device-123",
             compassHeadingDegrees = compassHeadingDegrees,
+            locationSamplesJson = null,
         )
         return response.reportId
     }

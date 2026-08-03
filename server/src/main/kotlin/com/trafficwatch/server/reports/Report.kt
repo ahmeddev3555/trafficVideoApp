@@ -99,6 +99,15 @@ class Report(
     @Column(name = "direction_evidence", columnDefinition = "jsonb")
     var directionEvidence: String? = null,
 
+    // Time-series of GPS fixes captured throughout the recording (not just the single
+    // snapshot at recording start - see latitude/longitude/etc. above). Absent on
+    // submissions from app versions predating continuous capture. Not yet consumed by
+    // any direction-analysis logic - see LocationSampleDto and the design spec for the
+    // planned future use.
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "location_samples", columnDefinition = "jsonb")
+    var locationSamples: String? = null,
+
     @Column(name = "created_at", nullable = false)
     var createdAt: OffsetDateTime = OffsetDateTime.now(),
 

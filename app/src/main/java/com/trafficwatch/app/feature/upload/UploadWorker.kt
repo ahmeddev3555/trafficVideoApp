@@ -12,7 +12,9 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkerParameters
 import androidx.work.hasKeyWithValueOfType
 import androidx.work.workDataOf
+import com.google.gson.Gson
 import com.trafficwatch.app.core.data.remote.ApiService
+import com.trafficwatch.app.core.data.remote.dto.toSampleDto
 import com.trafficwatch.app.core.data.repository.ReportRepository
 import com.trafficwatch.app.core.domain.model.LocationData
 import com.trafficwatch.app.core.domain.model.Report
@@ -61,6 +63,7 @@ class UploadWorker @AssistedInject constructor(
         } else {
             null
         }
+        val locationSamplesJson = inputData.getString(KEY_LOCATION_SAMPLES_JSON)
 
         val videoFile = File(videoPath)
         if (!videoFile.exists()) return Result.failure(workDataOf("error" to "Video file not found"))
@@ -87,7 +90,8 @@ class UploadWorker @AssistedInject constructor(
                 recordedAt = isoDate.toRequestBody(),
                 durationMs = durationMs.toString().toRequestBody(),
                 deviceId = tokenStore.getOrCreateDeviceId().toRequestBody(),
-                compassHeadingDegrees = compassHeadingDegrees?.toString()?.toRequestBody()
+                compassHeadingDegrees = compassHeadingDegrees?.toString()?.toRequestBody(),
+                locationSamples = locationSamplesJson?.toRequestBody()
             )
 
             setProgress(workDataOf(KEY_PROGRESS to 100))
@@ -117,6 +121,7 @@ class UploadWorker @AssistedInject constructor(
         const val KEY_RECORDED_AT = "recorded_at"
         const val KEY_DURATION_MS = "duration_ms"
         const val KEY_COMPASS_HEADING = "compass_heading_degrees"
+        const val KEY_LOCATION_SAMPLES_JSON = "location_samples_json"
         const val KEY_PROGRESS = "progress"
         const val KEY_SERVER_ID = "server_id"
 
@@ -124,6 +129,7 @@ class UploadWorker @AssistedInject constructor(
             reportId: String,
             videoPath: String,
             location: LocationData,
+            locationSamples: List<LocationData>,
             recordingStartedAt: Long,
             durationMs: Long
         ): Data {
@@ -145,6 +151,13 @@ class UploadWorker @AssistedInject constructor(
             // Float, so presence of the key (checked via hasKeyWithValueOfType in doWork)
             // is what distinguishes "unavailable" from "present."
             location.compassHeadingDegrees?.let { builder.putFloat(KEY_COMPASS_HEADING, it) }
+            // Same "presence, not sentinel" convention: an empty list omits the key entirely
+            // rather than storing a "[]" string, so doWork()'s getString(...) naturally
+            // returns null (matching "no samples captured") instead of an empty-array string.
+            if (locationSamples.isNotEmpty()) {
+                val json = Gson().toJson(locationSamples.map { it.toSampleDto() })
+                builder.putString(KEY_LOCATION_SAMPLES_JSON, json)
+            }
             return builder.build()
         }
 
@@ -160,11 +173,12 @@ class UploadWorker @AssistedInject constructor(
             reportId: String,
             videoPath: String,
             location: LocationData,
+            locationSamples: List<LocationData>,
             recordingStartedAt: Long,
             durationMs: Long,
             requireWifiOnly: Boolean
         ): OneTimeWorkRequest {
-            val inputData = buildInputData(reportId, videoPath, location, recordingStartedAt, durationMs)
+            val inputData = buildInputData(reportId, videoPath, location, locationSamples, recordingStartedAt, durationMs)
             val networkType = if (requireWifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED
             val constraints = Constraints.Builder().setRequiredNetworkType(networkType).build()
             return OneTimeWorkRequestBuilder<UploadWorker>()

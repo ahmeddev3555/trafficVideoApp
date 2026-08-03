@@ -48,6 +48,7 @@ class ReportController(
         // false rather than rejecting the request outright, so ReportAnalysisJob's "no
         // compass heading" rejection path handles it as an analysis outcome instead.
         @RequestParam("compass_heading_degrees", required = false) compassHeadingDegrees: BigDecimal?,
+        @RequestParam("location_samples", required = false) locationSamplesJson: String?,
     ): SubmitReportResponse =
         reportService.submit(
             video = video,
@@ -61,6 +62,7 @@ class ReportController(
             durationMs = durationMs,
             deviceId = deviceId,
             compassHeadingDegrees = compassHeadingDegrees,
+            locationSamplesJson = locationSamplesJson,
         )
 
     /**

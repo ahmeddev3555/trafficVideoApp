@@ -2,6 +2,7 @@ package com.trafficwatch.server.reports
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.trafficwatch.server.common.CurrentUser
+import com.trafficwatch.server.reports.dto.LocationSampleDto
 import com.trafficwatch.server.reports.dto.ReportListResponse
 import com.trafficwatch.server.reports.dto.ReportStatusResponse
 import com.trafficwatch.server.reports.dto.SubmitReportResponse
@@ -81,9 +82,24 @@ class ReportService(
         durationMs: Long,
         deviceId: String,
         compassHeadingDegrees: BigDecimal?,
+        locationSamplesJson: String?,
     ): SubmitReportResponse {
         val userId = CurrentUser.id()
         val parsedRecordedAt = LocalDateTime.parse(recordedAt, RECORDED_AT_FORMATTER)
+
+        // Malformed/unparseable input never blocks submission - logged and treated as
+        // absent, same tolerance as every other optional client-submitted field here.
+        val canonicalLocationSamples = locationSamplesJson?.let {
+            try {
+                val parsed: List<LocationSampleDto> = objectMapper.readValue(
+                    it,
+                    objectMapper.typeFactory.constructCollectionType(List::class.java, LocationSampleDto::class.java),
+                )
+                objectMapper.writeValueAsString(parsed)
+            } catch (ex: Exception) {
+                null
+            }
+        }
 
         val report = Report(
             userId = userId,
@@ -99,6 +115,7 @@ class ReportService(
             deviceId = deviceId,
             status = ReportStatus.PENDING,
             compassHeadingDegrees = compassHeadingDegrees,
+            locationSamples = canonicalLocationSamples,
         )
 
         val saved = reportRepository.save(report)

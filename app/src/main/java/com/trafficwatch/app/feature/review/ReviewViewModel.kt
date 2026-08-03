@@ -68,7 +68,7 @@ class ReviewViewModel @Inject constructor(
         _uiState.update { it.copy(isSubmitting = true) }
         viewModelScope.launch {
             val result = submitReportUseCase(
-                File(state.trimmedFilePath), state.location, state.recordingStartedAt, state.durationMs
+                File(state.trimmedFilePath), state.location, state.locationSamples, state.recordingStartedAt, state.durationMs
             )
             lastReportId = result.reportId
             lastEffectiveLocation = result.effectiveLocation
@@ -90,7 +90,7 @@ class ReviewViewModel @Inject constructor(
         _uiState.update { it.copy(isSubmitting = true) }
         viewModelScope.launch {
             submitReportUseCase.confirmCellular(
-                reportId, state.trimmedFilePath, location, state.recordingStartedAt, state.durationMs
+                reportId, state.trimmedFilePath, location, state.locationSamples, state.recordingStartedAt, state.durationMs
             )
             _uiState.update { it.copy(showCellularPrompt = false, isSubmitting = false) }
             _submitted.send(Unit)

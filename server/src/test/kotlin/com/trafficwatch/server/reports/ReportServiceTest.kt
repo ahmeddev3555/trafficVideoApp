@@ -117,6 +117,7 @@ class ReportServiceTest {
             durationMs = 15000L,
             deviceId = "device-123",
             compassHeadingDegrees = null,
+            locationSamplesJson = null,
         )
         simulateCommit()
 
@@ -156,6 +157,7 @@ class ReportServiceTest {
             durationMs = 1000L,
             deviceId = "device-x",
             compassHeadingDegrees = null,
+            locationSamplesJson = null,
         )
         simulateCommit()
 
@@ -203,6 +205,7 @@ class ReportServiceTest {
                 durationMs = 1000L,
                 deviceId = "device-x",
                 compassHeadingDegrees = null,
+                locationSamplesJson = null,
             )
         }.isSameAs(dbFailure)
         simulateCommit()

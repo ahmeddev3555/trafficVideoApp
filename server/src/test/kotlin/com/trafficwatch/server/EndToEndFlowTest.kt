@@ -1,5 +1,6 @@
 package com.trafficwatch.server
 
+import com.trafficwatch.server.reports.ReportRepository
 import org.assertj.core.api.Assertions.assertThat
 import org.awaitility.Awaitility.await
 import org.junit.jupiter.api.Test
@@ -61,6 +62,7 @@ import kotlin.random.Random
 @ActiveProfiles("test")
 class EndToEndFlowTest @Autowired constructor(
     private val restTemplate: TestRestTemplate,
+    private val reportRepository: ReportRepository,
 ) {
 
     companion object {
@@ -232,5 +234,43 @@ class EndToEndFlowTest @Autowired constructor(
     fun `GET reports with no Authorization header returns 401 over real HTTP`() {
         val response = restTemplate.exchange("/reports", HttpMethod.GET, HttpEntity.EMPTY, mapType)
         assertThat(response.statusCode).isEqualTo(HttpStatus.UNAUTHORIZED)
+    }
+
+    @Test
+    fun `location_samples round-trips to the stored report exactly as submitted`() {
+        val phone = uniquePhoneNumber()
+        val email = uniqueEmail()
+        val cnic = uniqueCnic()
+        val password = "supersecret1"
+
+        val registerResponse = register(phone, email, cnic, password)
+        val token = requireNotNull(registerResponse.body?.get("token") as? String)
+
+        val body: MultiValueMap<String, Any> = LinkedMultiValueMap()
+        body.add("video", NamedByteArrayResource(ByteArray(1024) { it.toByte() }, "clip.mp4"))
+        body.add("latitude", "31.520370")
+        body.add("longitude", "74.358749")
+        body.add("accuracy", "5.00")
+        body.add("altitude", "210.50")
+        body.add("bearing", "87.30")
+        body.add("speed", "12.40")
+        body.add("recorded_at", "2026-07-25T10:15:30Z")
+        body.add("duration_ms", "15000")
+        body.add("device_id", "device-e2e-test")
+        body.add(
+            "location_samples",
+            """[{"latitude":31.520370,"longitude":74.358749,"accuracy":5.0,"altitude":210.5,"bearing":87.3,"speed":12.4,"captured_at":1735814400000}]""",
+        )
+
+        val headers = authHeaders(token)
+        headers.contentType = MediaType.MULTIPART_FORM_DATA
+        val submitResponse = restTemplate.exchange("/reports", HttpMethod.POST, HttpEntity(body, headers), mapType)
+
+        assertThat(submitResponse.statusCode).isEqualTo(HttpStatus.CREATED)
+        val reportId = requireNotNull(submitResponse.body?.get("report_id") as? String)
+
+        val stored = reportRepository.findById(java.util.UUID.fromString(reportId)).orElseThrow()
+        assertThat(stored.locationSamples).isNotNull()
+        assertThat(stored.locationSamples).contains("\"captured_at\":1735814400000")
     }
 }

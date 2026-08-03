@@ -37,8 +37,12 @@ class RetryUploadUseCase @Inject constructor(
         reportRepository.updateStatus(report.id, ReportStatus.UPLOADING, null)
 
         val onWifi = networkMonitor.isOnWifi()
+        // The persisted Report row has no locationSamples field (Task 1 only threaded the
+        // continuous GPS series through the transient ReviewUiState, not into local storage),
+        // so a retry has nothing to resend here - an empty list omits the field entirely per
+        // the "presence, not sentinel" convention in UploadWorker.buildInputData.
         val request = UploadWorker.buildRequest(
-            report.id, report.videoPath, report.location,
+            report.id, report.videoPath, report.location, emptyList(),
             report.recordingStartedAt, report.durationMs,
             requireWifiOnly = !forceCellular
         )

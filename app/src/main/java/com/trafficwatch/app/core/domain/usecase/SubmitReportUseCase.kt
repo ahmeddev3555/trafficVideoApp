@@ -41,6 +41,7 @@ class SubmitReportUseCase @Inject constructor(
     suspend operator fun invoke(
         trimmedFile: File,
         location: LocationData?,
+        locationSamples: List<LocationData>,
         recordingStartedAt: Long,
         durationMs: Long
     ): SubmitReportResult {
@@ -62,7 +63,7 @@ class SubmitReportUseCase @Inject constructor(
         )
 
         enqueue(
-            reportId, trimmedFile.absolutePath, effectiveLocation, recordingStartedAt, durationMs,
+            reportId, trimmedFile.absolutePath, effectiveLocation, locationSamples, recordingStartedAt, durationMs,
             requireWifiOnly = true, policy = ExistingWorkPolicy.KEEP
         )
 
@@ -78,11 +79,12 @@ class SubmitReportUseCase @Inject constructor(
         reportId: String,
         videoPath: String,
         location: LocationData,
+        locationSamples: List<LocationData>,
         recordingStartedAt: Long,
         durationMs: Long
     ) {
         enqueue(
-            reportId, videoPath, location, recordingStartedAt, durationMs,
+            reportId, videoPath, location, locationSamples, recordingStartedAt, durationMs,
             requireWifiOnly = false, policy = ExistingWorkPolicy.REPLACE
         )
     }
@@ -91,13 +93,18 @@ class SubmitReportUseCase @Inject constructor(
         reportId: String,
         videoPath: String,
         location: LocationData,
+        locationSamples: List<LocationData>,
         recordingStartedAt: Long,
         durationMs: Long,
         requireWifiOnly: Boolean,
         policy: ExistingWorkPolicy
     ) {
+        // Serialization (and omitting the field entirely when the list is empty - the same
+        // "presence, not sentinel" convention as compass heading) happens inside
+        // UploadWorker.buildInputData, not here - keeps this use case free of a Gson/DTO
+        // dependency and matches how compassHeadingDegrees is threaded through unconverted.
         val request = UploadWorker.buildRequest(
-            reportId, videoPath, location, recordingStartedAt, durationMs, requireWifiOnly
+            reportId, videoPath, location, locationSamples, recordingStartedAt, durationMs, requireWifiOnly
         )
         WorkManager.getInstance(context)
             .enqueueUniqueWork(UploadWorker.uniqueWorkName(reportId), policy, request)

@@ -10,6 +10,7 @@ import com.trafficwatch.server.reports.exception.InvalidPaginationException
 import com.trafficwatch.server.reports.exception.ReportNotFoundException
 import com.trafficwatch.server.storage.VideoStorageService
 import com.trafficwatch.server.storage.WrongWayFrameStorageService
+import org.slf4j.LoggerFactory
 import org.springframework.data.domain.PageRequest
 import org.springframework.data.domain.Sort
 import org.springframework.stereotype.Service
@@ -41,6 +42,7 @@ class ReportService(
     private val wrongWayFrameStorageService: WrongWayFrameStorageService,
     private val objectMapper: ObjectMapper,
 ) {
+    private val logger = LoggerFactory.getLogger(ReportService::class.java)
 
     /**
      * Persists a newly submitted report as `PENDING`.
@@ -97,6 +99,7 @@ class ReportService(
                 )
                 objectMapper.writeValueAsString(parsed)
             } catch (ex: Exception) {
+                logger.warn("ReportService: failed to parse location_samples, treating as absent", ex)
                 null
             }
         }

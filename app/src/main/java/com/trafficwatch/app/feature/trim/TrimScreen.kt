@@ -58,7 +58,7 @@ import java.io.File
 fun TrimScreen(
     rawVideoFile: File,
     recordingStartedAt: Long,
-    onTrimComplete: (trimmedFile: File) -> Unit,
+    onTrimComplete: (trimmedFile: File, trimStartMs: Long) -> Unit,
     onNavigateBack: () -> Unit,
     viewModel: TrimViewModel = hiltViewModel()
 ) {
@@ -100,7 +100,7 @@ fun TrimScreen(
     // Handle trim completion
     LaunchedEffect(uiState.trimProgress) {
         when (val p = uiState.trimProgress) {
-            is TrimProgress.Done -> onTrimComplete(p.outputFile)
+            is TrimProgress.Done -> onTrimComplete(p.outputFile, uiState.trimStartMs)
             is TrimProgress.Failed -> snackbarHostState.showSnackbar("Trim failed: ${p.error}")
             else -> Unit
         }

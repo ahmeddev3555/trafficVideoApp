@@ -55,6 +55,9 @@ class ReviewViewModelTest {
 
         viewModel.submitted.test { awaitItem() }
         assertFalse(viewModel.uiState.value.showCellularPrompt)
+        coVerify(exactly = 1) {
+            submitReportUseCase(File(testFile.absolutePath), location, locationSamples, 1000L, 8000L)
+        }
     }
 
     @Test

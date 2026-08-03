@@ -85,6 +85,12 @@ class CameraViewModel @Inject constructor(
     fun newRawFile(): File = fileUtil.newRawRecordingFile()
 
     fun onStartRecording(outputFile: File) {
+        // Defensive cancellation: a prior recording's error path (see the onError callback
+        // below) can leave these jobs running without ever going through stopRecording(), so
+        // a fresh start must not let a leaked prior sampling job double up with this one.
+        samplingJob?.cancel()
+        maxDurationJob?.cancel()
+
         recordingStartedAt = System.currentTimeMillis()
 
         // The record button only enables once locationState is Fixed, so this is a real
@@ -117,6 +123,11 @@ class CameraViewModel @Inject constructor(
         }
 
         cameraController.startRecording(outputFile) { error ->
+            // CameraController has already moved to Idle without going through
+            // stopRecording(), so these jobs must be cancelled here or the 1Hz GPS
+            // subscription (and the max-duration timer) leak indefinitely.
+            samplingJob?.cancel()
+            maxDurationJob?.cancel()
             _uiState.update { it.copy(cameraError = error) }
         }
         maxDurationJob = viewModelScope.launch {

@@ -53,6 +53,7 @@ fun AppNavigation(
     var snapshotLocation by remember { mutableStateOf<LocationData?>(null) }
     var locationSamples by remember { mutableStateOf<List<LocationData>>(emptyList()) }
     var recordingStartedAt by rememberSaveable { mutableLongStateOf(0L) }
+    var trimStartMs by remember { mutableStateOf(0L) }
     var permissionsNextRoute by rememberSaveable { mutableStateOf(Routes.HISTORY) }
 
     val startDestination = if (isLoggedIn) Routes.HISTORY else Routes.LOGIN
@@ -134,8 +135,9 @@ fun AppNavigation(
             TrimScreen(
                 rawVideoFile = File(raw),
                 recordingStartedAt = recordingStartedAt,
-                onTrimComplete = { file ->
+                onTrimComplete = { file, startMs ->
                     trimmedVideoFile = file.absolutePath
+                    trimStartMs = startMs
                     navController.navigate(Routes.REVIEW)
                 },
                 onNavigateBack = { navController.popBackStack() }
@@ -155,10 +157,22 @@ fun AppNavigation(
                 }
             }
 
+            // Bound + correlate GPS samples to the actual submitted (trimmed) clip.
+            // Continuous sampling runs for the whole raw recording (up to MAX_RECORDING_MS),
+            // but only a MAX_TRIM_DURATION_MS window of it is ever uploaded - filtering here,
+            // to just the samples whose absolute capture time falls within that trimmed
+            // window, keeps the payload small (bounded by the trim window, not the raw
+            // recording) and makes each sample correspond to the clip actually submitted.
+            val filteredLocationSamples = remember(locationSamples, trimStartMs, duration) {
+                val windowStart = recordingStartedAt + trimStartMs
+                val windowEnd = windowStart + duration
+                locationSamples.filter { it.capturedAt in windowStart..windowEnd }
+            }
+
             ReviewScreen(
                 trimmedFile = File(trimmed),
                 location = snapshotLocation,
-                locationSamples = locationSamples,
+                locationSamples = filteredLocationSamples,
                 recordingStartedAt = recordingStartedAt,
                 durationMs = duration,
                 onSubmit = {
@@ -166,6 +180,7 @@ fun AppNavigation(
                     trimmedVideoFile = null
                     snapshotLocation = null
                     locationSamples = emptyList()
+                    trimStartMs = 0L
                     navController.navigate(Routes.HISTORY) {
                         popUpTo(Routes.HISTORY) { inclusive = true }
                     }

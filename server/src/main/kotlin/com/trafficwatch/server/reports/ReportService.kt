@@ -34,6 +34,15 @@ import java.util.UUID
  */
 private val RECORDED_AT_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'")
 
+/**
+ * Silent cap on the number of entries persisted from a client-submitted `location_samples`
+ * array. The well-behaved app already bounds this to ~10 entries (one per second of the
+ * 10-second trimmed clip), but this endpoint cannot trust that - any client can post an
+ * arbitrarily large array directly. An oversized array is treated the same as malformed
+ * JSON: logged and dropped, never rejecting the submission itself.
+ */
+private const val MAX_LOCATION_SAMPLES = 1000
+
 @Service
 class ReportService(
     private val reportRepository: ReportRepository,
@@ -97,7 +106,16 @@ class ReportService(
                     it,
                     objectMapper.typeFactory.constructCollectionType(List::class.java, LocationSampleDto::class.java),
                 )
-                objectMapper.writeValueAsString(parsed)
+                if (parsed.size > MAX_LOCATION_SAMPLES) {
+                    logger.warn(
+                        "ReportService: location_samples had {} entries (max {}), treating as absent",
+                        parsed.size,
+                        MAX_LOCATION_SAMPLES,
+                    )
+                    null
+                } else {
+                    objectMapper.writeValueAsString(parsed)
+                }
             } catch (ex: Exception) {
                 logger.warn("ReportService: failed to parse location_samples, treating as absent", ex)
                 null

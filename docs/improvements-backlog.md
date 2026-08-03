@@ -79,3 +79,33 @@ considered rather than forgotten.
   vehicle's bearing is measured, or a different direction-determination
   approach that doesn't depend on a single static reading at all.
   *(added 2026-08-02)*
+
+## Upload reliability / data integrity
+
+**Area:** `app/src/main/java/com/trafficwatch/app/feature/upload/UploadWorker.kt`,
+`core/domain/usecase/RetryUploadUseCase.kt`, `server/src/main/kotlin/com/trafficwatch/server/reports/ReportService.kt`
+
+- **`recorded_at` and `location_samples`' `captured_at` use two different,
+  disagreeing time bases.** `UploadWorker`'s `SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)`
+  (used to build `recorded_at`) has no explicit `TimeZone` set, so it
+  formats in the device's local zone while appending a literal `Z` claiming
+  UTC — for a Pakistan-local device this is 5 hours off from true UTC. The
+  continuous GPS samples added in the 2026-08-03 plan (`captured_at`) are
+  true epoch millis and don't share this bug. This was a pre-existing wart
+  in `recorded_at` before that plan, but it now matters more: any future
+  code that correlates `location_samples` timestamps against `recorded_at`
+  (e.g. sub-project 3's fusion work) will see them disagree by the device's
+  UTC offset. Fix `recorded_at`'s formatter to use `TimeZone.getTimeZone("UTC")`
+  explicitly.
+  *(added 2026-08-03, found during continuous-GPS-heading-capture final review)*
+- **A report that fails its first upload attempt permanently loses its
+  `location_samples`.** `RetryUploadUseCase` re-enqueues from the persisted
+  `Report` Room entity, which never gained a `locationSamples` field (only
+  the transient `ReviewViewModel`/`ReviewUiState` did) — so retries always
+  send an empty list. Uploads are Wi-Fi-only by default, so first-attempt
+  failures aren't rare. Accepted as correct-for-now (the samples aren't
+  consumed by anything yet), but if `location_samples` becomes
+  load-bearing for direction analysis (per sub-project 3), retried reports
+  will silently have none. Would need `locationSamples` persisted on the
+  local `Report` entity too, not just the transient upload-flow state.
+  *(added 2026-08-03, found during continuous-GPS-heading-capture final review)*

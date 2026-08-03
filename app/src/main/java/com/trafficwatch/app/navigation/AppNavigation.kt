@@ -51,6 +51,7 @@ fun AppNavigation(
     var rawVideoFile by rememberSaveable { mutableStateOf<String?>(null) }
     var trimmedVideoFile by rememberSaveable { mutableStateOf<String?>(null) }
     var snapshotLocation by remember { mutableStateOf<LocationData?>(null) }
+    var locationSamples by remember { mutableStateOf<List<LocationData>>(emptyList()) }
     var recordingStartedAt by rememberSaveable { mutableLongStateOf(0L) }
     var permissionsNextRoute by rememberSaveable { mutableStateOf(Routes.HISTORY) }
 
@@ -118,10 +119,11 @@ fun AppNavigation(
 
         composable(Routes.CAMERA) {
             CameraScreen(
-                onVideoRecorded = { file, location, startedAt ->
+                onVideoRecorded = { file, location, startedAt, samples ->
                     rawVideoFile = file.absolutePath
                     snapshotLocation = location
                     recordingStartedAt = startedAt
+                    locationSamples = samples
                     navController.navigate(Routes.TRIM)
                 }
             )
@@ -156,12 +158,14 @@ fun AppNavigation(
             ReviewScreen(
                 trimmedFile = File(trimmed),
                 location = snapshotLocation,
+                locationSamples = locationSamples,
                 recordingStartedAt = recordingStartedAt,
                 durationMs = duration,
                 onSubmit = {
                     rawVideoFile = null
                     trimmedVideoFile = null
                     snapshotLocation = null
+                    locationSamples = emptyList()
                     navController.navigate(Routes.HISTORY) {
                         popUpTo(Routes.HISTORY) { inclusive = true }
                     }

@@ -14,12 +14,14 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
 import javax.inject.Inject
 
 private const val MAX_RECORDING_MS = 600_000L
+private const val RECORDING_SAMPLE_INTERVAL_MS = 1_000L
 
 sealed class LocationState {
     object Acquiring : LocationState()
@@ -48,6 +50,8 @@ class CameraViewModel @Inject constructor(
     private var snapshotLocation: LocationData? = null
     private var snapshotCompassHeading: Float? = null
     private var recordingStartedAt: Long = 0L
+    private val locationSamples = mutableListOf<LocationData>()
+    private var samplingJob: Job? = null
 
     init {
         observeLocation()
@@ -88,6 +92,13 @@ class CameraViewModel @Inject constructor(
         // on a fresh GPS read (which would otherwise serialize behind the compass read).
         val declinationReference = (uiState.value.locationState as? LocationState.Fixed)?.data
 
+        locationSamples.clear()
+        samplingJob = viewModelScope.launch {
+            locationUtil.observeLocation(RECORDING_SAMPLE_INTERVAL_MS)
+                .filterNotNull()
+                .collect { locationSamples.add(it) }
+        }
+
         viewModelScope.launch {
             snapshotLocation = locationUtil.getSnapshot()
         }
@@ -116,11 +127,14 @@ class CameraViewModel @Inject constructor(
 
     fun stopRecording() {
         maxDurationJob?.cancel()
+        samplingJob?.cancel()
         cameraController.stopRecording()
     }
 
     fun getSnapshotLocation(): LocationData? =
         snapshotLocation?.copy(compassHeadingDegrees = snapshotCompassHeading)
+
+    fun getLocationSamples(): List<LocationData> = locationSamples.toList()
 
     fun getRecordingStartedAt(): Long = recordingStartedAt
 

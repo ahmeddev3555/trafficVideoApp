@@ -46,12 +46,16 @@ class LocationUtil @Inject constructor(
     }
 
     /**
-     * Continuous location updates as a Flow for the GPS status overlay on CameraScreen.
+     * Continuous location updates as a Flow. Default interval drives the GPS status overlay
+     * on CameraScreen; CameraViewModel starts a second, separate subscription at a tighter
+     * interval during active recording (see RECORDING_SAMPLE_INTERVAL_MS) - this method
+     * itself is stateless per-call, so multiple concurrent subscriptions at different
+     * intervals are independent and don't interfere with each other.
      */
     @SuppressLint("MissingPermission")
-    fun observeLocation(): Flow<LocationData?> = callbackFlow {
-        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, LOCATION_UPDATE_INTERVAL_MS)
-            .setMinUpdateIntervalMillis(LOCATION_UPDATE_INTERVAL_MS)
+    fun observeLocation(intervalMs: Long = LOCATION_UPDATE_INTERVAL_MS): Flow<LocationData?> = callbackFlow {
+        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, intervalMs)
+            .setMinUpdateIntervalMillis(intervalMs)
             .build()
 
         val callback = object : LocationCallback() {

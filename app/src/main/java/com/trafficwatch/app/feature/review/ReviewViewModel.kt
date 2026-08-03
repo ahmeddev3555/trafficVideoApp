@@ -18,6 +18,7 @@ import javax.inject.Inject
 data class ReviewUiState(
     val trimmedFilePath: String = "",
     val location: LocationData? = null,
+    val locationSamples: List<LocationData> = emptyList(),
     val recordingStartedAt: Long = 0L,
     val durationMs: Long = 0L,
     val fileSizeBytes: Long = 0L,
@@ -45,6 +46,7 @@ class ReviewViewModel @Inject constructor(
     fun init(
         trimmedFile: File,
         location: LocationData?,
+        locationSamples: List<LocationData>,
         recordingStartedAt: Long,
         durationMs: Long
     ) {
@@ -52,6 +54,7 @@ class ReviewViewModel @Inject constructor(
             it.copy(
                 trimmedFilePath = trimmedFile.absolutePath,
                 location = location,
+                locationSamples = locationSamples,
                 recordingStartedAt = recordingStartedAt,
                 durationMs = durationMs,
                 fileSizeBytes = trimmedFile.length()

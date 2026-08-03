@@ -49,7 +49,7 @@ import java.io.File
 @SuppressLint("MissingPermission")
 @Composable
 fun CameraScreen(
-    onVideoRecorded: (file: File, location: LocationData?, recordingStartedAt: Long) -> Unit,
+    onVideoRecorded: (file: File, location: LocationData?, recordingStartedAt: Long, locationSamples: List<LocationData>) -> Unit,
     viewModel: CameraViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -91,7 +91,8 @@ fun CameraScreen(
             onVideoRecorded(
                 (recordingState as RecordingState.Finalizing).outputFile,
                 viewModel.getSnapshotLocation(),
-                viewModel.getRecordingStartedAt()
+                viewModel.getRecordingStartedAt(),
+                viewModel.getLocationSamples()
             )
         }
     }

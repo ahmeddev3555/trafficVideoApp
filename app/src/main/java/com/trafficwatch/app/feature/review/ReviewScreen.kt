@@ -57,6 +57,7 @@ import java.util.Locale
 fun ReviewScreen(
     trimmedFile: File,
     location: LocationData?,
+    locationSamples: List<LocationData>,
     recordingStartedAt: Long,
     durationMs: Long,
     onSubmit: () -> Unit,
@@ -75,7 +76,7 @@ fun ReviewScreen(
     }
 
     LaunchedEffect(trimmedFile.absolutePath) {
-        viewModel.init(trimmedFile, location, recordingStartedAt, durationMs)
+        viewModel.init(trimmedFile, location, locationSamples, recordingStartedAt, durationMs)
     }
 
     DisposableEffect(Unit) { onDispose { exoPlayer.release() } }

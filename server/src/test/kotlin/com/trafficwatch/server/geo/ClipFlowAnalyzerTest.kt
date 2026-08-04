@@ -134,4 +134,33 @@ class ClipFlowAnalyzerTest {
     fun `consensus of an empty corridor is null`() {
         assertNull(analyzer.corridorConsensus(emptyList(), 0L, excluding = null))
     }
+
+    @Test
+    fun `hasPeerSupport is true when a corridor peer is within agreement tolerance`() {
+        // Mirrors the real report this fix was diagnosed from: candidate at 257.7, one peer
+        // at 262.9 (5.2 degrees away, well within the default 45-degree tolerance).
+        val flow = analyzer.qualifyVehicles(
+            listOf(vehicle(1, 257.7), vehicle(2, 262.9)), 0.0, 1920, 1080
+        )
+        val candidate = flow.first { it.vehicle.trackId == 1L }
+        assertTrue(analyzer.hasPeerSupport(flow, candidate))
+    }
+
+    @Test
+    fun `hasPeerSupport is false when every corridor peer is beyond agreement tolerance`() {
+        // Mirrors the existing "contested corridor, never falsely confirmed" scenario: three
+        // vehicles pairwise 120 degrees apart, no pair within the 45-degree tolerance.
+        val flow = analyzer.qualifyVehicles(
+            listOf(vehicle(1, 270.0), vehicle(2, 30.0), vehicle(3, 150.0)), 0.0, 1920, 1080
+        )
+        val candidate = flow.first { it.vehicle.trackId == 1L }
+        assertFalse(analyzer.hasPeerSupport(flow, candidate))
+    }
+
+    @Test
+    fun `hasPeerSupport is false for a candidate alone in its corridor`() {
+        val flow = analyzer.qualifyVehicles(listOf(vehicle(1, 90.0)), 0.0, 1920, 1080)
+        val candidate = flow.first { it.vehicle.trackId == 1L }
+        assertFalse(analyzer.hasPeerSupport(flow, candidate))
+    }
 }

@@ -129,4 +129,20 @@ class ClipFlowAnalyzer(
     fun movesWith(candidate: FlowVehicle, consensus: CorridorConsensus): Boolean =
         BearingMath.angularDifferenceDegrees(candidate.absoluteBearingDegrees, consensus.bearingDegrees) <=
             properties.agreementToleranceDegrees
+
+    /**
+     * True when at least one OTHER member of [candidate]'s corridor has a bearing within
+     * agreement tolerance of [candidate]'s own - i.e. the candidate's specific direction is
+     * corroborated by a real peer, not a lone coincidental bearing in an otherwise scattered
+     * corridor. Used when the corridor's overall consensus is unavailable (bimodal/dispersed)
+     * to decide whether independent evidence (OSM tag, learned history) is still safe to
+     * trust for this specific candidate.
+     */
+    fun hasPeerSupport(flowVehicles: List<FlowVehicle>, candidate: FlowVehicle): Boolean =
+        flowVehicles.any {
+            it.corridorId == candidate.corridorId &&
+                it !== candidate &&
+                BearingMath.angularDifferenceDegrees(it.absoluteBearingDegrees, candidate.absoluteBearingDegrees) <=
+                    properties.agreementToleranceDegrees
+        }
 }

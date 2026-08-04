@@ -7,6 +7,7 @@ import com.trafficwatch.app.core.data.repository.ReportRepository
 import com.trafficwatch.app.core.domain.model.LocationData
 import com.trafficwatch.app.core.domain.model.Report
 import com.trafficwatch.app.core.domain.model.ReportStatus
+import com.trafficwatch.app.core.domain.model.RotationSample
 import com.trafficwatch.app.core.util.NetworkMonitor
 import com.trafficwatch.app.feature.upload.UploadWorker
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -42,6 +43,7 @@ class SubmitReportUseCase @Inject constructor(
         trimmedFile: File,
         location: LocationData?,
         locationSamples: List<LocationData>,
+        rotationSamples: List<RotationSample>,
         recordingStartedAt: Long,
         durationMs: Long
     ): SubmitReportResult {
@@ -63,7 +65,7 @@ class SubmitReportUseCase @Inject constructor(
         )
 
         enqueue(
-            reportId, trimmedFile.absolutePath, effectiveLocation, locationSamples, recordingStartedAt, durationMs,
+            reportId, trimmedFile.absolutePath, effectiveLocation, locationSamples, rotationSamples, recordingStartedAt, durationMs,
             requireWifiOnly = true, policy = ExistingWorkPolicy.KEEP
         )
 
@@ -80,11 +82,12 @@ class SubmitReportUseCase @Inject constructor(
         videoPath: String,
         location: LocationData,
         locationSamples: List<LocationData>,
+        rotationSamples: List<RotationSample>,
         recordingStartedAt: Long,
         durationMs: Long
     ) {
         enqueue(
-            reportId, videoPath, location, locationSamples, recordingStartedAt, durationMs,
+            reportId, videoPath, location, locationSamples, rotationSamples, recordingStartedAt, durationMs,
             requireWifiOnly = false, policy = ExistingWorkPolicy.REPLACE
         )
     }
@@ -94,6 +97,7 @@ class SubmitReportUseCase @Inject constructor(
         videoPath: String,
         location: LocationData,
         locationSamples: List<LocationData>,
+        rotationSamples: List<RotationSample>,
         recordingStartedAt: Long,
         durationMs: Long,
         requireWifiOnly: Boolean,
@@ -104,7 +108,7 @@ class SubmitReportUseCase @Inject constructor(
         // UploadWorker.buildInputData, not here - keeps this use case free of a Gson/DTO
         // dependency and matches how compassHeadingDegrees is threaded through unconverted.
         val request = UploadWorker.buildRequest(
-            reportId, videoPath, location, locationSamples, recordingStartedAt, durationMs, requireWifiOnly
+            reportId, videoPath, location, locationSamples, rotationSamples, recordingStartedAt, durationMs, requireWifiOnly
         )
         WorkManager.getInstance(context)
             .enqueueUniqueWork(UploadWorker.uniqueWorkName(reportId), policy, request)

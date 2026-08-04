@@ -108,6 +108,15 @@ class Report(
     @Column(name = "location_samples", columnDefinition = "jsonb")
     var locationSamples: String? = null,
 
+    // Time-series of rotation-vector-derived, declination-corrected headings captured
+    // throughout the recording (not just the single snapshot at recording start - see
+    // compassHeadingDegrees above). Absent on submissions from app versions predating
+    // continuous capture. Not yet consumed by any direction-analysis logic - see
+    // RotationSampleDto and the design spec for the planned future use.
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "rotation_samples", columnDefinition = "jsonb")
+    var rotationSamples: String? = null,
+
     @Column(name = "created_at", nullable = false)
     var createdAt: OffsetDateTime = OffsetDateTime.now(),
 

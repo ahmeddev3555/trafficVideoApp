@@ -42,7 +42,8 @@ interface ApiService {
         @Part("duration_ms") durationMs: RequestBody,
         @Part("device_id") deviceId: RequestBody,
         @Part("compass_heading_degrees") compassHeadingDegrees: RequestBody?,
-        @Part("location_samples") locationSamples: RequestBody?
+        @Part("location_samples") locationSamples: RequestBody?,
+        @Part("rotation_samples") rotationSamples: RequestBody?
     ): SubmitReportResponse
 
     @GET("reports/{reportId}/status")

@@ -6,6 +6,7 @@ import androidx.work.WorkManager
 import com.trafficwatch.app.core.data.repository.ReportRepository
 import com.trafficwatch.app.core.domain.model.Report
 import com.trafficwatch.app.core.domain.model.ReportStatus
+import com.trafficwatch.app.core.domain.model.RotationSample
 import com.trafficwatch.app.core.util.FileUtil
 import com.trafficwatch.app.core.util.NetworkMonitor
 import com.trafficwatch.app.feature.upload.UploadWorker
@@ -37,12 +38,13 @@ class RetryUploadUseCase @Inject constructor(
         reportRepository.updateStatus(report.id, ReportStatus.UPLOADING, null)
 
         val onWifi = networkMonitor.isOnWifi()
-        // The persisted Report row has no locationSamples field (Task 1 only threaded the
-        // continuous GPS series through the transient ReviewUiState, not into local storage),
-        // so a retry has nothing to resend here - an empty list omits the field entirely per
-        // the "presence, not sentinel" convention in UploadWorker.buildInputData.
+        // The persisted Report row has no locationSamples/rotationSamples fields (Task 1
+        // only threaded the continuous GPS/rotation series through the transient
+        // ReviewUiState, not into local storage), so a retry has nothing to resend for
+        // either - empty lists omit both fields entirely per the "presence, not sentinel"
+        // convention in UploadWorker.buildInputData. See docs/improvements-backlog.md.
         val request = UploadWorker.buildRequest(
-            report.id, report.videoPath, report.location, emptyList(),
+            report.id, report.videoPath, report.location, emptyList(), emptyList<RotationSample>(),
             report.recordingStartedAt, report.durationMs,
             requireWifiOnly = !forceCellular
         )

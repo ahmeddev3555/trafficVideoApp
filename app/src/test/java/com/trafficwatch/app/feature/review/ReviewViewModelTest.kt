@@ -47,7 +47,7 @@ class ReviewViewModelTest {
 
     @Test
     fun `submit on wifi fires submitted without showing cellular prompt`() = runTest {
-        coEvery { submitReportUseCase(any(), any(), any(), any(), any()) } returns
+        coEvery { submitReportUseCase(any(), any(), any(), any(), any(), any()) } returns
             SubmitReportResult(reportId = "r1", effectiveLocation = location, onWifi = true)
 
         viewModel.submit()
@@ -56,13 +56,13 @@ class ReviewViewModelTest {
         viewModel.submitted.test { awaitItem() }
         assertFalse(viewModel.uiState.value.showCellularPrompt)
         coVerify(exactly = 1) {
-            submitReportUseCase(File(testFile.absolutePath), location, locationSamples, 1000L, 8000L)
+            submitReportUseCase(File(testFile.absolutePath), location, locationSamples, emptyList(), 1000L, 8000L)
         }
     }
 
     @Test
     fun `submit off wifi shows cellular prompt without firing submitted yet`() = runTest {
-        coEvery { submitReportUseCase(any(), any(), any(), any(), any()) } returns
+        coEvery { submitReportUseCase(any(), any(), any(), any(), any(), any()) } returns
             SubmitReportResult(reportId = "r1", effectiveLocation = location, onWifi = false)
 
         viewModel.submit()
@@ -73,10 +73,10 @@ class ReviewViewModelTest {
 
     @Test
     fun `confirmCellularSubmit re-enqueues over cellular, clears prompt, and fires submitted`() = runTest {
-        coEvery { submitReportUseCase(any(), any(), any(), any(), any()) } returns
+        coEvery { submitReportUseCase(any(), any(), any(), any(), any(), any()) } returns
             SubmitReportResult(reportId = "r1", effectiveLocation = location, onWifi = false)
         coEvery {
-            submitReportUseCase.confirmCellular(any(), any(), any(), any(), any(), any())
+            submitReportUseCase.confirmCellular(any(), any(), any(), any(), any(), any(), any())
         } just runs
 
         viewModel.submit()
@@ -87,26 +87,26 @@ class ReviewViewModelTest {
 
         viewModel.submitted.test { awaitItem() }
         coVerify(exactly = 1) {
-            submitReportUseCase.confirmCellular("r1", testFile.absolutePath, location, locationSamples, 1000L, 8000L)
+            submitReportUseCase.confirmCellular("r1", testFile.absolutePath, location, locationSamples, emptyList(), 1000L, 8000L)
         }
         assertFalse(viewModel.uiState.value.showCellularPrompt)
     }
 
     @Test
     fun `double-tapping submit before it resolves only invokes the use case once`() = runTest {
-        coEvery { submitReportUseCase(any(), any(), any(), any(), any()) } returns
+        coEvery { submitReportUseCase(any(), any(), any(), any(), any(), any()) } returns
             SubmitReportResult(reportId = "r1", effectiveLocation = location, onWifi = true)
 
         viewModel.submit()
         viewModel.submit()
         testDispatcher.scheduler.advanceUntilIdle()
 
-        coVerify(exactly = 1) { submitReportUseCase(any(), any(), any(), any(), any()) }
+        coVerify(exactly = 1) { submitReportUseCase(any(), any(), any(), any(), any(), any()) }
     }
 
     @Test
     fun `dismissCellularPrompt clears prompt and fires submitted without re-enqueuing`() = runTest {
-        coEvery { submitReportUseCase(any(), any(), any(), any(), any()) } returns
+        coEvery { submitReportUseCase(any(), any(), any(), any(), any(), any()) } returns
             SubmitReportResult(reportId = "r1", effectiveLocation = location, onWifi = false)
 
         viewModel.submit()
@@ -117,7 +117,7 @@ class ReviewViewModelTest {
 
         viewModel.submitted.test { awaitItem() }
         coVerify(exactly = 0) {
-            submitReportUseCase.confirmCellular(any(), any(), any(), any(), any(), any())
+            submitReportUseCase.confirmCellular(any(), any(), any(), any(), any(), any(), any())
         }
         assertFalse(viewModel.uiState.value.showCellularPrompt)
     }

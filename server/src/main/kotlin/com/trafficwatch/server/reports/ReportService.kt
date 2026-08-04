@@ -5,6 +5,7 @@ import com.trafficwatch.server.common.CurrentUser
 import com.trafficwatch.server.reports.dto.LocationSampleDto
 import com.trafficwatch.server.reports.dto.ReportListResponse
 import com.trafficwatch.server.reports.dto.ReportStatusResponse
+import com.trafficwatch.server.reports.dto.RotationSampleDto
 import com.trafficwatch.server.reports.dto.SubmitReportResponse
 import com.trafficwatch.server.reports.exception.InvalidPaginationException
 import com.trafficwatch.server.reports.exception.ReportNotFoundException
@@ -42,6 +43,11 @@ private val RECORDED_AT_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPatte
  * JSON: logged and dropped, never rejecting the submission itself.
  */
 private const val MAX_LOCATION_SAMPLES = 1000
+
+/** Same reasoning as [MAX_LOCATION_SAMPLES], but sized for `rotation_samples`'s ~50-entry
+ * well-behaved-app bound (5Hz over a 10-second trimmed clip) rather than `location_samples`'
+ * ~10-entry bound (1Hz). */
+private const val MAX_ROTATION_SAMPLES = 1000
 
 @Service
 class ReportService(
@@ -94,6 +100,7 @@ class ReportService(
         deviceId: String,
         compassHeadingDegrees: BigDecimal?,
         locationSamplesJson: String?,
+        rotationSamplesJson: String?,
     ): SubmitReportResponse {
         val userId = CurrentUser.id()
         val parsedRecordedAt = LocalDateTime.parse(recordedAt, RECORDED_AT_FORMATTER)
@@ -122,6 +129,28 @@ class ReportService(
             }
         }
 
+        val canonicalRotationSamples = rotationSamplesJson?.let {
+            try {
+                val parsed: List<RotationSampleDto> = objectMapper.readValue(
+                    it,
+                    objectMapper.typeFactory.constructCollectionType(List::class.java, RotationSampleDto::class.java),
+                )
+                if (parsed.size > MAX_ROTATION_SAMPLES) {
+                    logger.warn(
+                        "ReportService: rotation_samples had {} entries (max {}), treating as absent",
+                        parsed.size,
+                        MAX_ROTATION_SAMPLES,
+                    )
+                    null
+                } else {
+                    objectMapper.writeValueAsString(parsed)
+                }
+            } catch (ex: Exception) {
+                logger.warn("ReportService: failed to parse rotation_samples, treating as absent", ex)
+                null
+            }
+        }
+
         val report = Report(
             userId = userId,
             videoPath = "",
@@ -137,6 +166,7 @@ class ReportService(
             status = ReportStatus.PENDING,
             compassHeadingDegrees = compassHeadingDegrees,
             locationSamples = canonicalLocationSamples,
+            rotationSamples = canonicalRotationSamples,
         )
 
         val saved = reportRepository.save(report)

@@ -1,6 +1,8 @@
 package com.trafficwatch.server.reports
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.PropertyNamingStrategies
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.trafficwatch.server.reports.exception.InvalidPaginationException
 import com.trafficwatch.server.reports.exception.ReportNotFoundException
 import com.trafficwatch.server.storage.VideoStorageService
@@ -51,7 +53,15 @@ class ReportServiceTest {
     private val videoStorageService = mockk<VideoStorageService>()
     private val reportAnalysisJob = mockk<ReportAnalysisJob>()
     private val wrongWayFrameStorageService = mockk<WrongWayFrameStorageService>()
-    private val objectMapper = ObjectMapper()
+    // Mirrors the real Spring Boot-autoconfigured ObjectMapper bean ReportService gets in
+    // production (jackson-module-kotlin auto-registered since it's on the classpath, plus
+    // application.yml's spring.jackson.property-naming-strategy: SNAKE_CASE) - a bare
+    // `ObjectMapper()` can't bind JSON like `{"heading_degrees":...}` to a camelCase Kotlin
+    // data class property at all (no naming-strategy translation, and no reliable
+    // constructor-parameter-name resolution without the Kotlin module), so it would
+    // silently misparse every "valid JSON" sample test into a parse failure.
+    private val objectMapper: ObjectMapper = jacksonObjectMapper()
+        .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
     private val reportService = ReportService(
         reportRepository, videoStorageService, reportAnalysisJob, wrongWayFrameStorageService, objectMapper,
     )
@@ -118,6 +128,7 @@ class ReportServiceTest {
             deviceId = "device-123",
             compassHeadingDegrees = null,
             locationSamplesJson = null,
+            rotationSamplesJson = null,
         )
         simulateCommit()
 
@@ -158,6 +169,7 @@ class ReportServiceTest {
             deviceId = "device-x",
             compassHeadingDegrees = null,
             locationSamplesJson = null,
+            rotationSamplesJson = null,
         )
         simulateCommit()
 
@@ -206,6 +218,7 @@ class ReportServiceTest {
                 deviceId = "device-x",
                 compassHeadingDegrees = null,
                 locationSamplesJson = null,
+                rotationSamplesJson = null,
             )
         }.isSameAs(dbFailure)
         simulateCommit()
@@ -216,6 +229,91 @@ class ReportServiceTest {
         // afterCommit, so it must never fire for a report that was never durably
         // persisted with its real video path.
         verify(exactly = 0) { reportAnalysisJob.analyze(any()) }
+    }
+
+    @Test
+    fun `submit persists valid rotation_samples exactly as submitted`() {
+        val fixedId = UUID.randomUUID()
+        stubSaveAssigningId(fixedId)
+        every { videoStorageService.store(fixedId, any()) } returns "$fixedId.mp4"
+        every { reportAnalysisJob.analyze(fixedId) } just runs
+
+        reportService.submit(
+            video = sampleVideo(),
+            latitude = BigDecimal("31.520370"),
+            longitude = BigDecimal("74.358749"),
+            accuracy = BigDecimal("5.00"),
+            altitude = BigDecimal("210.50"),
+            bearing = BigDecimal("87.30"),
+            speed = BigDecimal("12.40"),
+            recordedAt = "2026-07-25T10:15:30Z",
+            durationMs = 15000L,
+            deviceId = "device-123",
+            compassHeadingDegrees = null,
+            locationSamplesJson = null,
+            rotationSamplesJson = """[{"heading_degrees":271.5,"captured_at":1735814400123}]""",
+        )
+        simulateCommit()
+
+        assertThat(savedReport.rotationSamples).isNotNull()
+        assertThat(savedReport.rotationSamples).contains("\"captured_at\":1735814400123")
+        assertThat(savedReport.rotationSamples).contains("\"heading_degrees\":271.5")
+    }
+
+    @Test
+    fun `submit treats malformed rotation_samples as absent rather than failing`() {
+        val fixedId = UUID.randomUUID()
+        stubSaveAssigningId(fixedId)
+        every { videoStorageService.store(fixedId, any()) } returns "$fixedId.mp4"
+        every { reportAnalysisJob.analyze(fixedId) } just runs
+
+        val response = reportService.submit(
+            video = sampleVideo(),
+            latitude = BigDecimal("31.520370"),
+            longitude = BigDecimal("74.358749"),
+            accuracy = BigDecimal("5.00"),
+            altitude = BigDecimal("210.50"),
+            bearing = BigDecimal("87.30"),
+            speed = BigDecimal("12.40"),
+            recordedAt = "2026-07-25T10:15:30Z",
+            durationMs = 15000L,
+            deviceId = "device-123",
+            compassHeadingDegrees = null,
+            locationSamplesJson = null,
+            rotationSamplesJson = "not valid json",
+        )
+        simulateCommit()
+
+        assertThat(response.status).isEqualTo(ReportStatus.PENDING)
+        assertThat(savedReport.rotationSamples).isNull()
+    }
+
+    @Test
+    fun `submit treats malformed location_samples as absent rather than failing`() {
+        val fixedId = UUID.randomUUID()
+        stubSaveAssigningId(fixedId)
+        every { videoStorageService.store(fixedId, any()) } returns "$fixedId.mp4"
+        every { reportAnalysisJob.analyze(fixedId) } just runs
+
+        val response = reportService.submit(
+            video = sampleVideo(),
+            latitude = BigDecimal("31.520370"),
+            longitude = BigDecimal("74.358749"),
+            accuracy = BigDecimal("5.00"),
+            altitude = BigDecimal("210.50"),
+            bearing = BigDecimal("87.30"),
+            speed = BigDecimal("12.40"),
+            recordedAt = "2026-07-25T10:15:30Z",
+            durationMs = 15000L,
+            deviceId = "device-123",
+            compassHeadingDegrees = null,
+            locationSamplesJson = "{not valid",
+            rotationSamplesJson = null,
+        )
+        simulateCommit()
+
+        assertThat(response.status).isEqualTo(ReportStatus.PENDING)
+        assertThat(savedReport.locationSamples).isNull()
     }
 
     // --- getStatus ---------------------------------------------------------------------

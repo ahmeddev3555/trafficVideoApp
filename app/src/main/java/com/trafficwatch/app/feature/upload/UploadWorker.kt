@@ -19,6 +19,7 @@ import com.trafficwatch.app.core.data.repository.ReportRepository
 import com.trafficwatch.app.core.domain.model.LocationData
 import com.trafficwatch.app.core.domain.model.Report
 import com.trafficwatch.app.core.domain.model.ReportStatus
+import com.trafficwatch.app.core.domain.model.RotationSample
 import com.trafficwatch.app.core.util.FileUtil
 import com.trafficwatch.app.core.util.TokenStore
 import com.trafficwatch.app.core.util.asStreamingRequestBody
@@ -64,6 +65,7 @@ class UploadWorker @AssistedInject constructor(
             null
         }
         val locationSamplesJson = inputData.getString(KEY_LOCATION_SAMPLES_JSON)
+        val rotationSamplesJson = inputData.getString(KEY_ROTATION_SAMPLES_JSON)
 
         val videoFile = File(videoPath)
         if (!videoFile.exists()) return Result.failure(workDataOf("error" to "Video file not found"))
@@ -91,7 +93,8 @@ class UploadWorker @AssistedInject constructor(
                 durationMs = durationMs.toString().toRequestBody(),
                 deviceId = tokenStore.getOrCreateDeviceId().toRequestBody(),
                 compassHeadingDegrees = compassHeadingDegrees?.toString()?.toRequestBody(),
-                locationSamples = locationSamplesJson?.toRequestBody()
+                locationSamples = locationSamplesJson?.toRequestBody(),
+                rotationSamples = rotationSamplesJson?.toRequestBody()
             )
 
             setProgress(workDataOf(KEY_PROGRESS to 100))
@@ -122,6 +125,7 @@ class UploadWorker @AssistedInject constructor(
         const val KEY_DURATION_MS = "duration_ms"
         const val KEY_COMPASS_HEADING = "compass_heading_degrees"
         const val KEY_LOCATION_SAMPLES_JSON = "location_samples_json"
+        const val KEY_ROTATION_SAMPLES_JSON = "rotation_samples_json"
         const val KEY_PROGRESS = "progress"
         const val KEY_SERVER_ID = "server_id"
 
@@ -130,6 +134,7 @@ class UploadWorker @AssistedInject constructor(
             videoPath: String,
             location: LocationData,
             locationSamples: List<LocationData>,
+            rotationSamples: List<RotationSample>,
             recordingStartedAt: Long,
             durationMs: Long
         ): Data {
@@ -158,6 +163,10 @@ class UploadWorker @AssistedInject constructor(
                 val json = Gson().toJson(locationSamples.map { it.toSampleDto() })
                 builder.putString(KEY_LOCATION_SAMPLES_JSON, json)
             }
+            if (rotationSamples.isNotEmpty()) {
+                val json = Gson().toJson(rotationSamples.map { it.toSampleDto() })
+                builder.putString(KEY_ROTATION_SAMPLES_JSON, json)
+            }
             return builder.build()
         }
 
@@ -174,11 +183,12 @@ class UploadWorker @AssistedInject constructor(
             videoPath: String,
             location: LocationData,
             locationSamples: List<LocationData>,
+            rotationSamples: List<RotationSample>,
             recordingStartedAt: Long,
             durationMs: Long,
             requireWifiOnly: Boolean
         ): OneTimeWorkRequest {
-            val inputData = buildInputData(reportId, videoPath, location, locationSamples, recordingStartedAt, durationMs)
+            val inputData = buildInputData(reportId, videoPath, location, locationSamples, rotationSamples, recordingStartedAt, durationMs)
             val networkType = if (requireWifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED
             val constraints = Constraints.Builder().setRequiredNetworkType(networkType).build()
             return OneTimeWorkRequestBuilder<UploadWorker>()

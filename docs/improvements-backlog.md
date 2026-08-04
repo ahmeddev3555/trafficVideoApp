@@ -163,13 +163,14 @@ considered rather than forgotten.
   explicitly.
   *(added 2026-08-03, found during continuous-GPS-heading-capture final review)*
 - **A report that fails its first upload attempt permanently loses its
-  `location_samples`.** `RetryUploadUseCase` re-enqueues from the persisted
-  `Report` Room entity, which never gained a `locationSamples` field (only
-  the transient `ReviewViewModel`/`ReviewUiState` did) — so retries always
-  send an empty list. Uploads are Wi-Fi-only by default, so first-attempt
-  failures aren't rare. Accepted as correct-for-now (the samples aren't
-  consumed by anything yet), but if `location_samples` becomes
-  load-bearing for direction analysis (per sub-project 3), retried reports
-  will silently have none. Would need `locationSamples` persisted on the
-  local `Report` entity too, not just the transient upload-flow state.
-  *(added 2026-08-03, found during continuous-GPS-heading-capture final review)*
+  `location_samples`/`rotation_samples`.** `RetryUploadUseCase` re-enqueues
+  from the persisted `Report` Room entity, which never gained
+  `locationSamples`/`rotationSamples` fields (only the transient
+  `ReviewViewModel`/`ReviewUiState` did) - so retries always send empty
+  lists for both. Uploads are Wi-Fi-only by default, so first-attempt
+  failures aren't rare. Accepted as correct-for-now (neither field is
+  consumed by anything yet), but if either becomes load-bearing for
+  direction analysis (per sub-project 3), retried reports will silently
+  have neither. Would need both persisted on the local `Report` entity
+  too, not just the transient upload-flow state.
+  *(added 2026-08-03, updated 2026-08-04 to cover rotation_samples too)*

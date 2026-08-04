@@ -75,6 +75,35 @@ considered rather than forgotten.
   accuracy) would directly address this.
   *(added 2026-08-02)*
 
+- **A divided-carriageway one-way road can be misjudged as a wrong-way
+  violation on the far carriageway.** Found during the final review of the
+  2026-08-04 OSM-lookup-retry/contested-corridor plan
+  (`docs/superpowers/specs/2026-08-04-osm-lookup-retry-and-contested-corridor-fix-design.md`).
+  That plan's fix lets a candidate in a "contested" (bimodal-bearing)
+  corridor reach OSM evidence when at least one other corridor member
+  shares its bearing (`ClipFlowAnalyzer.hasPeerSupport`) - the design
+  reasoned this was safe because a genuinely two-way road is already caught
+  earlier by `DirectionResolution.TwoWay`. That reasoning has a gap: a real
+  divided road (physically separated carriageways, opposite legal
+  directions) is mapped in OSM as *two separate ways, each tagged
+  `oneway=yes`* - not one `oneway=no` way - so `StreetDirectionResolver`
+  picks whichever carriageway is nearest and returns `OneWay`, never
+  `TwoWay`. If `corridors.py`'s direction-agnostic spatial clustering
+  (correct, intentional per the 2026-08-02 corridor-cohesion fix) merges
+  both carriageways into one corridor, every legally-driving vehicle on the
+  far carriageway now has peer support from its own carriageway-mates and
+  gets evaluated against the near carriageway's OSM tag alone - a real risk
+  of confirming a legally-driving motorist as a wrong-way violator, with
+  their plate captured. Considered net-positive to ship anyway (the
+  status quo - the contested-corridor gate blocking ALL confirmations
+  whenever any traffic shares a corridor - demonstrably broke the primary
+  one-way-street use case this whole system exists for), but this specific
+  gap needs a real fix: either have `StreetDirectionResolver` detect a
+  second nearby way that's roughly anti-parallel and also one-way (the
+  dual-carriageway signature) and downgrade to `TwoWay`/`Unknown`, or
+  require more than OSM-alone evidence when a corridor is contested.
+  *(added 2026-08-04)*
+
 ## Direction analysis (compass + moving camera)
 
 **Area:** `app/src/main/java/com/trafficwatch/app/core/util/CompassProvider.kt`

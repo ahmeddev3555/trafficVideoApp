@@ -45,6 +45,23 @@ compounding bugs:
    the clip also contains normal traffic in the same corridor as the
    violator - i.e. the common case, not an edge case.
 
+   **Important nuance found while preparing the implementation plan:**
+   `ReportAnalysisJobTest.kt` already has a deliberately-written test -
+   `candidate in a contested (bimodal) corridor is skipped, never falsely
+   confirmed` - covering a *different*, genuinely-ambiguous scenario: three
+   vehicles in one corridor, bearings spread evenly ~120 degrees apart
+   (270, 30, 150), no real majority anywhere. One of them happens to exactly
+   match the OSM-derived illegal bearing by pure coincidence - not because
+   its direction is corroborated by any other observed vehicle. A blanket
+   "always let OSM through when consensus is null" fix would flip this
+   specific vehicle to CONFIRMED, reintroducing the exact false positive
+   this test was written to prevent. The real report's case is different in
+   a way that matters: track 319 (the confirmed wrong-way motorcycle) had
+   four other corridor members within 1.7-33.9 degrees of its own bearing -
+   a real, populated opposing direction, not a lone coincidence. The fix
+   (below) distinguishes these two cases directly instead of erasing the
+   distinction.
+
 Both bugs are independently real and compounding: bug 2 alone would still
 have blocked this report even if bug 1's retry had recovered the OSM
 evidence in time for a *different*, quieter corridor; bug 1 alone explains
@@ -70,14 +87,20 @@ Fixing both closes the gap for this report and for the general case.
   default. This runs inside the existing `@Async` analysis job, never on the
   report-submission request/response path, so the added worst-case latency
   (~1-2 extra seconds across retries) has no user-facing effect.
-- **Contested-corridor fix: delete the skip, not patch around it.** The
-  block at `ReportAnalysisJob.kt:189-192`
-  (`if (consensus == null && hasOtherCorridorMembers) continue`) is removed
-  outright. No replacement gate is needed: `movesWith(candidate, consensus)`
-  immediately below is already guarded by `consensus != null &&`, so it
-  safely no-ops for a contested candidate exactly as it does today for a
-  "quiet corridor, no other members" candidate - both cases already reduce
-  to the same `clipEvidence = null` -> fusion-decides behavior.
+- **Contested-corridor fix: gate the bypass on peer support, not a blanket
+  removal.** The block at `ReportAnalysisJob.kt:189-192`
+  (`if (consensus == null && hasOtherCorridorMembers) continue`) is replaced
+  with a peer-support check: a contested-corridor candidate only proceeds to
+  fusion when at least one OTHER corridor member's bearing is within
+  `agreementToleranceDegrees` (the existing 45-degree tuning knob already
+  used by `movesWith()` - no new config needed) of the candidate's OWN
+  bearing. This distinguishes "a real, populated opposing direction" (our
+  report's case: 4 peers within 1.7-33.9 degrees) from "a lone coincidental
+  match with no supporting pattern" (the existing test's case: pairwise
+  120-degree separation between all three vehicles, no peer within
+  tolerance for any of them) - verified against both scenarios' actual
+  numbers before finalizing this approach. `movesWith(candidate, consensus)`
+  immediately below is unaffected (still guarded by `consensus != null &&`).
 - **No changes to corridor clustering itself** (`corridors.py`,
   `corridor_cohesion()`) - direction-agnostic clustering is correct and
   intentional (see the 2026-08-02 fix); this plan only changes how the
@@ -124,9 +147,30 @@ var lookupRetryAttempts: Int = 3,
 var lookupRetryDelayMs: Long = 500,
 ```
 
-### Fix 2: contested-corridor override
+### Fix 2: contested-corridor peer-support override
 
-`ReportAnalysisJob.kt`'s `evaluateCandidates()` - delete:
+`ClipFlowAnalyzer.kt` gains a new function, alongside `corridorConsensus()`/
+`movesWith()`:
+
+```kotlin
+/**
+ * True when at least one OTHER member of [candidate]'s corridor has a bearing within
+ * agreement tolerance of [candidate]'s own - i.e. the candidate's specific direction is
+ * corroborated by a real peer, not a lone coincidental bearing in an otherwise scattered
+ * corridor. Used when the corridor's overall consensus is unavailable (bimodal/dispersed)
+ * to decide whether independent evidence (OSM tag, learned history) is still safe to trust
+ * for this specific candidate.
+ */
+fun hasPeerSupport(flowVehicles: List<FlowVehicle>, candidate: FlowVehicle): Boolean =
+    flowVehicles.any {
+        it.corridorId == candidate.corridorId &&
+            it !== candidate &&
+            BearingMath.angularDifferenceDegrees(it.absoluteBearingDegrees, candidate.absoluteBearingDegrees) <=
+                properties.agreementToleranceDegrees
+    }
+```
+
+`ReportAnalysisJob.kt`'s `evaluateCandidates()` - replace:
 
 ```kotlin
 val hasOtherCorridorMembers = flowVehicles.any { it.corridorId == candidate.corridorId && it !== candidate }
@@ -135,16 +179,24 @@ if (consensus == null && hasOtherCorridorMembers) {
 }
 ```
 
+with:
+
+```kotlin
+if (consensus == null && !clipFlowAnalyzer.hasPeerSupport(flowVehicles, candidate)) {
+    continue
+}
+```
+
 The surrounding docstring (the `evaluateCandidates()` KDoc, currently
 describing "a candidate moving WITH its own corridor's consensus is never a
-violator") and the deleted block's own inline comment (explaining the old,
-now-incorrect "contested corridor must never elect a violator" reasoning)
-are rewritten to describe the corrected behavior: a contested corridor
-simply contributes no clip-consensus evidence, exactly like a quiet corridor
-with no other members - independent evidence (OSM tag, learned history)
-still applies normally, and a candidate is only ever confirmed when *some*
-evidence source clears fusion and the candidate's own bearing matches the
-resulting illegal direction within tolerance.
+violator") is rewritten to describe the corrected behavior: a contested
+corridor contributes no *overall* clip-consensus evidence, but a candidate
+whose own direction is corroborated by at least one real peer still reaches
+fusion using independent evidence (OSM tag, learned history) - a candidate
+is only ever confirmed when some evidence source clears fusion and the
+candidate's own bearing matches the resulting illegal direction within
+tolerance. A true lone outlier (no peer within tolerance, matching the
+existing test's synthetic scenario) is still skipped exactly as today.
 
 ## Edge cases
 
@@ -152,6 +204,16 @@ resulting illegal direction within tolerance.
   zero evidence sources, returns `Insufficient(conflict = false)`, same
   "Legal traffic direction could not be established" outcome as today. No
   regression.
+- **Contested corridor, candidate is a true lone outlier (no peer within
+  `agreementToleranceDegrees`)** - `hasPeerSupport` returns `false`, the
+  candidate is skipped exactly as today. This is what keeps the existing
+  "never falsely confirmed" test passing unchanged.
+- **Contested corridor, candidate has real peer support, but no OSM tag and
+  no history evidence either** - the candidate reaches fusion, gets zero
+  evidence sources, `Insufficient(conflict = false)` - correctly still
+  produces no verdict, since peer support alone (without OSM or history) was
+  never itself usable as evidence in this design (it only decides whether to
+  attempt fusion, not what fusion concludes).
 - **Contested corridor, OSM says two-way** - never reaches
   `evaluateCandidates()` at all; the existing `DirectionResolution.TwoWay`
   early-return in `determineOutcome()` fires first, unchanged.
@@ -176,14 +238,25 @@ resulting illegal direction within tolerance.
   asserts an immediate throw with the mock invoked exactly once (no retry);
   failing on every attempt asserts `OsmLookupException` after exactly
   `lookupRetryAttempts` calls.
+- `ClipFlowAnalyzerTest`: new cases for `hasPeerSupport()` - a candidate with
+  a corridor peer within tolerance returns `true`; a candidate whose only
+  corridor peers are all beyond tolerance (mirroring the existing
+  `ReportAnalysisJobTest` 120-degrees-apart scenario's numbers) returns
+  `false`; a candidate alone in its corridor (no other members at all)
+  returns `false`.
 - `ReportAnalysisJobTest`: a new case - a corridor with several vehicles
-  moving with a confident OSM legal bearing plus one moving against it,
-  corridor consensus unavailable (bimodal bearings, mirroring the real
-  report), OSM evidence present and confident - asserts the against-bearing
-  vehicle is now evaluated and can reach `CONFIRMED` (today this whole
-  corridor is skipped before fusion ever runs). A second case: same
-  contested-corridor setup but no OSM evidence and no history evidence -
-  asserts the outcome is still "insufficient," confirming no regression.
+  moving with a confident OSM legal bearing plus one moving against it
+  *with at least one corridor peer supporting its own bearing* (mirroring
+  the real report's numbers: peers within 1.7-33.9 degrees), corridor
+  consensus unavailable (bimodal), OSM evidence present and confident -
+  asserts the against-bearing vehicle is now evaluated and can reach
+  `CONFIRMED` (today this whole corridor is skipped before fusion ever
+  runs). A second case: same contested-corridor setup but no OSM evidence
+  and no history evidence - asserts the outcome is still "insufficient,"
+  confirming no regression. The existing
+  `candidate in a contested (bimodal) corridor is skipped, never falsely
+  confirmed` test is left unchanged and must continue to pass exactly as
+  written - it is the regression guard for the "no peer support" case.
 - Manual verification: resubmit the real clip from report `9fd4fea9` (or an
   equivalent one-way-street clip with mixed correct/wrong-way traffic in one
   corridor) against the fixed, redeployed server and confirm it now reaches

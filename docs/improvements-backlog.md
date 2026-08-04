@@ -27,6 +27,21 @@ considered rather than forgotten.
   investigation when picked up, not a guessed fix.
   *(added 2026-08-04)*
 
+- **On the Trim screen, the "Preview" button doesn't actually preview the
+  trimmed clip.** Reported by the user. `TrimScreen.kt`'s `ExoPlayer` is
+  loaded with the raw (untrimmed) recording (`exoPlayer.setMediaItem(...,
+  rawVideoFile)`), and the "Preview" button just does
+  `exoPlayer.seekTo(uiState.trimStartMs); exoPlayer.play()` - it seeks into
+  the raw video at the selection's start but never stops playback at
+  `uiState.trimEndMs`, and `repeatMode = Player.REPEAT_MODE_ONE` means it
+  loops the raw video rather than looping just the selected window. The
+  user expects this button to show what the actual trimmed output will
+  look like (start-to-end of the selection only, then stop or loop within
+  that window) - needs either bounding playback to
+  `[trimStartMs, trimEndMs]` on the raw-video player, or actually running
+  the trim first and previewing the real output file.
+  *(added 2026-08-04)*
+
 ## Camera / Recording
 
 **Area:** `app/src/main/java/com/trafficwatch/app/feature/camera/`

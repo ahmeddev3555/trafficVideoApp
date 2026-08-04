@@ -45,6 +45,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.trafficwatch.app.core.domain.model.LocationData
+import com.trafficwatch.app.core.domain.model.RotationSample
 import com.trafficwatch.app.core.ui.components.CellularConfirmDialog
 import com.trafficwatch.app.core.util.FileUtil
 import java.io.File
@@ -58,6 +59,7 @@ fun ReviewScreen(
     trimmedFile: File,
     location: LocationData?,
     locationSamples: List<LocationData>,
+    rotationSamples: List<RotationSample>,
     recordingStartedAt: Long,
     durationMs: Long,
     onSubmit: () -> Unit,
@@ -76,7 +78,7 @@ fun ReviewScreen(
     }
 
     LaunchedEffect(trimmedFile.absolutePath) {
-        viewModel.init(trimmedFile, location, locationSamples, recordingStartedAt, durationMs)
+        viewModel.init(trimmedFile, location, locationSamples, rotationSamples, recordingStartedAt, durationMs)
     }
 
     DisposableEffect(Unit) { onDispose { exoPlayer.release() } }

@@ -5,6 +5,9 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
@@ -21,7 +24,7 @@ private const val SAMPLE_COUNT = 3
  * Returns a single true-north compass heading snapshot at the moment of recording start -
  * the primary signal for translating in-frame vehicle movement (from the video-analysis
  * service) into a real-world compass bearing, mirroring [LocationUtil]'s single-snapshot
- * shape.
+ * shape. [observeHeadings] is the continuous counterpart, used during active recording.
  */
 @Singleton
 class CompassProvider @Inject constructor(
@@ -42,7 +45,47 @@ class CompassProvider @Inject constructor(
         timeoutMs: Long = DEFAULT_TIMEOUT_MS,
     ): Float? = withTimeoutOrNull(timeoutMs) {
         val magneticAzimuthDegrees = readAveragedAzimuthDegrees() ?: return@withTimeoutOrNull null
-        applyDeclination(magneticAzimuthDegrees, latitude, longitude, altitude)
+        val declination = declinationDegrees(latitude, longitude, altitude)
+        applyDeclination(magneticAzimuthDegrees, declination)
+    }
+
+    /**
+     * Continuous version of [getSnapshot] - emits a declination-corrected heading on every
+     * sensor update, requested at approximately [intervalMs] apart (best-effort; the OS
+     * doesn't guarantee exact timing, same as [LocationUtil.observeLocation]'s interval
+     * request). Declination is computed ONCE from [latitude]/[longitude]/[altitude] before
+     * registering the listener, not per-emission - it doesn't meaningfully change within one
+     * recording, and recomputing [GeomagneticField] on every tick would be wasted work.
+     * Emits null once (and closes) if no rotation-vector sensor exists.
+     */
+    fun observeHeadings(
+        latitude: Double,
+        longitude: Double,
+        altitude: Double,
+        intervalMs: Long,
+    ): Flow<Float?> = callbackFlow {
+        val sensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+        if (sensor == null) {
+            trySend(null)
+            close()
+            return@callbackFlow
+        }
+
+        val declination = declinationDegrees(latitude, longitude, altitude)
+        val rotationMatrix = FloatArray(9)
+        val orientation = FloatArray(3)
+
+        val listener = object : SensorEventListener {
+            override fun onSensorChanged(event: SensorEvent) {
+                val magneticAzimuthDegrees = rawAzimuthDegrees(event, rotationMatrix, orientation)
+                trySend(applyDeclination(magneticAzimuthDegrees, declination))
+            }
+
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+        }
+
+        sensorManager.registerListener(listener, sensor, (intervalMs * 1000).toInt())
+        awaitClose { sensorManager.unregisterListener(listener) }
     }
 
     private suspend fun readAveragedAzimuthDegrees(): Float? = suspendCancellableCoroutine { continuation ->
@@ -58,10 +101,7 @@ class CompassProvider @Inject constructor(
 
         val listener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent) {
-                SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
-                SensorManager.getOrientation(rotationMatrix, orientation)
-                val azimuthDegrees = (Math.toDegrees(orientation[0].toDouble()).toFloat() + 360f) % 360f
-                samples.add(azimuthDegrees)
+                samples.add(rawAzimuthDegrees(event, rotationMatrix, orientation))
 
                 if (samples.size >= SAMPLE_COUNT) {
                     sensorManager.unregisterListener(this)
@@ -78,20 +118,22 @@ class CompassProvider @Inject constructor(
         continuation.invokeOnCancellation { sensorManager.unregisterListener(listener) }
     }
 
-    private fun applyDeclination(
-        magneticAzimuthDegrees: Float,
-        latitude: Double,
-        longitude: Double,
-        altitude: Double,
-    ): Float {
-        val declination = GeomagneticField(
+    private fun rawAzimuthDegrees(event: SensorEvent, rotationMatrix: FloatArray, orientation: FloatArray): Float {
+        SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
+        SensorManager.getOrientation(rotationMatrix, orientation)
+        return (Math.toDegrees(orientation[0].toDouble()).toFloat() + 360f) % 360f
+    }
+
+    private fun declinationDegrees(latitude: Double, longitude: Double, altitude: Double): Float =
+        GeomagneticField(
             latitude.toFloat(),
             longitude.toFloat(),
             altitude.toFloat(),
             System.currentTimeMillis(),
         ).declination
-        return (magneticAzimuthDegrees + declination + 360f) % 360f
-    }
+
+    private fun applyDeclination(magneticAzimuthDegrees: Float, declinationDegrees: Float): Float =
+        (magneticAzimuthDegrees + declinationDegrees + 360f) % 360f
 
     /** Arithmetic mean breaks near the 0/360 wrap-around, so this averages on the unit circle. */
     private fun circularMeanDegrees(samplesDegrees: List<Float>): Float {

@@ -5,6 +5,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.trafficwatch.app.core.domain.model.LocationData
+import com.trafficwatch.app.core.domain.model.RotationSample
 import com.trafficwatch.app.core.util.CompassProvider
 import com.trafficwatch.app.core.util.FileUtil
 import com.trafficwatch.app.core.util.LocationUtil
@@ -22,6 +23,7 @@ import javax.inject.Inject
 
 private const val MAX_RECORDING_MS = 600_000L
 private const val RECORDING_SAMPLE_INTERVAL_MS = 1_000L
+private const val ROTATION_SAMPLE_INTERVAL_MS = 200L
 
 sealed class LocationState {
     object Acquiring : LocationState()
@@ -52,6 +54,8 @@ class CameraViewModel @Inject constructor(
     private var recordingStartedAt: Long = 0L
     private val locationSamples = mutableListOf<LocationData>()
     private var samplingJob: Job? = null
+    private val rotationSamples = mutableListOf<RotationSample>()
+    private var rotationSamplingJob: Job? = null
 
     init {
         observeLocation()
@@ -89,6 +93,7 @@ class CameraViewModel @Inject constructor(
         // below) can leave these jobs running without ever going through stopRecording(), so
         // a fresh start must not let a leaked prior sampling job double up with this one.
         samplingJob?.cancel()
+        rotationSamplingJob?.cancel()
         maxDurationJob?.cancel()
 
         recordingStartedAt = System.currentTimeMillis()
@@ -103,6 +108,29 @@ class CameraViewModel @Inject constructor(
             locationUtil.observeLocation(RECORDING_SAMPLE_INTERVAL_MS)
                 .filterNotNull()
                 .collect { locationSamples.add(it) }
+        }
+
+        rotationSamples.clear()
+        rotationSamplingJob = viewModelScope.launch {
+            val headings = if (declinationReference != null) {
+                compassProvider.observeHeadings(
+                    latitude = declinationReference.latitude,
+                    longitude = declinationReference.longitude,
+                    altitude = declinationReference.altitude,
+                    intervalMs = ROTATION_SAMPLE_INTERVAL_MS,
+                )
+            } else {
+                // No location fix available for declination correction - falls back to
+                // magnetic-north-only headings, same as the one-shot snapshot's fallback
+                // right below.
+                compassProvider.observeHeadings(
+                    latitude = 0.0, longitude = 0.0, altitude = 0.0,
+                    intervalMs = ROTATION_SAMPLE_INTERVAL_MS,
+                )
+            }
+            headings.filterNotNull().collect { heading ->
+                rotationSamples.add(RotationSample(capturedAt = System.currentTimeMillis(), headingDegrees = heading))
+            }
         }
 
         viewModelScope.launch {
@@ -127,6 +155,7 @@ class CameraViewModel @Inject constructor(
             // stopRecording(), so these jobs must be cancelled here or the 1Hz GPS
             // subscription (and the max-duration timer) leak indefinitely.
             samplingJob?.cancel()
+            rotationSamplingJob?.cancel()
             maxDurationJob?.cancel()
             _uiState.update { it.copy(cameraError = error) }
         }
@@ -139,6 +168,7 @@ class CameraViewModel @Inject constructor(
     fun stopRecording() {
         maxDurationJob?.cancel()
         samplingJob?.cancel()
+        rotationSamplingJob?.cancel()
         cameraController.stopRecording()
     }
 
@@ -146,6 +176,8 @@ class CameraViewModel @Inject constructor(
         snapshotLocation?.copy(compassHeadingDegrees = snapshotCompassHeading)
 
     fun getLocationSamples(): List<LocationData> = locationSamples.toList()
+
+    fun getRotationSamples(): List<RotationSample> = rotationSamples.toList()
 
     fun getRecordingStartedAt(): Long = recordingStartedAt
 

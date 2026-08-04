@@ -17,6 +17,7 @@ import androidx.navigation.navArgument
 import com.trafficwatch.app.core.data.repository.AuthRepository
 import com.trafficwatch.app.core.data.repository.ReportRepository
 import com.trafficwatch.app.core.domain.model.LocationData
+import com.trafficwatch.app.core.domain.model.RotationSample
 import com.trafficwatch.app.feature.auth.LoginScreen
 import com.trafficwatch.app.feature.auth.RegisterScreen
 import com.trafficwatch.app.feature.camera.CameraScreen
@@ -52,6 +53,7 @@ fun AppNavigation(
     var trimmedVideoFile by rememberSaveable { mutableStateOf<String?>(null) }
     var snapshotLocation by remember { mutableStateOf<LocationData?>(null) }
     var locationSamples by remember { mutableStateOf<List<LocationData>>(emptyList()) }
+    var rotationSamples by remember { mutableStateOf<List<RotationSample>>(emptyList()) }
     var recordingStartedAt by rememberSaveable { mutableLongStateOf(0L) }
     var trimStartMs by remember { mutableStateOf(0L) }
     var permissionsNextRoute by rememberSaveable { mutableStateOf(Routes.HISTORY) }
@@ -120,11 +122,12 @@ fun AppNavigation(
 
         composable(Routes.CAMERA) {
             CameraScreen(
-                onVideoRecorded = { file, location, startedAt, samples ->
+                onVideoRecorded = { file, location, startedAt, samples, rotationSamplesFromRecording ->
                     rawVideoFile = file.absolutePath
                     snapshotLocation = location
                     recordingStartedAt = startedAt
                     locationSamples = samples
+                    rotationSamples = rotationSamplesFromRecording
                     navController.navigate(Routes.TRIM)
                 }
             )
@@ -157,22 +160,27 @@ fun AppNavigation(
                 }
             }
 
-            // Bound + correlate GPS samples to the actual submitted (trimmed) clip.
+            // Bound + correlate GPS/rotation samples to the actual submitted (trimmed) clip.
             // Continuous sampling runs for the whole raw recording (up to MAX_RECORDING_MS),
             // but only a MAX_TRIM_DURATION_MS window of it is ever uploaded - filtering here,
             // to just the samples whose absolute capture time falls within that trimmed
             // window, keeps the payload small (bounded by the trim window, not the raw
             // recording) and makes each sample correspond to the clip actually submitted.
-            val filteredLocationSamples = remember(locationSamples, trimStartMs, duration) {
-                val windowStart = recordingStartedAt + trimStartMs
-                val windowEnd = windowStart + duration
+            // Both lists share the same window bounds, computed once.
+            val windowStart = recordingStartedAt + trimStartMs
+            val windowEnd = windowStart + duration
+            val filteredLocationSamples = remember(locationSamples, windowStart, windowEnd) {
                 locationSamples.filter { it.capturedAt in windowStart..windowEnd }
+            }
+            val filteredRotationSamples = remember(rotationSamples, windowStart, windowEnd) {
+                rotationSamples.filter { it.capturedAt in windowStart..windowEnd }
             }
 
             ReviewScreen(
                 trimmedFile = File(trimmed),
                 location = snapshotLocation,
                 locationSamples = filteredLocationSamples,
+                rotationSamples = filteredRotationSamples,
                 recordingStartedAt = recordingStartedAt,
                 durationMs = duration,
                 onSubmit = {
@@ -180,6 +188,7 @@ fun AppNavigation(
                     trimmedVideoFile = null
                     snapshotLocation = null
                     locationSamples = emptyList()
+                    rotationSamples = emptyList()
                     trimStartMs = 0L
                     navController.navigate(Routes.HISTORY) {
                         popUpTo(Routes.HISTORY) { inclusive = true }

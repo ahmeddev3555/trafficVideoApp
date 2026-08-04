@@ -37,7 +37,7 @@ class ReviewViewModelTest {
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
         viewModel = ReviewViewModel(submitReportUseCase)
-        viewModel.init(testFile, location, locationSamples, 1000L, 8000L)
+        viewModel.init(testFile, location, locationSamples, emptyList(), 1000L, 8000L)
     }
 
     @After

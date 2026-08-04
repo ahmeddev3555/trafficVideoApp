@@ -44,12 +44,13 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.trafficwatch.app.core.domain.model.LocationData
+import com.trafficwatch.app.core.domain.model.RotationSample
 import java.io.File
 
 @SuppressLint("MissingPermission")
 @Composable
 fun CameraScreen(
-    onVideoRecorded: (file: File, location: LocationData?, recordingStartedAt: Long, locationSamples: List<LocationData>) -> Unit,
+    onVideoRecorded: (file: File, location: LocationData?, recordingStartedAt: Long, locationSamples: List<LocationData>, rotationSamples: List<RotationSample>) -> Unit,
     viewModel: CameraViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -92,7 +93,8 @@ fun CameraScreen(
                 (recordingState as RecordingState.Finalizing).outputFile,
                 viewModel.getSnapshotLocation(),
                 viewModel.getRecordingStartedAt(),
-                viewModel.getLocationSamples()
+                viewModel.getLocationSamples(),
+                viewModel.getRotationSamples()
             )
         }
     }

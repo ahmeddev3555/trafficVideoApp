@@ -3,6 +3,7 @@ package com.trafficwatch.app.feature.review
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.trafficwatch.app.core.domain.model.LocationData
+import com.trafficwatch.app.core.domain.model.RotationSample
 import com.trafficwatch.app.core.domain.usecase.SubmitReportUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.channels.Channel
@@ -19,6 +20,7 @@ data class ReviewUiState(
     val trimmedFilePath: String = "",
     val location: LocationData? = null,
     val locationSamples: List<LocationData> = emptyList(),
+    val rotationSamples: List<RotationSample> = emptyList(),
     val recordingStartedAt: Long = 0L,
     val durationMs: Long = 0L,
     val fileSizeBytes: Long = 0L,
@@ -47,6 +49,7 @@ class ReviewViewModel @Inject constructor(
         trimmedFile: File,
         location: LocationData?,
         locationSamples: List<LocationData>,
+        rotationSamples: List<RotationSample>,
         recordingStartedAt: Long,
         durationMs: Long
     ) {
@@ -55,6 +58,7 @@ class ReviewViewModel @Inject constructor(
                 trimmedFilePath = trimmedFile.absolutePath,
                 location = location,
                 locationSamples = locationSamples,
+                rotationSamples = rotationSamples,
                 recordingStartedAt = recordingStartedAt,
                 durationMs = durationMs,
                 fileSizeBytes = trimmedFile.length()

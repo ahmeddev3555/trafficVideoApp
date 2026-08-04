@@ -7,6 +7,26 @@ considered rather than forgotten.
 
 ---
 
+## Navigation / UI flow
+
+**Area:** `app/src/main/java/com/trafficwatch/app/navigation/AppNavigation.kt`
+(`onNewReport`/`Routes.PERMISSIONS`/`Routes.CAMERA`/`Routes.TRIM` composables),
+`app/src/main/java/com/trafficwatch/app/feature/history/HistoryScreen.kt`
+(the "+" `FloatingActionButton`)
+
+- **Tapping "+" on the Reports screen after a submission incorrectly opens
+  the Trim screen instead of the Camera screen.** Reported by the user: the
+  "+" button's wiring (`HistoryScreen`'s `onNewReport` -> `AppNavigation`
+  sets `permissionsNextRoute = Routes.CAMERA` and navigates to
+  `Routes.PERMISSIONS`, which on `onAllGranted` navigates to
+  `permissionsNextRoute`) looks like it should always land on `Routes.CAMERA`
+  - the root cause isn't yet identified (candidates: stale `rawVideoFile`/
+  `trimmedVideoFile` `rememberSaveable` state from the previous recording
+  not being fully cleared before the new navigation, a `PermissionsScreen`
+  auto-skip path, or a back-stack/`popUpTo` interaction) - needs a proper
+  investigation when picked up, not a guessed fix.
+  *(added 2026-08-04)*
+
 ## Camera / Recording
 
 **Area:** `app/src/main/java/com/trafficwatch/app/feature/camera/`

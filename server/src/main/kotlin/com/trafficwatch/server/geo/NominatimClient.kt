@@ -12,12 +12,13 @@ import org.springframework.web.client.RestClient
 @Component
 class NominatimClient(
     @Qualifier("nominatimRestClient") private val restClient: RestClient,
+    private val osmProperties: OsmProperties,
 ) {
 
     /** Reverse-geocodes [lat]/[lon] to an address (used only for its `road` field). */
-    fun reverseGeocode(lat: Double, lon: Double): NominatimReverseResponse {
+    fun reverseGeocode(lat: Double, lon: Double): NominatimReverseResponse = withOsmRetry(osmProperties) {
         try {
-            return restClient.get()
+            restClient.get()
                 .uri { builder ->
                     builder.path("/reverse")
                         .queryParam("format", "jsonv2")
@@ -29,7 +30,11 @@ class NominatimClient(
                 .body<NominatimReverseResponse>()
                 ?: throw OsmLookupException("Nominatim reverse geocode returned an empty body")
         } catch (ex: RestClientResponseException) {
-            throw OsmLookupException("Nominatim reverse geocode failed with HTTP ${ex.statusCode}", ex)
+            throw OsmLookupException(
+                "Nominatim reverse geocode failed with HTTP ${ex.statusCode}",
+                ex,
+                isRetryable = ex.statusCode.is5xxServerError(),
+            )
         } catch (ex: RestClientException) {
             throw OsmLookupException("Nominatim reverse geocode failed", ex)
         }

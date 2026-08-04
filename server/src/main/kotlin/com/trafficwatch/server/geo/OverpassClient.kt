@@ -19,7 +19,7 @@ class OverpassClient(
 ) {
 
     /** Ways with a `highway` tag within [OsmProperties.searchRadiusMeters] of [lat]/[lon]. */
-    fun findNearbyWays(lat: Double, lon: Double): List<OverpassElement> {
+    fun findNearbyWays(lat: Double, lon: Double): List<OverpassElement> = withOsmRetry(osmProperties) {
         val query = """
             [out:json];
             way(around:${osmProperties.searchRadiusMeters},$lat,$lon)["highway"];
@@ -37,9 +37,13 @@ class OverpassClient(
                 .retrieve()
                 .body<OverpassResponse>()
                 ?: throw OsmLookupException("Overpass lookup returned an empty body")
-            return response.elements
+            response.elements
         } catch (ex: RestClientResponseException) {
-            throw OsmLookupException("Overpass lookup failed with HTTP ${ex.statusCode}", ex)
+            throw OsmLookupException(
+                "Overpass lookup failed with HTTP ${ex.statusCode}",
+                ex,
+                isRetryable = ex.statusCode.is5xxServerError(),
+            )
         } catch (ex: RestClientException) {
             throw OsmLookupException("Overpass lookup failed", ex)
         }

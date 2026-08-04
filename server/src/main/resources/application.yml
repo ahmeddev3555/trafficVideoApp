@@ -35,6 +35,8 @@ app:
     connect-timeout-ms: 5000
     read-timeout-ms: 8000
     search-radius-meters: 50
+    lookup-retry-attempts: 3
+    lookup-retry-delay-ms: 500
   video-analysis:
     base-url: "http://localhost:8000"
     connect-timeout-ms: 5000

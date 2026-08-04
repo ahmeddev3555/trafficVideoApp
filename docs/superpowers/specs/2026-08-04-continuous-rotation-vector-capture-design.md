@@ -239,11 +239,15 @@ mocked-Android-framework tests:
   `List<RotationSampleDto>` -> JSON serialization (no Android/WorkManager
   dependency, directly testable with Gson).
 - **Server:** a unit test for `RotationSampleDto` JSON parsing - valid
-  JSON parses to the expected list; malformed JSON is logged and returns
-  null rather than throwing (with an explicit test asserting the log call
-  happens - the gap the OSM-lookup-retry plan's final review found in
-  `location_samples`'s coverage, fixed for both fields while this area is
-  already being touched).
+  JSON parses to the expected list; malformed JSON results in a `null`
+  persisted value rather than throwing or failing the submission (a
+  behavioral test, not a log-call assertion - this codebase has no
+  existing logger-testing infrastructure anywhere, e.g. no Logback test
+  appender, and introducing one solely for this would be disproportionate
+  to a nice-to-have regression test). Covers the same gap the
+  OSM-lookup-retry plan's final review found missing for
+  `location_samples` (behaviorally, not via log verification), for both
+  fields while this area is already being touched.
 - **Server:** extend the existing `EndToEndFlowTest` with a case that
   submits a report including a `rotation_samples` field and asserts the
   stored value round-trips correctly - same style already used for

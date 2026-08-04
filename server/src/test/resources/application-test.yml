@@ -21,3 +21,12 @@ app:
     # ReportAnalysisIntegrationTest override base-url via @DynamicPropertySource to point
     # at WireMock, so this never reaches a real network call.
     api-key: "test-only-video-analysis-api-key"
+  osm:
+    # StreetDirectionResolverTest's failure-path test (500 from Overpass) would otherwise
+    # make 3 real attempts with real Thread.sleep(500) delays between them under the
+    # default retry config, turning a fast/deterministic test into a 2-second real sleep.
+    # Force a single attempt for all Spring-context ("test" profile) tests; classes that
+    # need to exercise retry behavior itself (NominatimClientTest, OverpassClientTest)
+    # construct OsmProperties directly rather than going through this profile, so they are
+    # unaffected by this override.
+    lookup-retry-attempts: 1

@@ -9,15 +9,13 @@ package com.trafficwatch.server.geo
  * this loop in both.
  */
 fun <T> withOsmRetry(properties: OsmProperties, call: () -> T): T {
-    var lastException: OsmLookupException? = null
-    repeat(properties.lookupRetryAttempts) { attempt ->
+    repeat(properties.lookupRetryAttempts.coerceAtLeast(1)) { attempt ->
         try {
             return call()
         } catch (ex: OsmLookupException) {
-            lastException = ex
-            if (!ex.isRetryable || attempt == properties.lookupRetryAttempts - 1) throw ex
+            if (!ex.isRetryable || attempt == properties.lookupRetryAttempts.coerceAtLeast(1) - 1) throw ex
             Thread.sleep(properties.lookupRetryDelayMs)
         }
     }
-    throw requireNotNull(lastException)
+    error("unreachable: the final attempt always throws")
 }

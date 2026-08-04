@@ -643,7 +643,7 @@ class ReportAnalysisJobTest {
         job.applyOutcome(report)
 
         assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
-        assertThat(report.status).isNotEqualTo(ReportStatus.CONFIRMED)
+        assertThat(report.analysisMessage).isEqualTo("Legal traffic direction could not be established for this street")
     }
 
     @Test

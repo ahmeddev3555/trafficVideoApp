@@ -76,6 +76,12 @@ class EndToEndFlowTest @Autowired constructor(
         @DynamicPropertySource
         fun overrideStorageDirectory(registry: DynamicPropertyRegistry) {
             registry.add("app.storage.video-directory") { tempVideoDir.toString() }
+            // This test deliberately leaves Nominatim/Overpass unstubbed (real public
+            // endpoints - see the class doc). Retry logic (added in this same plan) would
+            // otherwise multiply an occasional slow/failing attempt into a latency that
+            // blows this test's 5-second poll budget below - force a single attempt here to
+            // restore the pre-retry timing this test's budget was tuned against.
+            registry.add("app.osm.lookup-retry-attempts") { 1 }
             // ReportAnalysisJob now resolves the street and calls video analysis even when
             // compass heading is missing (only candidate scoring is skipped) - unlike
             // before, this test's "no compass" submission no longer short-circuits before

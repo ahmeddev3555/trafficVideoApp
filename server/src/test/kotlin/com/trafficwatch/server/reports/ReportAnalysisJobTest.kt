@@ -578,6 +578,75 @@ class ReportAnalysisJobTest {
     }
 
     @Test
+    fun `candidate in a contested corridor WITH peer support is evaluated against OSM and can be confirmed`() {
+        val report = sampleReport(compassHeadingDegrees = BigDecimal.ZERO)
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude)
+        } returns DirectionResolution.OneWay("Khayaban-e-Jinnah", 90.0)
+        // Mirrors the real report this fix was diagnosed from: two vehicles flowing with the
+        // legal bearing (88, 92), one candidate moving dead against it (270, exactly the
+        // illegal bearing) with one real peer nearby (250, 20 degrees away, within the
+        // 45-degree tolerance) - all in the same corridor, so the corridor's OVERALL
+        // consensus (excluding the candidate: 88/92/250) is bimodal/dispersed
+        // (R ~= 0.37, below the 0.6 gate), but the candidate's OWN specific direction is
+        // corroborated by track 4, not a lone coincidence.
+        // Score check: candidate (track 3) angularDistance from illegal = 0 ->
+        // bearingMatchScore 1.0 -> finalScore = 1.0(fusion) * 1.0(quality) * 0.9(detection)
+        // * 1.0 = 0.9. The peer (track 4) is also evaluated independently (angularDistance
+        // 20 -> bearingMatchScore 0.667 -> finalScore 0.6) but scores lower and has no
+        // plate, so the winner is unambiguous.
+        every {
+            videoAnalysisClient.analyze(fakeVideoPath, any())
+        } returns analysisResponse(
+            listOf(
+                vehicle(trackId = 1, bearingDegrees = 88.0, detectionConfidence = 0.9),
+                vehicle(trackId = 2, bearingDegrees = 92.0, detectionConfidence = 0.9),
+                vehicle(
+                    trackId = 3,
+                    bearingDegrees = 270.0,
+                    detectionConfidence = 0.9,
+                    plateText = "LEA-1234",
+                    plateConfidence = 0.8,
+                ),
+                vehicle(trackId = 4, bearingDegrees = 250.0, detectionConfidence = 0.9, plateText = null, plateConfidence = null),
+            ),
+        )
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.CONFIRMED)
+        assertThat(report.licensePlate).isEqualTo("LEA-1234")
+    }
+
+    @Test
+    fun `candidate in a contested corridor WITH peer support but no OSM or history evidence still lands on insufficient`() {
+        val report = sampleReport(compassHeadingDegrees = BigDecimal.ZERO)
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude)
+        } returns DirectionResolution.Unknown(null)
+        // Same peer-support shape as the test above, but no OSM tag (Unknown, not OneWay) and
+        // no learned history (stubVideoResolution already defaults historyEvidence to null) -
+        // peer support alone must never BE evidence, only a gate on whether to attempt fusion.
+        every {
+            videoAnalysisClient.analyze(fakeVideoPath, any())
+        } returns analysisResponse(
+            listOf(
+                vehicle(trackId = 1, bearingDegrees = 88.0, detectionConfidence = 0.9),
+                vehicle(trackId = 2, bearingDegrees = 92.0, detectionConfidence = 0.9),
+                vehicle(trackId = 3, bearingDegrees = 270.0, detectionConfidence = 0.9),
+                vehicle(trackId = 4, bearingDegrees = 250.0, detectionConfidence = 0.9),
+            ),
+        )
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
+        assertThat(report.status).isNotEqualTo(ReportStatus.CONFIRMED)
+    }
+
+    @Test
     fun `below-threshold candidate rejects with the too-low message`() {
         val report = sampleReport(compassHeadingDegrees = BigDecimal.ZERO)
         every {

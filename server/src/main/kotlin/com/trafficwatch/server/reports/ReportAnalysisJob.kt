@@ -163,8 +163,9 @@ class ReportAnalysisJob(
      * Evaluates every qualified vehicle as a potential violator. Per spec:
      * a candidate moving WITH its own corridor's consensus is never a violator
      * (legal opposing stream on a divided road); a violator moves against its
-     * corridor's consensus, or against the fused legal bearing when alone.
-     * Fusion is per-candidate because the clip-consensus source is the
+     * corridor's consensus, or against the fused legal bearing when alone or
+     * when its corridor's overall consensus is unavailable but its own direction has real
+     * peer support. Fusion is per-candidate because the clip-consensus source is the
      * candidate's own corridor (excluding the candidate itself).
      */
     private fun evaluateCandidates(
@@ -179,15 +180,23 @@ class ReportAnalysisJob(
         for (candidate in flowVehicles) {
             val consensus = clipFlowAnalyzer.corridorConsensus(flowVehicles, candidate.corridorId, candidate)
 
-            // "Alone" must mean literally alone. A null consensus can mean either the
-            // corridor genuinely has no other qualified member (the quiet-street case,
-            // where OSM/history evidence alone may still score the candidate) or the
-            // corridor HAS other members but their bearings are bimodal/dispersed, so the
-            // R-gate refused to elect one (a divided road merged into one corridor). Gate 1
-            // can't protect a legally-flowing far-side vehicle in the second case, so a
-            // contested corridor must never elect a violator either - skip it outright.
+            // A null consensus can mean either the corridor genuinely has no other
+            // qualified member (the quiet-street case, where OSM/history evidence alone may
+            // still score the candidate), or the corridor HAS other members but their
+            // bearings are bimodal/dispersed, so the R-gate refused to elect one (a divided
+            // road merged into one corridor, or a one-way street with both normal traffic
+            // and a violator in frame). hasPeerSupport alone can't tell these apart - it is
+            // vacuously false both when the candidate is genuinely alone (no one else to be
+            // a peer) and when other members exist but none support its bearing - so
+            // hasOtherCorridorMembers is still needed to identify the second case. Only skip
+            // when other members exist AND none of them corroborate this candidate's OWN
+            // specific direction - a lone bearing that happens to coincide with the illegal
+            // direction by coincidence must never be trusted on OSM/history evidence alone,
+            // but a direction corroborated by another observed vehicle is not a coincidence
+            // and independent evidence may still apply. A genuinely alone candidate must
+            // always proceed, exactly as before this fix.
             val hasOtherCorridorMembers = flowVehicles.any { it.corridorId == candidate.corridorId && it !== candidate }
-            if (consensus == null && hasOtherCorridorMembers) {
+            if (consensus == null && hasOtherCorridorMembers && !clipFlowAnalyzer.hasPeerSupport(flowVehicles, candidate)) {
                 continue
             }
 

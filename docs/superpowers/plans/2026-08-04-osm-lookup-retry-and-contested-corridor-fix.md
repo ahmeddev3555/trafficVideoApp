@@ -711,15 +711,19 @@ with:
 
             // A null consensus can mean either the corridor genuinely has no other
             // qualified member (the quiet-street case, where OSM/history evidence alone may
-            // still score the candidate), or the corridor HAS other members but their
-            // bearings are bimodal/dispersed, so the R-gate refused to elect one (a divided
-            // road merged into one corridor, or a one-way street with both normal traffic
-            // and a violator in frame). In the second case, only skip the candidate if its
-            // OWN specific direction has no real peer support - a lone bearing that happens
-            // to coincide with the illegal direction by coincidence must never be trusted on
-            // OSM/history evidence alone, but a direction corroborated by another observed
-            // vehicle is not a coincidence and independent evidence may still apply.
-            if (consensus == null && !clipFlowAnalyzer.hasPeerSupport(flowVehicles, candidate)) {
+            // still score the candidate - hasPeerSupport is trivially false here too, since
+            // there's no one else to be a peer, so it must NOT gate this case), or the
+            // corridor HAS other members but their bearings are bimodal/dispersed, so the
+            // R-gate refused to elect one (a divided road merged into one corridor, or a
+            // one-way street with both normal traffic and a violator in frame). Only in this
+            // second case does peer support matter: skip the candidate only if it has other
+            // corridor members AND none of them support its own specific direction - a lone
+            // bearing that happens to coincide with the illegal direction by coincidence must
+            // never be trusted on OSM/history evidence alone, but a direction corroborated by
+            // another observed vehicle is not a coincidence and independent evidence may
+            // still apply.
+            val hasOtherCorridorMembers = flowVehicles.any { it.corridorId == candidate.corridorId && it !== candidate }
+            if (consensus == null && hasOtherCorridorMembers && !clipFlowAnalyzer.hasPeerSupport(flowVehicles, candidate)) {
                 continue
             }
 

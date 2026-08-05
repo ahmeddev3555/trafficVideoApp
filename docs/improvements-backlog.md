@@ -203,7 +203,19 @@ considered rather than forgotten.
   direction analysis (per sub-project 3), retried reports will silently
   have neither. Would need both persisted on the local `Report` entity
   too, not just the transient upload-flow state.
-  *(added 2026-08-03, updated 2026-08-04 to cover rotation_samples too)*
+  **Confirmed happening in production, not just theoretical**: during
+  2026-08-05 manual verification of continuous-rotation-vector-capture, a
+  real submission on unstable Wi-Fi failed its first attempt 5 times
+  (`SocketTimeoutException`/`Connection reset`/`EOFException` in server
+  logs) before a retry finally succeeded - the landed report
+  (`2dcf9912-7c7e-47e6-a761-d8e3d226722e`) had `compass_heading_degrees`,
+  `location_samples`, and `rotation_samples` all null, exactly as this
+  entry predicts. A second, clean first-attempt submission on stable
+  Wi-Fi confirmed all three fields populate correctly when no retry is
+  involved - so the capture/wire/persistence path itself is fine; this
+  retry gap is the only thing that drops the data.
+  *(added 2026-08-03, updated 2026-08-04 to cover rotation_samples too,
+  confirmed in production 2026-08-05)*
 - **`ReviewViewModel.submit()` has no error handling around the enqueue
   call, so any exception there (e.g. a WorkManager `Data` payload
   overflow, or any other `SubmitReportUseCase.invoke()` failure) crashes

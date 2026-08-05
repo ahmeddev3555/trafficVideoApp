@@ -11,6 +11,7 @@ import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import com.trafficwatch.server.auth.User
 import com.trafficwatch.server.auth.UserRepository
 import com.trafficwatch.server.geo.FlowObservationRepository
+import com.trafficwatch.server.reports.dto.RotationSampleDto
 import org.assertj.core.api.Assertions.assertThat
 import org.awaitility.Awaitility.await
 import org.junit.jupiter.api.AfterAll
@@ -120,7 +121,12 @@ class ReportAnalysisIntegrationTest @Autowired constructor(
     // (see the plan's "No PostGIS" decision) never lets one test's cached OSM resolution
     // leak into another's - @SpringBootTest doesn't roll back the H2 database between test
     // methods, so a shared bucket would silently reuse whichever fixture ran first.
-    private fun submitReport(latitude: BigDecimal, compassHeadingDegrees: BigDecimal?): UUID {
+    private fun submitReport(
+        latitude: BigDecimal,
+        compassHeadingDegrees: BigDecimal?,
+        locationSamplesJson: String? = null,
+        rotationSamplesJson: String? = null,
+    ): UUID {
         authenticateAsNewUser()
         val response = reportService.submit(
             video = sampleVideo(),
@@ -134,8 +140,8 @@ class ReportAnalysisIntegrationTest @Autowired constructor(
             durationMs = 15000L,
             deviceId = "device-123",
             compassHeadingDegrees = compassHeadingDegrees,
-            locationSamplesJson = null,
-            rotationSamplesJson = null,
+            locationSamplesJson = locationSamplesJson,
+            rotationSamplesJson = rotationSamplesJson,
         )
         return response.reportId
     }
@@ -437,5 +443,62 @@ class ReportAnalysisIntegrationTest @Autowired constructor(
         val observations = flowObservationRepository.findAll()
         assertThat(observations).hasSize(1)
         assertThat(observations[0].vehicleCount).isEqualTo(3)
+    }
+
+    @Test
+    fun `rotation_samples persisted and read back through a real Hibernate round-trip confirm a violation a stale compass scalar alone would have missed`() {
+        val latitude = BigDecimal("31.5700")
+        stubOverpassOneWayNorth(latitude) // legal bearing 0 (north); illegal bearing 180.
+        val baseEpochMs = 1_700_000_000_000L
+        val rotationSamplesJson = objectMapper.writeValueAsString(
+            listOf(
+                RotationSampleDto(headingDegrees = 10.0, capturedAt = baseEpochMs),
+                RotationSampleDto(headingDegrees = 90.0, capturedAt = baseEpochMs + 8000L),
+            ),
+        )
+        // Single vehicle with trackMidpointMs = 8000, landing exactly on the second rotation
+        // sample - plus the corridor/flow fields ClipFlowAnalyzer.qualifyVehicles requires.
+        stubVideoAnalysis(
+            """
+            {
+              "vehicles": [
+                {
+                  "track_id": 1, "vehicle_type": "car", "detection_confidence": 0.9,
+                  "bearing_degrees": 90.0, "plate_text": "LEA-1234", "plate_confidence": 0.9,
+                  "bounding_box": {"x1": 0.0, "y1": 0.0, "x2": 1414.0, "y2": 1414.0},
+                  "corridor_id": 1, "corridor_cohesion": 1.0,
+                  "track_frame_count": 10, "displacement_pixels": 310.0,
+                  "track_midpoint_ms": 8000
+                }
+              ],
+              "frame_width": 1920,
+              "frame_height": 1080
+            }
+            """.trimIndent(),
+        )
+
+        // A stale compass scalar of 0.0 alone would give absoluteBearing (0+90)%360 = 90 -
+        // 90 degrees from the illegal bearing (180), outside the default 60-degree
+        // tolerance - REJECTED. This report also carries rotation_samples showing the
+        // camera's real orientation at this vehicle's own observation midpoint was 90.0
+        // (not the stale 0.0 scalar), giving absoluteBearing (90+90)%360 = 180 - exactly
+        // the illegal bearing - CONFIRMED. Unlike ReportAnalysisJobTest's equivalent unit
+        // test, rotation_samples here travels through the real ReportService.submit() ->
+        // Hibernate @JdbcTypeCode(SqlTypes.JSON) write -> reportRepository.findById() read
+        // path that ReportAnalysisJob actually runs against in production.
+        val reportId = submitReport(
+            latitude,
+            compassHeadingDegrees = BigDecimal("0.0"),
+            rotationSamplesJson = rotationSamplesJson,
+        )
+        val finalReport = waitForTerminalStatus(reportId)
+
+        assertThat(finalReport.status).isEqualTo(ReportStatus.CONFIRMED)
+        assertThat(finalReport.licensePlate).isEqualTo("LEA-1234")
+
+        val evidenceJson = finalReport.directionEvidence
+        assertThat(evidenceJson).isNotNull()
+        val evidenceBreakdown = objectMapper.readTree(evidenceJson)
+        assertThat(evidenceBreakdown.get("candidate_orientation_source").asText()).isEqualTo("ROTATION")
     }
 }

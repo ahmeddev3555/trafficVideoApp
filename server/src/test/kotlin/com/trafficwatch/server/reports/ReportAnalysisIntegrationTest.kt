@@ -329,7 +329,7 @@ class ReportAnalysisIntegrationTest @Autowired constructor(
 
         assertThat(finalReport.status).isEqualTo(ReportStatus.REJECTED)
         assertThat(finalReport.analysisMessage)
-            .isEqualTo("Device compass heading unavailable; cannot determine vehicle direction")
+            .isEqualTo("No orientation data available for this report")
         assertThat(finalReport.streetName).isEqualTo("Test One Way")
         assertThat(finalReport.licensePlate).isNull()
         assertThat(wireMockServer.allServeEvents).isNotEmpty()

@@ -9,7 +9,9 @@ import com.trafficwatch.server.geo.DirectionEvidenceResolver
 import com.trafficwatch.server.geo.DirectionResolution
 import com.trafficwatch.server.geo.EvidenceKind
 import com.trafficwatch.server.geo.FlowObservationService
+import com.trafficwatch.server.geo.OrientationSource
 import com.trafficwatch.server.geo.StreetDirectionResolver
+import com.trafficwatch.server.reports.dto.RotationSampleDto
 import com.trafficwatch.server.storage.VideoStorageService
 import com.trafficwatch.server.storage.WrongWayFrameStorageService
 import com.trafficwatch.server.videoanalysis.VideoAnalysisClient
@@ -88,6 +90,8 @@ class ReportAnalysisJobTest {
         id: UUID = UUID.randomUUID(),
         compassHeadingDegrees: BigDecimal? = BigDecimal("90.0"),
         createdUpdatedAt: OffsetDateTime = OffsetDateTime.parse("2026-07-25T10:00:00Z"),
+        locationSamples: String? = null,
+        rotationSamples: String? = null,
     ) = Report(
         userId = UUID.randomUUID(),
         videoPath = "/videos/$id.mp4",
@@ -102,6 +106,8 @@ class ReportAnalysisJobTest {
         deviceId = "device-123",
         status = ReportStatus.PENDING,
         compassHeadingDegrees = compassHeadingDegrees,
+        locationSamples = locationSamples,
+        rotationSamples = rotationSamples,
         updatedAt = createdUpdatedAt,
     ).apply { this.id = id }
 
@@ -117,6 +123,7 @@ class ReportAnalysisJobTest {
         corridorCohesion: Double? = 1.0,
         trackFrameCount: Int? = 10,
         displacementPixels: Double? = 310.0,
+        trackMidpointMs: Long? = null,
     ) = VehicleAnalysisResult(
         trackId = trackId,
         vehicleType = "car",
@@ -130,6 +137,7 @@ class ReportAnalysisJobTest {
         corridorCohesion = corridorCohesion,
         trackFrameCount = trackFrameCount,
         displacementPixels = displacementPixels,
+        trackMidpointMs = trackMidpointMs,
     )
 
     /** Wraps [vehicles] into a full video-analysis response with usable frame dimensions. */
@@ -140,7 +148,7 @@ class ReportAnalysisJobTest {
     ) = VideoAnalysisResponse(vehicles = vehicles, frameWidth = frameWidth, frameHeight = frameHeight)
 
     @Test
-    fun `applyOutcome still resolves the street and calls video analysis when compass heading is missing, but rejects with a specific message`() {
+    fun `applyOutcome still resolves the street and calls video analysis when no orientation data is available, but rejects with a specific message`() {
         val report = sampleReport(compassHeadingDegrees = null)
         every {
             streetDirectionResolver.resolve(report.latitude, report.longitude)
@@ -154,12 +162,92 @@ class ReportAnalysisJobTest {
 
         assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
         assertThat(report.analysisMessage)
-            .isEqualTo("Device compass heading unavailable; cannot determine vehicle direction")
+            .isEqualTo("No orientation data available for this report")
         assertThat(report.streetName).isEqualTo("Main Boulevard")
         assertThat(report.licensePlate).isNull()
         assertThat(report.confidence).isNull()
         verify(exactly = 1) { streetDirectionResolver.resolve(report.latitude, report.longitude) }
         verify(exactly = 1) { videoAnalysisClient.analyze(fakeVideoPath, any()) }
+    }
+
+    @Test
+    fun `applyOutcome uses per-vehicle rotation-sample-derived orientation to confirm a violation the stale compass scalar alone would have missed`() {
+        // The stale scalar (0.0) represents a single compass snapshot taken before the
+        // camera physically rotated mid-clip. rotation_samples show the camera's real
+        // orientation changing from 10.0 (early) to 90.0 (by the time this vehicle was
+        // actually observed, at trackMidpointMs=8000 -> target epoch 1000+8000=9000,
+        // which lands exactly on the second sample).
+        val rotationSamplesJson = objectMapper.writeValueAsString(
+            listOf(
+                RotationSampleDto(headingDegrees = 10.0, capturedAt = 1000L),
+                RotationSampleDto(headingDegrees = 90.0, capturedAt = 9000L),
+            ),
+        )
+        val report = sampleReport(compassHeadingDegrees = BigDecimal("0.0"), rotationSamples = rotationSamplesJson)
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude)
+        } returns DirectionResolution.OneWay("Main Boulevard", 0.0) // legal bearing 0, illegal 180
+        every {
+            videoAnalysisClient.analyze(fakeVideoPath, any())
+        } returns analysisResponse(
+            listOf(vehicle(bearingDegrees = 90.0, trackMidpointMs = 8000L, plateText = "LEA-1234", plateConfidence = 0.9)),
+        )
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        // Using the stale 0.0 scalar: absoluteBearing = (0+90)%360 = 90, 90 degrees from
+        // illegal(180) - OUTSIDE the 60-degree tolerance, would have been REJECTED. Using
+        // the rotation-sample-resolved 90.0: absoluteBearing = (90+90)%360 = 180 - exactly
+        // the illegal bearing - CONFIRMED. Proves the fusion, not just the scalar, drove
+        // this outcome.
+        assertThat(report.status).isEqualTo(ReportStatus.CONFIRMED)
+        assertThat(report.licensePlate).isEqualTo("LEA-1234")
+        assertThat(report.streetName).isEqualTo("Main Boulevard")
+    }
+
+    @Test
+    fun `applyOutcome resolves orientation from rotation samples even with no compass scalar at all`() {
+        val rotationSamplesJson = objectMapper.writeValueAsString(
+            listOf(
+                RotationSampleDto(headingDegrees = 10.0, capturedAt = 1000L),
+                RotationSampleDto(headingDegrees = 90.0, capturedAt = 9000L),
+            ),
+        )
+        val report = sampleReport(compassHeadingDegrees = null, rotationSamples = rotationSamplesJson)
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude)
+        } returns DirectionResolution.OneWay("Main Boulevard", 0.0)
+        every {
+            videoAnalysisClient.analyze(fakeVideoPath, any())
+        } returns analysisResponse(listOf(vehicle(bearingDegrees = 90.0, trackMidpointMs = 8000L)))
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        // Proves the compass scalar is no longer a hard requirement - samples alone are
+        // enough to resolve an orientation and reach a real (non-"no orientation data") verdict.
+        assertThat(report.status).isEqualTo(ReportStatus.CONFIRMED)
+    }
+
+    @Test
+    fun `applyOutcome records the resolved orientation source in the evidence breakdown`() {
+        val rotationSamplesJson = objectMapper.writeValueAsString(
+            listOf(RotationSampleDto(headingDegrees = 90.0, capturedAt = 1000L)),
+        )
+        val report = sampleReport(compassHeadingDegrees = BigDecimal("0.0"), rotationSamples = rotationSamplesJson)
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude)
+        } returns DirectionResolution.OneWay("Main Boulevard", 0.0)
+        every {
+            videoAnalysisClient.analyze(fakeVideoPath, any())
+        } returns analysisResponse(listOf(vehicle(bearingDegrees = 90.0, trackMidpointMs = 0L)))
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.CONFIRMED)
+        assertThat(report.directionEvidence).contains(OrientationSource.ROTATION.name)
     }
 
     @Test

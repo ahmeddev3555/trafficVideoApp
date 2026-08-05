@@ -12,7 +12,10 @@ import com.trafficwatch.server.geo.EvidenceKind
 import com.trafficwatch.server.geo.FlowObservationService
 import com.trafficwatch.server.geo.FlowVehicle
 import com.trafficwatch.server.geo.FusionResult
+import com.trafficwatch.server.geo.OrientationTimeline
 import com.trafficwatch.server.geo.StreetDirectionResolver
+import com.trafficwatch.server.reports.dto.LocationSampleDto
+import com.trafficwatch.server.reports.dto.RotationSampleDto
 import com.trafficwatch.server.storage.VideoStorageService
 import com.trafficwatch.server.storage.WrongWayFrameStorageService
 import com.trafficwatch.server.videoanalysis.VideoAnalysisClient
@@ -121,20 +124,32 @@ class ReportAnalysisJob(
             return AnalysisOutcome.rejected("Video analysis service unavailable: ${ex.message}", streetName)
         }
 
-        // A missing compass heading means no vehicle's frame-relative bearing can be
-        // converted to a real-world bearing at all - there is nothing to check against a
-        // legal direction. Rather than bailing out before OSM/video analysis even run (the
-        // pipeline's old behavior), street resolution and vehicle detection above still
-        // happen and are reflected in the stored evidence breakdown; only candidate
-        // direction-scoring is skipped, so this always lands on REJECTED with a message
-        // that says why, distinct from "no violation found."
+        // A report with no orientation source at all (no compass scalar, no samples)
+        // means no vehicle's frame-relative bearing can be converted to a real-world
+        // bearing - there is nothing to check against a legal direction. Rather than
+        // bailing out before OSM/video analysis even run, street resolution and vehicle
+        // detection above still happen and are reflected in the stored evidence
+        // breakdown; only candidate direction-scoring is skipped, so this always lands
+        // on REJECTED with a message that says why, distinct from "no violation found."
         val compassHeadingDegrees = report.compassHeadingDegrees
-        val flowVehicles = if (compassHeadingDegrees != null) {
+        // Parsed via parseLocationSamples/parseRotationSamples (not a raw != null check on
+        // report.locationSamples/rotationSamples) because a String property mapped with
+        // @JdbcTypeCode(SqlTypes.JSON) round-trips a Kotlin null through the DB as the
+        // literal text "null" rather than a true SQL NULL - report.locationSamples is
+        // non-null even for a report with no samples at all, so hasOrientationSource must be
+        // driven by the actually-parsed (possibly empty) sample lists, not the raw field.
+        val locationSamples = parseLocationSamples(report.locationSamples)
+        val rotationSamples = parseRotationSamples(report.rotationSamples)
+        val orientationTimeline = OrientationTimeline(locationSamples, rotationSamples)
+        val hasOrientationSource = compassHeadingDegrees != null ||
+            locationSamples.isNotEmpty() || rotationSamples.isNotEmpty()
+        val flowVehicles = if (hasOrientationSource) {
             clipFlowAnalyzer.qualifyVehicles(
                 analysis.vehicles,
-                compassHeadingDegrees.toDouble(),
+                compassHeadingDegrees?.toDouble(),
                 analysis.frameWidth,
                 analysis.frameHeight,
+                orientationTimeline,
             )
         } else {
             emptyList()
@@ -145,7 +160,7 @@ class ReportAnalysisJob(
 
         val outcome = buildOutcome(
             report, evaluation, osmEvidence, historyEvidence, flowVehicles, streetName,
-            compassMissing = compassHeadingDegrees == null,
+            orientationMissing = !hasOrientationSource,
         )
 
         ingestObservations(report, flowVehicles, evaluation.best?.flowVehicle)
@@ -241,7 +256,7 @@ class ReportAnalysisJob(
         historyEvidence: DirectionEvidence?,
         flowVehicles: List<FlowVehicle>,
         streetName: String?,
-        compassMissing: Boolean,
+        orientationMissing: Boolean,
     ): AnalysisOutcome {
         val best = evaluation.best
         if (best != null && best.finalScore >= analysisProperties.confirmationThreshold) {
@@ -278,7 +293,7 @@ class ReportAnalysisJob(
             best != null -> "Possible wrong-way vehicle detected, but confidence was too low to confirm"
             evaluation.sawConflict || (fallbackFusion as? FusionResult.Insufficient)?.conflict == true ->
                 "Conflicting direction evidence for this street"
-            compassMissing -> "Device compass heading unavailable; cannot determine vehicle direction"
+            orientationMissing -> "No orientation data available for this report"
             fallbackFusion is FusionResult.Fused -> "No vehicles detected moving against the legal direction"
             else -> "Legal traffic direction could not be established for this street"
         }
@@ -313,11 +328,45 @@ class ReportAnalysisJob(
                 bearingMatchScore = best?.bearingMatchScore,
                 finalScore = best?.finalScore,
                 confirmationThreshold = analysisProperties.confirmationThreshold,
+                candidateOrientationSource = best?.flowVehicle?.orientationSource?.name,
             ),
         )
     } catch (ex: Exception) {
         logger.warn("ReportAnalysisJob: failed to serialize evidence breakdown", ex)
         null
+    }
+
+    /**
+     * Unlike ReportService.submit()'s parsing of the same field (which must tolerate
+     * malformed/oversized client input before it's ever stored), by the time this reads
+     * report.locationSamples back out, that JSON has already been validated and capped
+     * at write time - a parse failure here would mean corrupted DB data, a genuine bug,
+     * not user input to tolerate. No defensive try/catch.
+     */
+    private fun parseLocationSamples(json: String?): List<LocationSampleDto> {
+        // The "null" check (not just == null) is not defensive tolerance of bad input: for a
+        // String-typed column mapped with @JdbcTypeCode(SqlTypes.JSON), Hibernate persists a
+        // Kotlin/Java null property value as the literal 4-character JSON-null text "null"
+        // rather than a SQL NULL, and hands that same literal text back on read - so a report
+        // saved with no location samples at all round-trips as the STRING "null", not Kotlin
+        // null. This is the real, legitimate on-disk shape of "absent" for this column type,
+        // not malformed data.
+        if (json == null || json == "null") return emptyList()
+        val parsed: List<LocationSampleDto> = objectMapper.readValue(
+            json,
+            objectMapper.typeFactory.constructCollectionType(List::class.java, LocationSampleDto::class.java),
+        )
+        return parsed
+    }
+
+    /** See [parseLocationSamples] - same reasoning, same trust-the-stored-invariant contract. */
+    private fun parseRotationSamples(json: String?): List<RotationSampleDto> {
+        if (json == null || json == "null") return emptyList()
+        val parsed: List<RotationSampleDto> = objectMapper.readValue(
+            json,
+            objectMapper.typeFactory.constructCollectionType(List::class.java, RotationSampleDto::class.java),
+        )
+        return parsed
     }
 
     /**
@@ -353,6 +402,7 @@ internal data class EvidenceBreakdown(
     val bearingMatchScore: Double?,
     val finalScore: Double?,
     val confirmationThreshold: Double,
+    val candidateOrientationSource: String?,
 )
 
 /** One fully-evaluated violation candidate. */

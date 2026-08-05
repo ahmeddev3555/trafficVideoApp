@@ -1,6 +1,6 @@
 import pytest
 
-from app.tracking_bearing import compute_bearing_degrees
+from app.tracking_bearing import compute_bearing_degrees, compute_track_midpoint_ms
 
 
 def _linear_track(start, end, steps=8):
@@ -48,3 +48,21 @@ def test_result_is_always_in_range():
     bearing = compute_bearing_degrees(track)
     assert bearing is not None
     assert 0.0 <= bearing < 360.0
+
+
+def test_track_midpoint_ms_at_30fps():
+    # Frames 0..29 at 30fps span exactly 1 second (0..1000ms); midpoint frame 14.5 -> ~483ms.
+    assert compute_track_midpoint_ms(0, 29, 30.0) == pytest.approx(483, abs=1)
+
+
+def test_track_midpoint_ms_single_frame_track():
+    assert compute_track_midpoint_ms(10, 10, 30.0) == pytest.approx(333, abs=1)
+
+
+def test_track_midpoint_ms_returns_none_when_fps_is_none():
+    assert compute_track_midpoint_ms(0, 29, None) is None
+
+
+def test_track_midpoint_ms_returns_none_when_fps_is_zero_or_negative():
+    assert compute_track_midpoint_ms(0, 29, 0.0) is None
+    assert compute_track_midpoint_ms(0, 29, -5.0) is None

@@ -51,3 +51,19 @@ def compute_bearing_degrees(
     # 0 degrees, "right" (positive dx) maps to 90 degrees - the same clockwise-from-up
     # convention as a compass bearing, just frame-relative instead of true-north-relative.
     return math.degrees(math.atan2(dx, -dy)) % 360.0
+
+
+def compute_track_midpoint_ms(
+    first_frame_index: int,
+    last_frame_index: int,
+    fps: float | None,
+) -> int | None:
+    """Elapsed milliseconds from the analyzed clip's start to the midpoint between a
+    track's first and last observed frame. None when fps is unavailable or non-positive -
+    never a fabricated timestamp. Used by the Kotlin server to look up this vehicle's
+    camera orientation at roughly the moment it was observed, instead of applying one
+    static compass reading to every vehicle in the clip regardless of when it appeared."""
+    if fps is None or fps <= 0:
+        return None
+    midpoint_frame = (first_frame_index + last_frame_index) / 2
+    return round(midpoint_frame / fps * 1000)

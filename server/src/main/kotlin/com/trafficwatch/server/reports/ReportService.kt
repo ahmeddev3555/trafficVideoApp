@@ -44,9 +44,10 @@ private val RECORDED_AT_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPatte
  */
 private const val MAX_LOCATION_SAMPLES = 1000
 
-/** Same reasoning as [MAX_LOCATION_SAMPLES], but sized for `rotation_samples`'s ~50-entry
- * well-behaved-app bound (5Hz over a 10-second trimmed clip) rather than `location_samples`'
- * ~10-entry bound (1Hz). */
+/** Same reasoning and same generous ceiling as [MAX_LOCATION_SAMPLES] - both fields' actual
+ * well-behaved-app sample counts are far below this (rotation_samples: ~50 at 5Hz over a
+ * 10-second trimmed clip; location_samples: ~10 at 1Hz), so one shared cap is intentional,
+ * not a per-field tuning. */
 private const val MAX_ROTATION_SAMPLES = 1000
 
 @Service

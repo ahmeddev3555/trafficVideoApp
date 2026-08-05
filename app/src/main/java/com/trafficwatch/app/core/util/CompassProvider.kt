@@ -74,9 +74,20 @@ class CompassProvider @Inject constructor(
         val declination = declinationDegrees(latitude, longitude, altitude)
         val rotationMatrix = FloatArray(9)
         val orientation = FloatArray(3)
+        var lastEmittedAt = 0L
 
         val listener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent) {
+                val now = System.currentTimeMillis()
+                // registerListener's samplingPeriodUs is only a hint - the OS may deliver
+                // events faster than requested (e.g. another listener on the same physical
+                // sensor, even this class's own readAveragedAzimuthDegrees(), can cause the
+                // shared sensor to report at a faster rate to every registered listener).
+                // Without this explicit throttle, a burst of events could grow the samples
+                // list far beyond the ~50-per-10s-clip size the upload payload assumes,
+                // eventually overflowing WorkManager's Data size limit at submit time.
+                if (now - lastEmittedAt < intervalMs) return
+                lastEmittedAt = now
                 val magneticAzimuthDegrees = rawAzimuthDegrees(event, rotationMatrix, orientation)
                 trySend(applyDeclination(magneticAzimuthDegrees, declination))
             }
@@ -118,6 +129,9 @@ class CompassProvider @Inject constructor(
         continuation.invokeOnCancellation { sensorManager.unregisterListener(listener) }
     }
 
+    // rotationMatrix/orientation are reused across calls by both callers below - safe because
+    // a single SensorEventListener's onSensorChanged is always invoked serially on one thread,
+    // never concurrently.
     private fun rawAzimuthDegrees(event: SensorEvent, rotationMatrix: FloatArray, orientation: FloatArray): Float {
         SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
         SensorManager.getOrientation(rotationMatrix, orientation)

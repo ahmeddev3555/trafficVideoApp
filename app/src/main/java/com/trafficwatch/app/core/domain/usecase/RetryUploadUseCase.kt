@@ -6,7 +6,6 @@ import androidx.work.WorkManager
 import com.trafficwatch.app.core.data.repository.ReportRepository
 import com.trafficwatch.app.core.domain.model.Report
 import com.trafficwatch.app.core.domain.model.ReportStatus
-import com.trafficwatch.app.core.domain.model.RotationSample
 import com.trafficwatch.app.core.util.FileUtil
 import com.trafficwatch.app.core.util.NetworkMonitor
 import com.trafficwatch.app.feature.upload.UploadWorker
@@ -44,7 +43,7 @@ class RetryUploadUseCase @Inject constructor(
         // either - empty lists omit both fields entirely per the "presence, not sentinel"
         // convention in UploadWorker.buildInputData. See docs/improvements-backlog.md.
         val request = UploadWorker.buildRequest(
-            report.id, report.videoPath, report.location, emptyList(), emptyList<RotationSample>(),
+            report.id, report.videoPath, report.location, emptyList(), emptyList(),
             report.recordingStartedAt, report.durationMs,
             requireWifiOnly = !forceCellular
         )

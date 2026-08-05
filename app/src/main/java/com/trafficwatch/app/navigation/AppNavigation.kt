@@ -18,6 +18,7 @@ import com.trafficwatch.app.core.data.repository.AuthRepository
 import com.trafficwatch.app.core.data.repository.ReportRepository
 import com.trafficwatch.app.core.domain.model.LocationData
 import com.trafficwatch.app.core.domain.model.RotationSample
+import com.trafficwatch.app.core.util.filterToRecordingWindow
 import com.trafficwatch.app.feature.auth.LoginScreen
 import com.trafficwatch.app.feature.auth.RegisterScreen
 import com.trafficwatch.app.feature.camera.CameraScreen
@@ -170,10 +171,10 @@ fun AppNavigation(
             val windowStart = recordingStartedAt + trimStartMs
             val windowEnd = windowStart + duration
             val filteredLocationSamples = remember(locationSamples, windowStart, windowEnd) {
-                locationSamples.filter { it.capturedAt in windowStart..windowEnd }
+                filterToRecordingWindow(locationSamples, windowStart, windowEnd) { it.capturedAt }
             }
             val filteredRotationSamples = remember(rotationSamples, windowStart, windowEnd) {
-                rotationSamples.filter { it.capturedAt in windowStart..windowEnd }
+                filterToRecordingWindow(rotationSamples, windowStart, windowEnd) { it.capturedAt }
             }
 
             ReviewScreen(

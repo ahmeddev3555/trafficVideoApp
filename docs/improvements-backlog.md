@@ -216,6 +216,34 @@ considered rather than forgotten.
   retry gap is the only thing that drops the data.
   *(added 2026-08-03, updated 2026-08-04 to cover rotation_samples too,
   confirmed in production 2026-08-05)*
+- **`Report.locationSamples`/`rotationSamples` round-trip a Kotlin `null`
+  through the database as the literal 4-character text `"null"`, not a
+  true SQL NULL - any code reading these columns must check for both.**
+  Found during the 2026-08-05 continuous-orientation-fusion plan's Task 3:
+  both columns are `String?` mapped with `@JdbcTypeCode(SqlTypes.JSON)`
+  (`server/src/main/kotlin/com/trafficwatch/server/reports/Report.kt`);
+  Hibernate's JSON `UserType` for a String-typed property serializes an
+  absent value as the JSON-null token `"null"` on write and hands that
+  same literal text back on read, rather than a SQL NULL. This task was
+  the first code ever to read these two columns back after a real
+  Hibernate round-trip (every prior consumer only wrote them) - running
+  straightforward `report.locationSamples != null` / `json?.let { ... }`
+  logic against it caused 6 real `ReportAnalysisIntegrationTest` failures
+  (the async analysis job crashed silently, reports stuck `PENDING`) before
+  being root-caused and fixed by checking `json == null || json == "null"`
+  in both `ReportAnalysisJob`'s new `parseLocationSamples`/
+  `parseRotationSamples` helpers. No false-positive risk (a real sample
+  list always serializes as `[...]`, never the bare string `"null"`), but
+  the fix is duplicated across the two near-identical helper functions and
+  isolated to this one read site - any *future* code that reads either
+  column (a new endpoint, a data migration, a debug tool) will hit the
+  same trap unless it independently knows to check for the `"null"`
+  string too. Worth a shared helper (or an entity-level Hibernate
+  converter that normalizes `"null"` to a true absent value at the
+  persistence boundary, closing the gap for every consumer at once) if a
+  third `@JdbcTypeCode(SqlTypes.JSON)` `String?` column is ever added, or
+  proactively before then.
+  *(added 2026-08-05, found during continuous-orientation-fusion Task 3)*
 - **`ReviewViewModel.submit()` has no error handling around the enqueue
   call, so any exception there (e.g. a WorkManager `Data` payload
   overflow, or any other `SubmitReportUseCase.invoke()` failure) crashes

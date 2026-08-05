@@ -35,4 +35,10 @@ data class VehicleAnalysisResult(
     val corridorCohesion: Double? = null,
     val trackFrameCount: Int? = null,
     val displacementPixels: Double? = null,
+    // Elapsed ms from the clip's start to this track's observation midpoint - null from
+    // older video-analysis service versions (no FPS lookup existed yet) or when FPS was
+    // unavailable for this specific clip. Used to look up this vehicle's own camera
+    // orientation from OrientationTimeline instead of applying one static reading to
+    // every vehicle in the clip. Snake_case wire key: track_midpoint_ms.
+    val trackMidpointMs: Long? = null,
 )

@@ -25,6 +25,7 @@ class ClipFlowAnalyzerTest {
         // displacement of 200.0 clears it trivially, same as it cleared the old
         // frame-relative floor, so unrelated tests need no other changes.
         boundingBox: BoundingBox? = BoundingBox(x1 = 0.0, y1 = 0.0, x2 = 50.0, y2 = 50.0),
+        trackMidpointMs: Long? = null,
     ) = VehicleAnalysisResult(
         trackId = trackId,
         vehicleType = "car",
@@ -37,6 +38,7 @@ class ClipFlowAnalyzerTest {
         corridorCohesion = cohesion,
         trackFrameCount = frames,
         displacementPixels = displacement,
+        trackMidpointMs = trackMidpointMs,
     )
 
     @Test
@@ -162,5 +164,83 @@ class ClipFlowAnalyzerTest {
         val flow = analyzer.qualifyVehicles(listOf(vehicle(1, 90.0)), 0.0, 1920, 1080)
         val candidate = flow.first { it.vehicle.trackId == 1L }
         assertFalse(analyzer.hasPeerSupport(flow, candidate))
+    }
+
+    @Test
+    fun `qualifyVehicles resolves orientation per-vehicle from the orientation timeline when trackMidpointMs is set`() {
+        val timeline = OrientationTimeline(
+            locationSamples = emptyList(),
+            rotationSamples = listOf(
+                com.trafficwatch.server.reports.dto.RotationSampleDto(headingDegrees = 45.0, capturedAt = 1000L),
+            ),
+        )
+        val result = analyzer.qualifyVehicles(
+            listOf(vehicle(1, bearing = 90.0, trackMidpointMs = 500L)),
+            compassHeadingDegrees = 0.0, // stale scalar - must be ignored since the timeline resolves
+            frameWidth = 1920, frameHeight = 1080,
+            orientationTimeline = timeline,
+        )
+
+        assertEquals(1, result.size)
+        // 45.0 (from timeline, not the 0.0 scalar) + 90.0 frame bearing = 135.0.
+        assertEquals(135.0, result[0].absoluteBearingDegrees, 1e-9)
+        assertEquals(OrientationSource.ROTATION, result[0].orientationSource)
+    }
+
+    @Test
+    fun `qualifyVehicles falls back to the compass scalar when trackMidpointMs is null`() {
+        val timeline = OrientationTimeline(
+            locationSamples = emptyList(),
+            rotationSamples = listOf(
+                com.trafficwatch.server.reports.dto.RotationSampleDto(headingDegrees = 45.0, capturedAt = 1000L),
+            ),
+        )
+        val result = analyzer.qualifyVehicles(
+            listOf(vehicle(1, bearing = 90.0, trackMidpointMs = null)), // old video-analysis service
+            compassHeadingDegrees = 10.0,
+            frameWidth = 1920, frameHeight = 1080,
+            orientationTimeline = timeline,
+        )
+
+        assertEquals(1, result.size)
+        assertEquals(100.0, result[0].absoluteBearingDegrees, 1e-9) // 10.0 (scalar) + 90.0
+        assertNull(result[0].orientationSource)
+    }
+
+    @Test
+    fun `qualifyVehicles falls back to the compass scalar when the timeline has no samples at all`() {
+        val emptyTimeline = OrientationTimeline(locationSamples = emptyList(), rotationSamples = emptyList())
+        val result = analyzer.qualifyVehicles(
+            listOf(vehicle(1, bearing = 90.0, trackMidpointMs = 500L)),
+            compassHeadingDegrees = 10.0,
+            frameWidth = 1920, frameHeight = 1080,
+            orientationTimeline = emptyTimeline,
+        )
+
+        assertEquals(1, result.size)
+        assertEquals(100.0, result[0].absoluteBearingDegrees, 1e-9)
+        assertNull(result[0].orientationSource)
+    }
+
+    @Test
+    fun `qualifyVehicles drops a vehicle when neither the timeline nor the compass scalar can resolve an orientation`() {
+        val emptyTimeline = OrientationTimeline(locationSamples = emptyList(), rotationSamples = emptyList())
+        val result = analyzer.qualifyVehicles(
+            listOf(vehicle(1, bearing = 90.0, trackMidpointMs = 500L)),
+            compassHeadingDegrees = null,
+            frameWidth = 1920, frameHeight = 1080,
+            orientationTimeline = emptyTimeline,
+        )
+
+        assertTrue(result.isEmpty())
+    }
+
+    @Test
+    fun `qualifyVehicles still works exactly as before when orientationTimeline is omitted`() {
+        val result = analyzer.qualifyVehicles(listOf(vehicle(1, bearing = 90.0)), 45.0, 1920, 1080)
+
+        assertEquals(1, result.size)
+        assertEquals(135.0, result[0].absoluteBearingDegrees, 1e-9)
+        assertNull(result[0].orientationSource)
     }
 }

@@ -19,6 +19,7 @@ data class FlowVehicle(
     val trackQuality: Double,
     val corridorId: Long,
     val corridorCohesion: Double,
+    val orientationSource: OrientationSource? = null,
 ) {
     val candidateQuality: Double get() = trackQuality * corridorCohesion
 }
@@ -54,9 +55,10 @@ class ClipFlowAnalyzer(
      */
     fun qualifyVehicles(
         vehicles: List<VehicleAnalysisResult>,
-        compassHeadingDegrees: Double,
+        compassHeadingDegrees: Double?,
         frameWidth: Int?,
         frameHeight: Int?,
+        orientationTimeline: OrientationTimeline? = null,
     ): List<FlowVehicle> {
         if (frameWidth == null || frameHeight == null || frameWidth <= 0 || frameHeight <= 0) {
             return emptyList()
@@ -87,13 +89,21 @@ class ClipFlowAnalyzer(
 
             if (frames < MIN_TRACK_FRAMES || displacement < minDisplacement) return@mapNotNull null
 
+            // Per-vehicle orientation resolution, preferred-to-fallback: (1) the
+            // continuous timeline at this vehicle's own observation midpoint, (2) the
+            // report-level scalar (today's whole-clip behavior), (3) drop the vehicle -
+            // same three-tier graceful degradation as every other optional signal here.
+            val resolved = vehicle.trackMidpointMs?.let { orientationTimeline?.orientationAt(it) }
+            val orientationDegrees = resolved?.bearingDegrees ?: compassHeadingDegrees ?: return@mapNotNull null
+
             FlowVehicle(
                 vehicle = vehicle,
-                absoluteBearingDegrees = (compassHeadingDegrees + frameBearing) % 360.0,
+                absoluteBearingDegrees = (orientationDegrees + frameBearing) % 360.0,
                 trackQuality = min(frames / TRACK_FRAMES_SATURATION, 1.0) *
                     min(displacement / minDisplacement, 1.0).coerceAtMost(1.0),
                 corridorId = corridorId,
                 corridorCohesion = cohesion,
+                orientationSource = resolved?.source,
             )
         }
     }

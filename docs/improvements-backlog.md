@@ -174,6 +174,47 @@ considered rather than forgotten.
   approach that doesn't depend on a single static reading at all.
   *(added 2026-08-02)*
 
+- **A vehicle riding nearly head-on toward the camera is close to invisible
+  to the current frame-relative bearing computation, even when it's the
+  most visually obvious wrong-way violation in the clip.**
+  `video-analysis/app/tracking_bearing.py`'s `compute_bearing_degrees`
+  derives direction purely from *lateral* pixel displacement between a
+  track's early and late centroids - a vehicle driving straight at the
+  camera grows rapidly in apparent size but barely moves sideways in the
+  frame, so its net displacement is dominated by the near-zero lateral
+  component and easily falls under `MIN_DISPLACEMENT_PIXELS` (returning
+  `None`, "too little motion to trust"), even for a large, fast, unmistakably
+  wrong-way approach. Compounding this: a vehicle on a closing head-on
+  trajectory is also disproportionately likely to have a short-lived
+  ByteTrack track (rapid scale change and eventual occlusion/frame-exit
+  break tracking sooner than a laterally-crossing vehicle would), which can
+  fall under `MIN_OBSERVATIONS` (4 frames) before displacement is even
+  measured, or under `ClipFlowAnalyzer`'s own `MIN_TRACK_FRAMES` (3) floor
+  downstream in Kotlin - either gate alone drops the vehicle from flow
+  analysis entirely, before any bearing/orientation logic (including the
+  2026-08-05 continuous-orientation-fusion work) ever gets a chance to run.
+  Confirmed on a real production clip (report `55f7f82a`): a motorcycle
+  clearly riding head-on at the recording vehicle, unmistakable across
+  several consecutive frames on direct visual inspection, corresponds to no
+  motorcycle track at all in the full pipeline's per-track output near that
+  timestamp - the only nearby track is a 2-frame, `bearing: null` track
+  misclassified as a car, never reaching bearing computation or flow
+  qualification. This is a distinct, more fundamental gap than the
+  compass/orientation-source work above - it's not about whose orientation
+  reading gets used, it's that the frame-relative bearing math itself is
+  structurally blind to near-head-on motion regardless of camera
+  orientation accuracy. Likely relevant to sub-project 4 (video-analysis
+  visual odometry): a bearing estimate that also accounts for bounding-box
+  scale growth (an approaching vehicle's box grows even when its centroid
+  barely moves laterally) rather than centroid displacement alone would
+  catch this case; alternatively, a lower/adaptive displacement floor
+  specifically for rapidly-growing boxes, or an explicit "approaching
+  head-on" classification independent of the lateral-displacement bearing
+  entirely.
+  *(added 2026-08-05, found via direct frame inspection of report 55f7f82a
+  after a user-reported wrong-way motorcycle at 8.5s had no corresponding
+  scored candidate)*
+
 ## Upload reliability / data integrity
 
 **Area:** `app/src/main/java/com/trafficwatch/app/feature/upload/UploadWorker.kt`,

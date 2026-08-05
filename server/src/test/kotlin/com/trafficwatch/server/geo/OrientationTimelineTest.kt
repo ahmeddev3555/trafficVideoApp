@@ -11,9 +11,9 @@ class OrientationTimelineTest {
     private fun rotation(capturedAt: Long, headingDegrees: Double) =
         RotationSampleDto(headingDegrees = headingDegrees, capturedAt = capturedAt)
 
-    private fun location(capturedAt: Long, bearing: Double) = LocationSampleDto(
+    private fun location(capturedAt: Long, bearing: Double, speed: Double = 5.0) = LocationSampleDto(
         latitude = 0.0, longitude = 0.0, accuracy = 5.0, altitude = 0.0,
-        bearing = bearing, speed = 5.0, capturedAt = capturedAt,
+        bearing = bearing, speed = speed, capturedAt = capturedAt,
     )
 
     @Test
@@ -110,6 +110,74 @@ class OrientationTimelineTest {
         val resolved = timeline.orientationAt(500L)!!.bearingDegrees
 
         assertEquals(0.0, resolved, 1e-6)
+    }
+
+    @Test
+    fun `excludes a location sample below the reliable-bearing speed threshold, falling back to null`() {
+        // speed 0.0 is exactly Android's "no direction of travel could be determined"
+        // signal - bearing 45.0 here is unreliable/garbage and must never be surfaced.
+        val timeline = OrientationTimeline(
+            locationSamples = listOf(location(1000L, bearing = 45.0, speed = 0.0)),
+            rotationSamples = emptyList(),
+        )
+
+        // LOCATION must be treated as wholly unavailable (not "resolved to 45.0") so the
+        // caller's own fallback (e.g. report.compassHeadingDegrees) can correctly apply.
+        assertNull(timeline.orientationAt(0L))
+    }
+
+    @Test
+    fun `uses a location sample at or above the reliable-bearing speed threshold normally`() {
+        val timeline = OrientationTimeline(
+            locationSamples = listOf(
+                location(1000L, bearing = 45.0, speed = MIN_SPEED_FOR_RELIABLE_BEARING_MPS),
+            ),
+            rotationSamples = emptyList(),
+        )
+
+        val resolved = timeline.orientationAt(0L)
+
+        assertEquals(45.0, resolved!!.bearingDegrees, 1e-6)
+        assertEquals(OrientationSource.LOCATION, resolved.source)
+    }
+
+    @Test
+    fun `filters out only the below-threshold location samples, interpolating from the surviving ones`() {
+        val timeline = OrientationTimeline(
+            locationSamples = listOf(
+                // Below threshold - excluded. If this weren't filtered, it would anchor
+                // the timeline earlier and/or be blended into interpolation.
+                location(500L, bearing = 270.0, speed = 0.0),
+                location(1000L, bearing = 0.0, speed = 2.0),
+                location(2000L, bearing = 90.0, speed = 2.0),
+            ),
+            rotationSamples = emptyList(),
+        )
+
+        // Anchor is still the earliest RAW sample (500L, per anchorEpochMs's own contract) -
+        // elapsedMs=500 -> target epoch 1000, which lands exactly on the first surviving
+        // (reliable) sample. If the excluded 270.0 sample had leaked into interpolation,
+        // this would not land cleanly on 0.0.
+        val resolved = timeline.orientationAt(500L)
+
+        assertEquals(0.0, resolved!!.bearingDegrees, 1e-6)
+        assertEquals(OrientationSource.LOCATION, resolved.source)
+    }
+
+    @Test
+    fun `speed gate on location samples is irrelevant when rotation samples exist`() {
+        val timeline = OrientationTimeline(
+            // Below threshold AND a very different bearing than rotation's - if this
+            // leaked through, the result would clearly reflect it (200.0 is nowhere near
+            // rotation's 10.0/90.0 interpolated range).
+            locationSamples = listOf(location(1000L, bearing = 200.0, speed = 0.0)),
+            rotationSamples = listOf(rotation(1000L, 10.0), rotation(2000L, 90.0)),
+        )
+
+        val resolved = timeline.orientationAt(500L)
+
+        assertEquals(50.0, resolved!!.bearingDegrees, 1e-6)
+        assertEquals(OrientationSource.ROTATION, resolved.source)
     }
 
     @Test

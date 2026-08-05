@@ -34,6 +34,11 @@ class VehicleResult(BaseModel):
     corridor_cohesion: float = 1.0
     track_frame_count: int = 0
     displacement_pixels: float = 0.0
+    # Elapsed ms from the clip's start to this track's observation midpoint - None when
+    # FPS was unavailable (see VehicleDetector.read_fps). The Kotlin server uses this to
+    # look up the camera's orientation at roughly this vehicle's own moment in the clip,
+    # instead of one static reading for the whole video.
+    track_midpoint_ms: int | None = None
 
 
 class AnalyzeResponse(BaseModel):

@@ -8,7 +8,7 @@ from app.config import Settings
 from app.corridors import cluster_tracks, corridor_cohesion
 from app.frame_encoding import encode_frame_to_base64_jpeg
 from app.schemas import AnalyzeResponse, BoundingBox, VehicleResult
-from app.tracking_bearing import compute_bearing_degrees
+from app.tracking_bearing import compute_bearing_degrees, compute_track_midpoint_ms
 
 if TYPE_CHECKING:
     from app.detection import TrackedFrame, VehicleDetector
@@ -38,6 +38,8 @@ class AnalysisPipeline:
         if not tracks:
             return AnalyzeResponse()
 
+        fps = self._detector.read_fps(video_path)
+
         # All frames share the source video's dimensions; read them off any one.
         any_frame = next(iter(tracks.values()))[0].frame
         frame_height, frame_width = any_frame.shape[:2]
@@ -57,15 +59,19 @@ class AnalysisPipeline:
                 frames,
                 corridor_id=assignments[track_id],
                 cohesion=corridor_cohesion(track_id, paths, assignments, threshold_px),
+                fps=fps,
             )
             for track_id, frames in tracks.items()
         ]
         return AnalyzeResponse(vehicles=vehicles, frame_width=frame_width, frame_height=frame_height)
 
-    def _summarize_track(self, track_id: int, frames: list["TrackedFrame"], corridor_id: int, cohesion: float) -> VehicleResult:
+    def _summarize_track(self, track_id: int, frames: list["TrackedFrame"], corridor_id: int, cohesion: float, fps: float | None) -> VehicleResult:
         frames_sorted = sorted(frames, key=lambda f: f.frame_index)
         centroids = [f.centroid for f in frames_sorted]
         bearing = compute_bearing_degrees(centroids)
+        track_midpoint_ms = compute_track_midpoint_ms(
+            frames_sorted[0].frame_index, frames_sorted[-1].frame_index, fps
+        )
 
         displacement = math.hypot(
             centroids[-1][0] - centroids[0][0], centroids[-1][1] - centroids[0][1]
@@ -94,6 +100,7 @@ class AnalysisPipeline:
             corridor_cohesion=cohesion,
             track_frame_count=len(frames_sorted),
             displacement_pixels=displacement,
+            track_midpoint_ms=track_midpoint_ms,
         )
 
     def _read_best_plate(self, frames_sorted: list["TrackedFrame"]) -> tuple[str | None, float | None]:

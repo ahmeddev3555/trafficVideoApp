@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from app.config import Settings
 from app.detection import TrackedFrame
@@ -8,11 +9,15 @@ from app.pipeline import AnalysisPipeline
 
 
 class FakeDetector:
-    def __init__(self, frames: list[TrackedFrame]):
+    def __init__(self, frames: list[TrackedFrame], fps: float | None = 30.0):
         self._frames = frames
+        self._fps = fps
 
     def track_video(self, video_path: str):
         yield from self._frames
+
+    def read_fps(self, video_path: str) -> float | None:
+        return self._fps
 
 
 class FakePlateReader:
@@ -101,3 +106,32 @@ def test_empty_video_returns_empty_response_with_zero_dimensions():
     assert response.vehicles == []
     assert response.frame_width == 0
     assert response.frame_height == 0
+
+
+def test_summarize_track_attaches_track_midpoint_ms_from_fps():
+    # frame_index 0 and 9 at 30fps (FakeDetector's default) -> midpoint frame 4.5 -> 150ms.
+    frames = [
+        _make_frame(track_id=1, frame_index=0, bbox=(10.0, 10.0, 20.0, 20.0)),
+        _make_frame(track_id=1, frame_index=9, bbox=(10.0, 10.0, 20.0, 20.0)),
+    ]
+    pipeline = AnalysisPipeline(
+        settings=_fake_settings(), detector=FakeDetector(frames), plate_reader=FakePlateReader()
+    )
+
+    response = pipeline.analyze("unused.mp4")
+
+    assert response.vehicles[0].track_midpoint_ms == pytest.approx(150, abs=1)
+
+
+def test_summarize_track_track_midpoint_ms_is_none_when_fps_unavailable():
+    frames = [
+        _make_frame(track_id=1, frame_index=0, bbox=(10.0, 10.0, 20.0, 20.0)),
+        _make_frame(track_id=1, frame_index=9, bbox=(10.0, 10.0, 20.0, 20.0)),
+    ]
+    pipeline = AnalysisPipeline(
+        settings=_fake_settings(), detector=FakeDetector(frames, fps=None), plate_reader=FakePlateReader()
+    )
+
+    response = pipeline.analyze("unused.mp4")
+
+    assert response.vehicles[0].track_midpoint_ms is None

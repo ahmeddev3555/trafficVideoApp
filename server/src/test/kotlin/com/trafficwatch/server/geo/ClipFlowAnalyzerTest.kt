@@ -236,6 +236,20 @@ class ClipFlowAnalyzerTest {
     }
 
     @Test
+    fun `qualifiesForFlowExceptOrientation is true for a vehicle that passes every other gate`() {
+        assertTrue(analyzer.qualifiesForFlowExceptOrientation(vehicle(1, bearing = 90.0), 1920, 1080))
+    }
+
+    @Test
+    fun `qualifiesForFlowExceptOrientation is false when a non-orientation gate fails`() {
+        assertFalse(analyzer.qualifiesForFlowExceptOrientation(vehicle(1, bearing = null), 1920, 1080))
+        assertFalse(analyzer.qualifiesForFlowExceptOrientation(vehicle(1, 90.0, corridorId = null), 1920, 1080))
+        assertFalse(analyzer.qualifiesForFlowExceptOrientation(vehicle(1, 90.0, frames = 2), 1920, 1080))
+        assertFalse(analyzer.qualifiesForFlowExceptOrientation(vehicle(1, 90.0, displacement = 5.0), 1920, 1080))
+        assertFalse(analyzer.qualifiesForFlowExceptOrientation(vehicle(1, 90.0), null, null))
+    }
+
+    @Test
     fun `qualifyVehicles still works exactly as before when orientationTimeline is omitted`() {
         val result = analyzer.qualifyVehicles(listOf(vehicle(1, bearing = 90.0)), 45.0, 1920, 1080)
 

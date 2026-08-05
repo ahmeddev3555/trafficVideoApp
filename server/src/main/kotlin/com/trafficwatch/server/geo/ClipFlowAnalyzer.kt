@@ -109,6 +109,32 @@ class ClipFlowAnalyzer(
     }
 
     /**
+     * True when [vehicle] passes every [qualifyVehicles] gate EXCEPT orientation resolution
+     * (i.e. everything up to, but not including, the per-vehicle orientation-resolution step) -
+     * used only to distinguish, for messaging purposes, "this vehicle would have qualified if
+     * only its orientation could be resolved" from "this vehicle was never going to qualify
+     * regardless of orientation" (bad corridor data, too few frames, insufficient displacement,
+     * etc.). Deliberately mirrors [qualifyVehicles]'s own gates rather than sharing code with
+     * it, so a change to one is never silently forgotten in the other without a test noticing -
+     * see [ReportAnalysisJob]'s REJECTED-message selection for the caller.
+     */
+    fun qualifiesForFlowExceptOrientation(vehicle: VehicleAnalysisResult, frameWidth: Int?, frameHeight: Int?): Boolean {
+        if (frameWidth == null || frameHeight == null || frameWidth <= 0 || frameHeight <= 0) return false
+        vehicle.bearingDegrees ?: return false
+        vehicle.corridorId ?: return false
+        vehicle.corridorCohesion ?: return false
+        val frames = vehicle.trackFrameCount ?: return false
+        val displacement = vehicle.displacementPixels ?: return false
+        val bbox = vehicle.boundingBox ?: return false
+
+        val bboxDiagonal = hypot(bbox.x2 - bbox.x1, bbox.y2 - bbox.y1)
+        if (bboxDiagonal <= 0.0) return false
+        val minDisplacement = properties.minDisplacementFraction * bboxDiagonal
+
+        return frames >= MIN_TRACK_FRAMES && displacement >= minDisplacement
+    }
+
+    /**
      * The consensus of corridor [corridorId]'s members (minus [excluding], the
      * candidate under evaluation - a suspected violator must never vote in the
      * consensus it is judged against, nor ever be ingested from it). Null when

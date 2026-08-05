@@ -158,9 +158,24 @@ class ReportAnalysisJob(
 
         val evaluation = evaluateCandidates(flowVehicles, osmEvidence, historyEvidence)
 
+        // Distinct from orientationMissing (report-level: no compass scalar AND no samples at
+        // all): this is the case where the report DOES have an orientation source, and the
+        // video service DID detect vehicles, but EVERY one of them individually failed to
+        // resolve any orientation (no trackMidpointMs match against the timeline, and no
+        // compass scalar to fall back to for that vehicle - see qualifyVehicles's tier
+        // 1/2/3 chain) - so flowVehicles ends up empty for a reason that has nothing to do
+        // with "nobody was driving the wrong way." Approximated (see
+        // ClipFlowAnalyzer.qualifiesForFlowExceptOrientation's doc) by checking whether any
+        // detected vehicle would otherwise have qualified were orientation available; a
+        // vehicle that never had a chance for other reasons (bad corridor data, too few
+        // frames, etc.) doesn't count as evidence of an orientation-specific failure.
+        val orientationUnresolvedForAllVehicles = flowVehicles.isEmpty() && hasOrientationSource &&
+            analysis.vehicles.any { clipFlowAnalyzer.qualifiesForFlowExceptOrientation(it, analysis.frameWidth, analysis.frameHeight) }
+
         val outcome = buildOutcome(
             report, evaluation, osmEvidence, historyEvidence, flowVehicles, streetName,
             orientationMissing = !hasOrientationSource,
+            orientationUnresolvedForAllVehicles = orientationUnresolvedForAllVehicles,
         )
 
         ingestObservations(report, flowVehicles, evaluation.best?.flowVehicle)
@@ -257,6 +272,7 @@ class ReportAnalysisJob(
         flowVehicles: List<FlowVehicle>,
         streetName: String?,
         orientationMissing: Boolean,
+        orientationUnresolvedForAllVehicles: Boolean,
     ): AnalysisOutcome {
         val best = evaluation.best
         if (best != null && best.finalScore >= analysisProperties.confirmationThreshold) {
@@ -294,6 +310,7 @@ class ReportAnalysisJob(
             evaluation.sawConflict || (fallbackFusion as? FusionResult.Insufficient)?.conflict == true ->
                 "Conflicting direction evidence for this street"
             orientationMissing -> "No orientation data available for this report"
+            orientationUnresolvedForAllVehicles -> "Vehicle orientation could not be determined for this report"
             fallbackFusion is FusionResult.Fused -> "No vehicles detected moving against the legal direction"
             else -> "Legal traffic direction could not be established for this street"
         }

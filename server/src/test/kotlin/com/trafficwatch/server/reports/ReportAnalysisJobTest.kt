@@ -251,6 +251,64 @@ class ReportAnalysisJobTest {
     }
 
     @Test
+    fun `applyOutcome rejects with a distinct message when the report has an orientation source but no vehicle could resolve one`() {
+        // Report-level orientation source IS present (rotation_samples exist -> hasOrientationSource
+        // is true), so this must NOT hit the "No orientation data available" message. But every
+        // detected vehicle has trackMidpointMs == null (mirrors an old video-analysis service that
+        // hasn't been upgraded to emit it yet) and there is no compass scalar to fall back to for
+        // any individual vehicle - so tier 1 (timeline lookup) and tier 2 (scalar) both fail for
+        // every vehicle, flowVehicles ends up empty, and NO vehicle was actually evaluated for
+        // direction at all. The vehicle otherwise has every other qualifying field (corridor,
+        // cohesion, frames, displacement, bbox), so this is genuinely an orientation-only failure,
+        // not a vehicle that was never going to qualify anyway.
+        val rotationSamplesJson = objectMapper.writeValueAsString(
+            listOf(RotationSampleDto(headingDegrees = 45.0, capturedAt = 1000L)),
+        )
+        val report = sampleReport(compassHeadingDegrees = null, rotationSamples = rotationSamplesJson)
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude)
+        } returns DirectionResolution.OneWay("Main Boulevard", 0.0)
+        every {
+            videoAnalysisClient.analyze(fakeVideoPath, any())
+        } returns analysisResponse(listOf(vehicle(bearingDegrees = 180.0, trackMidpointMs = null)))
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
+        assertThat(report.analysisMessage).isEqualTo("Vehicle orientation could not be determined for this report")
+        assertThat(report.streetName).isEqualTo("Main Boulevard")
+    }
+
+    @Test
+    fun `applyOutcome still uses the ordinary no-violator message when vehicles resolve orientation but none are wrong-way`() {
+        // Same report-level shape as the orientation-unresolved case above (rotation_samples
+        // present, no compass scalar), but this vehicle DOES carry a trackMidpointMs that the
+        // timeline can resolve - so it is genuinely evaluated for direction, and simply isn't a
+        // wrong-way vehicle. Proves the new orientation-specific message doesn't leak into the
+        // genuine "nobody was driving the wrong way" case merely because the compass scalar is
+        // absent.
+        val rotationSamplesJson = objectMapper.writeValueAsString(
+            listOf(RotationSampleDto(headingDegrees = 0.0, capturedAt = 1000L)),
+        )
+        val report = sampleReport(compassHeadingDegrees = null, rotationSamples = rotationSamplesJson)
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude)
+        } returns DirectionResolution.OneWay("Main Boulevard", 0.0)
+        // Legal bearing 0, illegal bearing 180. Resolved orientation (0.0, from the timeline) +
+        // frame bearing (0.0) = absolute bearing 0 - same as legal, not a wrong-way vehicle.
+        every {
+            videoAnalysisClient.analyze(fakeVideoPath, any())
+        } returns analysisResponse(listOf(vehicle(bearingDegrees = 0.0, trackMidpointMs = 0L)))
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
+        assertThat(report.analysisMessage).isEqualTo("No vehicles detected moving against the legal direction")
+    }
+
+    @Test
     fun `applyOutcome rejects when no street can be identified at the location`() {
         val report = sampleReport()
         every { streetDirectionResolver.resolve(report.latitude, report.longitude) } returns DirectionResolution.NotFound

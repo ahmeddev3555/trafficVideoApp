@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Iterator, Tuple
 
@@ -66,6 +67,21 @@ class VehicleDetector:
                 frame_index += 1
         finally:
             capture.release()
+
+    def read_fps(self, video_path: str) -> float | None:
+        """Video frame rate in fps, or None if unavailable/invalid - some malformed or
+        variable-frame-rate videos report 0, negative, or NaN from CAP_PROP_FPS. Never a
+        fabricated value; callers (see compute_track_midpoint_ms) treat None as
+        "timing unavailable for this clip", same graceful-degradation contract as every
+        other optional signal in this service."""
+        capture = cv2.VideoCapture(video_path)
+        try:
+            fps = capture.get(cv2.CAP_PROP_FPS)
+        finally:
+            capture.release()
+        if fps is None or fps <= 0 or math.isnan(fps):
+            return None
+        return fps
 
     def _detect_frame(self, frame: np.ndarray, frame_index: int) -> Iterator[TrackedFrame]:
         result = self._model(frame, verbose=False, imgsz=self._settings.detection_imgsz)[0]

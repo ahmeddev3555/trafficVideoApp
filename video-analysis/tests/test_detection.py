@@ -3,6 +3,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import cv2
+import pytest
 
 from app.config import Settings
 
@@ -36,3 +37,40 @@ def test_track_video_enables_orientation_auto_before_reading_frames(mock_video_c
     # Must be set before any frame is read - setting it after the first read() would
     # already have handed YOLO an un-rotated frame.
     assert mock_capture.method_calls[0] == ("set", (cv2.CAP_PROP_ORIENTATION_AUTO, 1), {})
+
+
+@patch("app.detection.YOLO")
+@patch("app.detection.cv2.VideoCapture")
+def test_read_fps_returns_the_capture_fps(mock_video_capture, mock_yolo):
+    mock_capture = MagicMock()
+    mock_capture.get.return_value = 29.97
+    mock_video_capture.return_value = mock_capture
+
+    from app.detection import VehicleDetector
+
+    detector = VehicleDetector(_fake_settings())
+    fps = detector.read_fps("irrelevant.mp4")
+
+    assert fps == pytest.approx(29.97)
+    mock_capture.get.assert_called_once_with(cv2.CAP_PROP_FPS)
+    mock_capture.release.assert_called_once()
+
+
+@patch("app.detection.YOLO")
+@patch("app.detection.cv2.VideoCapture")
+def test_read_fps_returns_none_for_zero_or_invalid_fps(mock_video_capture, mock_yolo):
+    mock_capture = MagicMock()
+    mock_video_capture.return_value = mock_capture
+
+    from app.detection import VehicleDetector
+
+    detector = VehicleDetector(_fake_settings())
+
+    mock_capture.get.return_value = 0.0
+    assert detector.read_fps("irrelevant.mp4") is None
+
+    mock_capture.get.return_value = float("nan")
+    assert detector.read_fps("irrelevant.mp4") is None
+
+    mock_capture.get.return_value = -1.0
+    assert detector.read_fps("irrelevant.mp4") is None

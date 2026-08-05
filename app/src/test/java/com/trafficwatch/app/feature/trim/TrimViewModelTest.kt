@@ -18,17 +18,17 @@ class TrimViewModelTest {
     }
 
     @Test
-    fun `initVideo caps default selection at 5 seconds for a longer video`() {
+    fun `initVideo caps default selection at 10 seconds for a longer video`() {
         viewModel.initVideo("/tmp/video.mp4", durationMs = 30_000L)
 
         val state = viewModel.uiState.value
         assertEquals(0L, state.trimStartMs)
-        assertEquals(5_000L, state.trimEndMs)
-        assertEquals(5_000L, state.maxDurationMs)
+        assertEquals(10_000L, state.trimEndMs)
+        assertEquals(10_000L, state.maxDurationMs)
     }
 
     @Test
-    fun `initVideo selects the whole video when it is shorter than 5 seconds`() {
+    fun `initVideo selects the whole video when it is shorter than 10 seconds`() {
         viewModel.initVideo("/tmp/video.mp4", durationMs = 3_000L)
 
         val state = viewModel.uiState.value
@@ -37,10 +37,10 @@ class TrimViewModelTest {
     }
 
     @Test
-    fun `initVideo selects exactly 5 seconds when the video is exactly 5 seconds`() {
-        viewModel.initVideo("/tmp/video.mp4", durationMs = 5_000L)
+    fun `initVideo selects exactly 10 seconds when the video is exactly 10 seconds`() {
+        viewModel.initVideo("/tmp/video.mp4", durationMs = 10_000L)
 
-        assertEquals(5_000L, viewModel.uiState.value.trimEndMs)
+        assertEquals(10_000L, viewModel.uiState.value.trimEndMs)
     }
 
     @Test
@@ -51,7 +51,7 @@ class TrimViewModelTest {
 
         val state = viewModel.uiState.value
         assertEquals(10_000L, state.trimStartMs)
-        assertEquals(15_000L, state.trimEndMs)
+        assertEquals(20_000L, state.trimEndMs)
     }
 
     @Test
@@ -62,7 +62,7 @@ class TrimViewModelTest {
         assertEquals(0L, viewModel.uiState.value.trimStartMs)
 
         viewModel.onWindowPositionChange(999_000L)
-        assertEquals(25_000L, viewModel.uiState.value.trimStartMs) // 30_000 - 5_000
+        assertEquals(20_000L, viewModel.uiState.value.trimStartMs) // 30_000 - 10_000
     }
 
     @Test
@@ -87,7 +87,7 @@ class TrimViewModelTest {
 
         viewModel.onWindowPositionChange(20_000L)
         viewModel.nudgeWindow(30_000L)
-        assertEquals(25_000L, viewModel.uiState.value.trimStartMs) // 30_000 - 5_000
+        assertEquals(20_000L, viewModel.uiState.value.trimStartMs) // 30_000 - 10_000
     }
 
     @Test

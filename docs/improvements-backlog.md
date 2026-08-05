@@ -42,6 +42,36 @@ considered rather than forgotten.
   the trim first and previewing the real output file.
   *(added 2026-08-04)*
 
+- **Show real upload progress (X MB / Y MB + transfer rate) under the
+  "Uploading" status on the Reports screen.** `HistoryScreen.kt`'s
+  `StatusChip` currently shows only a static "Uploading" label
+  (`ReportStatus.UPLOADING -> "Uploading" to Color(0xFF1565C0)`,
+  `HistoryScreen.kt:188`) with no indication of how far the transfer has
+  gotten or whether it's stuck. Prompted by a real observation during the
+  2026-08-04 continuous-rotation-vector-capture plan's production
+  verification: a submitted report sat in `UPLOADING` for minutes with
+  nothing in the UI to distinguish "slowly transferring a ~10MB clip over a
+  degraded Wi-Fi connection" from "hung/dead" - the only way to tell was to
+  read `adb logcat` and query the production DB directly. `UploadWorker.kt`
+  already has the scaffolding half-built:
+  `File.asStreamingRequestBody()` (`core/util/FileUtil.kt:52-59`) streams the
+  video via `writeTo(sink: BufferedSink)` but reports no interim byte count,
+  and `UploadWorker.kt`'s `doWork()` only calls
+  `setProgress(workDataOf(KEY_PROGRESS to 0))` before the request and
+  `to 100` after - nothing observes `KEY_PROGRESS` anywhere today (no
+  `WorkInfo` progress observation exists yet in `HistoryScreen`/
+  `HistoryViewModel`). Closing this needs: (1) wrapping the streaming
+  request body's `writeTo` with a counting `BufferedSink`/`ForwardingSink`
+  that periodically calls `setProgressAsync` with bytes-sent and a
+  timestamp (for computing rate), (2) a new `KEY_BYTES_SENT`/
+  `KEY_TOTAL_BYTES` (or similar) pair in the progress `Data`, (3)
+  `HistoryViewModel` observing `WorkManager.getWorkInfoByIdFlow(...)` (or
+  a tag-based query) for reports in `UPLOADING` and exposing progress to
+  `HistoryScreen`, (4) rendering "X MB / Y MB" and a rate (bytes-per-second
+  over a short rolling window, not a single-sample instantaneous rate) below
+  the `StatusChip`.
+  *(added 2026-08-05)*
+
 ## Camera / Recording
 
 **Area:** `app/src/main/java/com/trafficwatch/app/feature/camera/`

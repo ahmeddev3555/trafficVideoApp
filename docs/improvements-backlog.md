@@ -174,3 +174,32 @@ considered rather than forgotten.
   have neither. Would need both persisted on the local `Report` entity
   too, not just the transient upload-flow state.
   *(added 2026-08-03, updated 2026-08-04 to cover rotation_samples too)*
+- **`ReviewViewModel.submit()` has no error handling around the enqueue
+  call, so any exception there (e.g. a WorkManager `Data` payload
+  overflow, or any other `SubmitReportUseCase.invoke()` failure) crashes
+  the app via an unhandled coroutine exception** - and since
+  `reportRepository.saveReport(...)` already ran before the enqueue
+  attempt, the local report is stranded in `UPLOADING` forever with no
+  work ever queued for it. Found during the continuous-rotation-vector-
+  capture plan's final review, alongside the WorkManager-overflow bug it
+  fixed - that specific crash cause is now fixed, but the missing
+  try/catch itself is a general resilience gap: any other future
+  `enqueue()` failure would hit the same crash-plus-stranded-row failure
+  mode. Wrapping the `submitReportUseCase` call in
+  `ReviewViewModel.submit()`/`confirmCellularSubmit()` with a try/catch
+  that surfaces an error state and rolls the report back out of
+  `UPLOADING` (or marks it `UPLOAD_FAILED`, matching `UploadWorker`'s own
+  failure handling) would close this off generally.
+  *(added 2026-08-05, found during continuous-rotation-vector-capture final review)*
+- **A `MediaMetadataRetriever` duration-extraction failure (falls back to
+  `0L`) makes the trim-window's `windowEnd` equal `windowStart`, silently
+  discarding both `location_samples` and `rotation_samples` at once.**
+  `AppNavigation.kt`'s REVIEW composable shares one `windowStart`/
+  `windowEnd` pair between both sample lists' filters (a deliberate,
+  correct design choice) - but that sharing means a single duration-
+  extraction failure now zeroes both signals simultaneously, where before
+  (sub-project 1 alone) it only zeroed `location_samples`. Pre-existing in
+  kind, not a new bug, but worth fixing before sub-project 3 needs to
+  distinguish "sensor unavailable" from "duration extraction failed" for
+  either signal.
+  *(added 2026-08-05, found during continuous-rotation-vector-capture final review)*

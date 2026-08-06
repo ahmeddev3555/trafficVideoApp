@@ -1,6 +1,12 @@
 import pytest
 
-from app.tracking_bearing import compute_bearing_degrees, compute_track_midpoint_ms
+from app.tracking_bearing import (
+    bbox_diagonal,
+    compute_bearing_degrees,
+    compute_displacement_pixels,
+    compute_track_midpoint_ms,
+    resolve_bearing,
+)
 
 
 def _linear_track(start, end, steps=8):
@@ -111,3 +117,57 @@ def test_bbox_diagonal_computes_the_euclidean_diagonal():
     from app.tracking_bearing import bbox_diagonal
 
     assert bbox_diagonal((0.0, 0.0, 3.0, 4.0)) == pytest.approx(5.0, abs=1e-9)
+
+
+def test_resolve_bearing_reports_centroid_source_for_real_lateral_motion():
+    track = _linear_track((50.0, 100.0), (300.0, 100.0))
+    result = resolve_bearing(track)
+    assert result is not None
+    bearing, source = result
+    assert bearing == pytest.approx(90.0, abs=1e-6)
+    assert source == "centroid"
+
+
+def test_resolve_bearing_reports_scale_source_for_near_centered_approach():
+    centroids = [(50.0, 50.0)] * 8
+    early_bbox = (40.0, 40.0, 60.0, 60.0)
+    late_bbox = (0.0, 0.0, 100.0, 100.0)
+    bboxes = [early_bbox] * 4 + [late_bbox] * 4
+
+    result = resolve_bearing(centroids, bboxes)
+
+    assert result == (180.0, "scale")
+
+
+def test_resolve_bearing_returns_none_when_scale_change_is_under_the_relative_floor():
+    # early diagonal 28.28, late diagonal 30.0 - a real but small (~6%) size change, well
+    # under the 15% MIN_SCALE_CHANGE_FRACTION floor - must not be trusted as approach motion.
+    centroids = [(50.0, 50.0)] * 8
+    early_bbox = (40.0, 40.0, 60.0, 60.0)   # diagonal ~28.28
+    late_bbox = (39.0, 39.0, 60.2, 60.2)     # diagonal ~30.0 (~6% growth)
+    bboxes = [early_bbox] * 4 + [late_bbox] * 4
+
+    assert resolve_bearing(centroids, bboxes) is None
+
+
+def test_compute_displacement_pixels_is_lateral_only_and_unaffected_by_bboxes_once_lateral_clears_the_floor():
+    # A track with clear lateral motion (50px) AND a meaningfully changing bbox size - the
+    # bbox size change must be completely ignored once lateral alone clears the floor,
+    # exactly matching this function's pre-bbox-awareness behavior.
+    centroids = [(0.0, 0.0), (50.0, 0.0)]
+    bboxes = [(0.0, 0.0, 10.0, 10.0), (0.0, 0.0, 200.0, 200.0)]  # huge diagonal change too
+
+    assert compute_displacement_pixels(centroids, bboxes) == pytest.approx(50.0, abs=1e-9)
+    # Also unaffected when bboxes is omitted entirely, matching pipeline.py callers that
+    # always pass bboxes, and any hypothetical caller that doesn't.
+    assert compute_displacement_pixels(centroids, None) == pytest.approx(50.0, abs=1e-9)
+
+
+def test_compute_displacement_pixels_combines_scale_when_lateral_is_under_the_floor():
+    centroids = [(50.0, 50.0)] * 8
+    early_bbox = (40.0, 40.0, 60.0, 60.0)   # diagonal ~28.28
+    late_bbox = (0.0, 0.0, 100.0, 100.0)    # diagonal ~141.42
+    bboxes = [early_bbox] * 4 + [late_bbox] * 4
+
+    # lateral = 0, scale ~= 113.14, combined = hypot(0, 113.14) ~= 113.14
+    assert compute_displacement_pixels(centroids, bboxes) == pytest.approx(113.137, abs=0.01)

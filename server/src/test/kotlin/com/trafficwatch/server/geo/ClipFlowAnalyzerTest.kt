@@ -26,11 +26,13 @@ class ClipFlowAnalyzerTest {
         // frame-relative floor, so unrelated tests need no other changes.
         boundingBox: BoundingBox? = BoundingBox(x1 = 0.0, y1 = 0.0, x2 = 50.0, y2 = 50.0),
         trackMidpointMs: Long? = null,
+        bearingSource: String? = null,
     ) = VehicleAnalysisResult(
         trackId = trackId,
         vehicleType = "car",
         detectionConfidence = detectionConfidence,
         bearingDegrees = bearing,
+        bearingSource = bearingSource,
         plateText = null,
         plateConfidence = null,
         boundingBox = boundingBox,
@@ -256,5 +258,71 @@ class ClipFlowAnalyzerTest {
         assertEquals(1, result.size)
         assertEquals(135.0, result[0].absoluteBearingDegrees, 1e-9)
         assertNull(result[0].orientationSource)
+    }
+
+    @Test
+    fun `qualifyVehicles trusts a scale-sourced bearing when the recording vehicle's own speed was low`() {
+        val timeline = OrientationTimeline(
+            locationSamples = listOf(
+                com.trafficwatch.server.reports.dto.LocationSampleDto(
+                    latitude = 0.0, longitude = 0.0, accuracy = 5.0, altitude = 0.0,
+                    bearing = 0.0, speed = 0.5, capturedAt = 1000L,
+                ),
+            ),
+            rotationSamples = emptyList(),
+        )
+        val result = analyzer.qualifyVehicles(
+            listOf(vehicle(1, bearing = 90.0, trackMidpointMs = 0L, bearingSource = "scale")),
+            compassHeadingDegrees = 0.0,
+            frameWidth = 1920, frameHeight = 1080,
+            orientationTimeline = timeline,
+        )
+
+        assertEquals(1, result.size)
+    }
+
+    @Test
+    fun `qualifyVehicles drops a scale-sourced bearing when the recording vehicle's own speed was high`() {
+        val timeline = OrientationTimeline(
+            locationSamples = listOf(
+                com.trafficwatch.server.reports.dto.LocationSampleDto(
+                    latitude = 0.0, longitude = 0.0, accuracy = 5.0, altitude = 0.0,
+                    bearing = 0.0, speed = 15.0, capturedAt = 1000L,
+                ),
+            ),
+            rotationSamples = emptyList(),
+        )
+        val result = analyzer.qualifyVehicles(
+            listOf(vehicle(1, bearing = 90.0, trackMidpointMs = 0L, bearingSource = "scale")),
+            compassHeadingDegrees = 0.0,
+            frameWidth = 1920, frameHeight = 1080,
+            orientationTimeline = timeline,
+        )
+
+        assertTrue(result.isEmpty())
+    }
+
+    @Test
+    fun `qualifyVehicles drops a scale-sourced bearing when no location samples exist to verify recording speed`() {
+        val timeline = OrientationTimeline(locationSamples = emptyList(), rotationSamples = emptyList())
+        val result = analyzer.qualifyVehicles(
+            listOf(vehicle(1, bearing = 90.0, trackMidpointMs = 0L, bearingSource = "scale")),
+            compassHeadingDegrees = 0.0,
+            frameWidth = 1920, frameHeight = 1080,
+            orientationTimeline = timeline,
+        )
+
+        assertTrue(result.isEmpty())
+    }
+
+    @Test
+    fun `qualifyVehicles does not gate a centroid-sourced bearing on recording speed`() {
+        val result = analyzer.qualifyVehicles(
+            listOf(vehicle(1, bearing = 90.0, bearingSource = "centroid")),
+            compassHeadingDegrees = 0.0,
+            frameWidth = 1920, frameHeight = 1080,
+        )
+
+        assertEquals(1, result.size)
     }
 }

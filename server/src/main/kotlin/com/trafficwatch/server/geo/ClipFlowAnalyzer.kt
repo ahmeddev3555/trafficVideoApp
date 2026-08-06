@@ -12,6 +12,16 @@ private const val MIN_TRACK_FRAMES = 3
 /** Frame count at which trackQuality's frame factor saturates to 1.0. */
 private const val TRACK_FRAMES_SATURATION = 5.0
 
+/**
+ * Recording vehicle's own GPS speed threshold (m/s) below which a bbox-scale-derived
+ * ("scale"-sourced) bearing is trusted as the OTHER vehicle's genuine approach/recession,
+ * rather than the recording vehicle itself closing the distance on a stationary or slower
+ * vehicle. Matches the "GPS bearing unreliable below this speed" walking-pace convention
+ * already used elsewhere for GPS-derived signals - see the
+ * 2026-08-06-approach-recession-bearing-fix design spec's Critical-finding fix.
+ */
+private const val MAX_RECORDING_SPEED_FOR_SCALE_BEARING_MPS = 1.0
+
 /** A vehicle qualified for flow analysis: absolute bearing + quality facts. */
 data class FlowVehicle(
     val vehicle: VehicleAnalysisResult,
@@ -66,6 +76,13 @@ class ClipFlowAnalyzer(
 
         return vehicles.mapNotNull { vehicle ->
             val frameBearing = vehicle.bearingDegrees ?: return@mapNotNull null
+            if (vehicle.bearingSource == "scale") {
+                val recordingSpeed = vehicle.trackMidpointMs
+                    ?.let { orientationTimeline?.recordingSpeedMetersPerSecondAt(it) }
+                if (recordingSpeed == null || recordingSpeed > MAX_RECORDING_SPEED_FOR_SCALE_BEARING_MPS) {
+                    return@mapNotNull null
+                }
+            }
             val corridorId = vehicle.corridorId ?: return@mapNotNull null
             val cohesion = vehicle.corridorCohesion ?: return@mapNotNull null
             val frames = vehicle.trackFrameCount ?: return@mapNotNull null

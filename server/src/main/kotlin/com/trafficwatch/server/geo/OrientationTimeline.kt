@@ -68,6 +68,23 @@ class OrientationTimeline(
     }
 
     /**
+     * The recording device's own GPS speed (m/s) from the location_samples entry nearest
+     * [elapsedMs] into the clip, or null if no location_samples exist at all. Used to gate
+     * whether a bbox-scale-derived "approaching/receding" bearing (Python's
+     * resolve_bearing, source "scale") can be trusted: bbox growth alone cannot distinguish
+     * "the other vehicle approached me" from "I (the recording vehicle) caught up to a
+     * stationary or slower vehicle" - only when the recording vehicle itself was
+     * near-stationary at that moment can bbox growth be safely attributed to the OTHER
+     * vehicle's own motion. See ClipFlowAnalyzer.qualifyVehicles for the actual gate.
+     */
+    fun recordingSpeedMetersPerSecondAt(elapsedMs: Long): Double? {
+        if (locationSamples.isEmpty()) return null
+        val anchor = anchorEpochMs ?: return null
+        val targetEpochMs = anchor + elapsedMs
+        return locationSamples.minByOrNull { kotlin.math.abs(it.capturedAt - targetEpochMs) }?.speed
+    }
+
+    /**
      * Circular-weighted interpolation between the two samples in [points]
      * (epochMs, bearingDegrees) bracketing [targetEpochMs], weighted by inverse
      * time-distance. At the edges (target before the first or after the last point),

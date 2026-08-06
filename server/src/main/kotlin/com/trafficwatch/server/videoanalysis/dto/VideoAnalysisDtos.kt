@@ -25,6 +25,14 @@ data class VehicleAnalysisResult(
     val vehicleType: String,
     val detectionConfidence: Double,
     val bearingDegrees: Double?,
+    // Which computation produced bearingDegrees, from the video-analysis service:
+    // "centroid" (real lateral pixel motion) or "scale" (bbox-diagonal-derived fallback for
+    // near-head-on motion). Null from older video-analysis service versions (no such
+    // distinction existed yet), or when bearingDegrees is also null. A "scale" bearing must
+    // be corroborated by the recording vehicle's own low GPS speed before ClipFlowAnalyzer
+    // trusts it - see OrientationTimeline.recordingSpeedMetersPerSecondAt and its use in
+    // ClipFlowAnalyzer.qualifyVehicles.
+    val bearingSource: String? = null,
     val plateText: String?,
     val plateConfidence: Double?,
     val boundingBox: BoundingBox? = null,

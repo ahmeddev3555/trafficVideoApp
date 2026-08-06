@@ -19,6 +19,13 @@ class VehicleResult(BaseModel):
     # map/compass awareness at all; converting this to a real-world bearing is the Kotlin
     # server's job (see StreetDirectionResolver / ReportAnalysisJob).
     bearing_degrees: float | None = None
+    # Which computation produced bearing_degrees: "centroid" (real lateral pixel motion) or
+    # "scale" (bbox-diagonal-derived fallback for near-head-on motion - the Kotlin server
+    # must corroborate this with the recording vehicle's own GPS speed before trusting it as
+    # a genuine approach, since bbox growth alone cannot distinguish the OTHER vehicle
+    # approaching from the CAMERA closing the distance on a stationary/slower vehicle). None
+    # when bearing_degrees is also None.
+    bearing_source: str | None = None
     plate_text: str | None = None
     plate_confidence: float | None = None
     # The representative (largest-bounding-box) frame's box, and that same frame encoded

@@ -193,4 +193,21 @@ class OrientationTimelineTest {
 
         assertNull(timeline.orientationAt(500L))
     }
+
+    @Test
+    fun `recordingSpeedMetersPerSecondAt returns the nearest location sample's speed`() {
+        val timeline = OrientationTimeline(
+            locationSamples = listOf(location(1000L, bearing = 0.0, speed = 3.0)),
+            rotationSamples = emptyList(),
+        )
+
+        assertEquals(3.0, timeline.recordingSpeedMetersPerSecondAt(500L))
+    }
+
+    @Test
+    fun `recordingSpeedMetersPerSecondAt returns null when there are no location samples`() {
+        val timeline = OrientationTimeline(locationSamples = emptyList(), rotationSamples = emptyList())
+
+        assertNull(timeline.recordingSpeedMetersPerSecondAt(500L))
+    }
 }

@@ -152,10 +152,13 @@ the existing Kotlin logic requires no modification.
 
 1. **Unit tests** (above) prove the mechanism in isolation with synthetic
    data.
-2. **Production replay**: after deployment, re-run analysis on report
-   `55f7f82a` (the same technique used to verify sub-project 3 - extracting
-   the stored video and resubmitting it, or re-running the video-analysis
-   service directly) and confirm the previously-invisible head-on motorcycle
-   now produces a real track with a non-`None` bearing near 180° and a
-   `displacement_pixels` value that clears `ClipFlowAnalyzer`'s existing
-   floor - closing the exact gap this sub-project exists to fix.
+2. **Production replay - honest scope**: report `55f7f82a`'s own head-on motorcycle
+   track was only 2 frames long (below `MIN_OBSERVATIONS = 4`), a separate, unaddressed
+   gap (see Non-goals - ByteTrack losing short tracks) that this fix does NOT close;
+   re-running analysis on that exact report will show no change, and that must not be
+   read as this fix failing. Real verification instead needs either a newly-captured
+   or synthetic clip with a vehicle that is both tracked for at least 4 frames AND
+   moves nearly head-on (so `resolve_bearing` actually reaches its "scale" branch) -
+   confirm such a track now produces a real `bearing_degrees`/`bearing_source: "scale"`
+   pair, and that `ClipFlowAnalyzer` correctly trusts or drops it depending on the
+   recording vehicle's own GPS speed at that moment.

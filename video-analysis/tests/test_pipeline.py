@@ -164,3 +164,32 @@ def test_head_on_approaching_track_gets_a_real_bearing_and_a_scale_dominated_dis
     # ClipFlowAnalyzer's existing displacement floor on the Kotlin side (unmodified by this
     # plan), where today's lateral-only 0.0 would not have.
     assert vehicle.displacement_pixels == pytest.approx(113.137, abs=0.01)
+    assert vehicle.bearing_source == "scale"
+
+
+def test_ordinary_lateral_track_displacement_is_unaffected_by_bbox_size_change():
+    # A track with clear lateral motion (well over the 8px floor) whose bbox ALSO changes
+    # size substantially (as a real vehicle's box naturally does while crossing the frame) -
+    # displacement_pixels must reflect lateral motion ONLY, not be inflated by the
+    # unrelated bbox size change, restoring this plan's own invariant.
+    frames = [
+        _make_frame(track_id=1, frame_index=0, bbox=(0.0, 0.0, 20.0, 20.0)),
+        _make_frame(track_id=1, frame_index=1, bbox=(0.0, 0.0, 20.0, 20.0)),
+        _make_frame(track_id=1, frame_index=2, bbox=(0.0, 0.0, 20.0, 20.0)),
+        _make_frame(track_id=1, frame_index=3, bbox=(0.0, 0.0, 20.0, 20.0)),
+        _make_frame(track_id=1, frame_index=4, bbox=(50.0, 0.0, 250.0, 200.0)),
+        _make_frame(track_id=1, frame_index=5, bbox=(50.0, 0.0, 250.0, 200.0)),
+        _make_frame(track_id=1, frame_index=6, bbox=(50.0, 0.0, 250.0, 200.0)),
+        _make_frame(track_id=1, frame_index=7, bbox=(50.0, 0.0, 250.0, 200.0)),
+    ]
+    pipeline = AnalysisPipeline(
+        settings=_fake_settings(), detector=FakeDetector(frames), plate_reader=FakePlateReader()
+    )
+
+    response = pipeline.analyze("unused.mp4")
+
+    vehicle = response.vehicles[0]
+    # Centroid moves from (10,10) to (150,100): lateral = hypot(140, 90) ~= 166.5, well over
+    # the 8px floor, even though the bbox diagonal also grew dramatically (28.28 -> 269.26).
+    assert vehicle.displacement_pixels == pytest.approx(166.5, abs=0.5)
+    assert vehicle.bearing_source == "centroid"

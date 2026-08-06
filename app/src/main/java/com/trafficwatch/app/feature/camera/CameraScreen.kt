@@ -45,6 +45,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.trafficwatch.app.core.domain.model.LocationData
 import com.trafficwatch.app.core.domain.model.RotationSample
+import com.trafficwatch.app.core.ui.components.LocationMapView
 import java.io.File
 
 @SuppressLint("MissingPermission")
@@ -165,6 +166,26 @@ fun CameraScreen(
                 tint = Color.White,
                 modifier = Modifier.size(36.dp)
             )
+        }
+
+        // Location + heading map (bottom-right) - shown once a GPS fix exists; the
+        // existing GpsBadge (top-left) already covers "no fix yet" in text, so this
+        // corner simply doesn't render until there's something real to show.
+        val fixedLocation = uiState.locationState as? LocationState.Fixed
+        if (fixedLocation != null) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 16.dp, bottom = 136.dp)
+                    .size(64.dp)
+            ) {
+                LocationMapView(
+                    latitude = fixedLocation.data.latitude,
+                    longitude = fixedLocation.data.longitude,
+                    headingDegrees = uiState.currentHeadingDegrees,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
         }
 
         // GPS not-ready hint

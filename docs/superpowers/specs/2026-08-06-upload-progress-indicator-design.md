@@ -77,14 +77,14 @@ fun File.asStreamingRequestBody(
         override fun writeTo(sink: BufferedSink) {
             val total = contentLength()
             var written = 0L
-            var lastEmitMs = SystemClock.elapsedRealtime()
+            var lastEmitMs = System.currentTimeMillis()
             source().use { source ->
                 while (true) {
                     val read = source.read(sink.buffer, UPLOAD_CHUNK_SIZE_BYTES)
                     if (read == -1L) break
                     written += read
                     sink.flush()
-                    val now = SystemClock.elapsedRealtime()
+                    val now = System.currentTimeMillis()
                     val isLastChunk = written >= total
                     if (onProgress != null && (isLastChunk || now - lastEmitMs >= PROGRESS_EMIT_INTERVAL_MS)) {
                         onProgress(written, total)
@@ -102,13 +102,13 @@ instantaneous transfer rate, and reports all three figures together:
 
 ```kotlin
 var lastBytes = 0L
-var lastTimeMs = SystemClock.elapsedRealtime()
+var lastTimeMs = System.currentTimeMillis()
 
 val videoPart = MultipartBody.Part.createFormData(
     "video",
     videoFile.name,
     videoFile.asStreamingRequestBody("video/mp4".toMediaType()) { bytesWritten, totalBytes ->
-        val now = SystemClock.elapsedRealtime()
+        val now = System.currentTimeMillis()
         val elapsedMs = (now - lastTimeMs).coerceAtLeast(1)
         val bytesPerSecond = ((bytesWritten - lastBytes) * 1000L) / elapsedMs
         lastBytes = bytesWritten
@@ -136,6 +136,18 @@ chunk's tick supersedes it.)
 Three new companion constants on `UploadWorker`: `KEY_BYTES_UPLOADED`,
 `KEY_TOTAL_BYTES`, `KEY_BYTES_PER_SECOND` (all `Long`, alongside the
 existing `KEY_PROGRESS: Int`).
+
+**Why `System.currentTimeMillis()`, not `android.os.SystemClock.elapsedRealtime()`:**
+this codebase has no Robolectric and no
+`testOptions.unitTests.isReturnDefaultValues` in `app/build.gradle.kts`
+(confirmed), so any `android.*` framework call throws
+`RuntimeException: Method ... not mocked` in a plain local JUnit test -
+and `asStreamingRequestBody`'s chunking logic needs to be directly
+unit-testable (see Testing below). `System.currentTimeMillis()` is a
+few-hundred-millisecond-scale wall clock read used only to throttle UI
+update frequency, not to measure a safety-critical duration - the
+theoretical risk of a mid-upload clock adjustment skewing one throttle
+window or one rate sample for a progress *display* is immaterial.
 
 **Throttling rationale:** on a fast connection a 20MB clip could produce
 thousands of chunk callbacks; emitting `setProgress` on every one would

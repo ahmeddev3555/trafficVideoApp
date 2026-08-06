@@ -1,11 +1,8 @@
 package com.trafficwatch.app.core.ui.components
 
 import android.view.ViewGroup
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
@@ -23,8 +20,8 @@ private const val DEFAULT_ZOOM = 17.0
 fun LocationMapView(
     latitude: Double,
     longitude: Double,
-    headingDegrees: Float? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    headingDegrees: Float? = null
 ) {
     AndroidView(
         modifier = modifier,
@@ -42,7 +39,13 @@ fun LocationMapView(
                 overlays.add(
                     Marker(this).apply {
                         position = point
-                        headingDegrees?.let { rotation = it }
+                        // osmdroid rotates markers counter-clockwise for a positive bearing (verified against
+                        // the library's own Marker.draw()/canvas.rotate() behavior), but CompassProvider emits
+                        // standard clockwise-from-north compass bearings - negate to render the correct direction.
+                        headingDegrees?.let {
+                            rotation = -it
+                            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                        }
                     }
                 )
             }
@@ -54,7 +57,10 @@ fun LocationMapView(
             mapView.overlays.add(
                 Marker(mapView).apply {
                     position = point
-                    headingDegrees?.let { rotation = it }
+                    headingDegrees?.let {
+                        rotation = -it
+                        setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                    }
                 }
             )
         },

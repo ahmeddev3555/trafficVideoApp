@@ -147,7 +147,8 @@ fun CameraScreen(
         }
 
         // Record / Stop FAB (bottom-centre)
-        val locationReady = uiState.locationState is LocationState.Fixed
+        val fixedLocation = uiState.locationState as? LocationState.Fixed
+        val locationReady = fixedLocation != null
 
         FloatingActionButton(
             onClick = {
@@ -171,7 +172,6 @@ fun CameraScreen(
         // Location + heading map (bottom-right) - shown once a GPS fix exists; the
         // existing GpsBadge (top-left) already covers "no fix yet" in text, so this
         // corner simply doesn't render until there's something real to show.
-        val fixedLocation = uiState.locationState as? LocationState.Fixed
         if (fixedLocation != null) {
             Box(
                 modifier = Modifier

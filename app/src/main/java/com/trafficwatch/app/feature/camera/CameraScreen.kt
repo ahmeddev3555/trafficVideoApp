@@ -86,7 +86,13 @@ fun CameraScreen(
         onDispose { viewModel.stopOrientationTracking() }
     }
 
-    // Navigate forward once recording is finalised
+    // Navigate forward once recording is finalised. Immediately resets the recording
+    // state back to Idle after consuming it - CameraController's recordingState is
+    // @Singleton-scoped (survives across separate CameraViewModel instances), so leaving
+    // it at Finalizing would make the NEXT visit to this screen immediately re-fire this
+    // same effect with the stale, previous recording before the user ever sees the camera
+    // preview. Resetting here, at the point of consumption, closes that race at its
+    // source - the separate on-entry reset below remains as a defensive backstop only.
     LaunchedEffect(recordingState) {
         if (recordingState is RecordingState.Finalizing) {
             onVideoRecorded(
@@ -96,6 +102,7 @@ fun CameraScreen(
                 viewModel.getLocationSamples(),
                 viewModel.getRotationSamples()
             )
+            viewModel.resetRecordingState()
         }
     }
 

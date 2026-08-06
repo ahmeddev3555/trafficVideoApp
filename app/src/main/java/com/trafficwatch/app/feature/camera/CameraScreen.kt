@@ -92,7 +92,7 @@ fun CameraScreen(
     // it at Finalizing would make the NEXT visit to this screen immediately re-fire this
     // same effect with the stale, previous recording before the user ever sees the camera
     // preview. Resetting here, at the point of consumption, closes that race at its
-    // source - the separate on-entry reset below remains as a defensive backstop only.
+    // source - the separate on-entry reset above remains as a defensive backstop only.
     LaunchedEffect(recordingState) {
         if (recordingState is RecordingState.Finalizing) {
             onVideoRecorded(

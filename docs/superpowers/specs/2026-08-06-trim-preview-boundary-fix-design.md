@@ -6,7 +6,7 @@ Backlog item (`docs/improvements-backlog.md`, "Navigation / UI flow", added
 2026-08-04, item 2): the Trim screen's "Preview" button doesn't actually
 preview the trimmed clip. `TrimScreen.kt`'s `ExoPlayer` is loaded with the
 raw (untrimmed) recording; the Preview button
-(`TrimScreen.kt:286-292`) does only:
+(`TrimScreen.kt:321-328`) does only:
 
 ```kotlin
 onClick = {
@@ -18,7 +18,7 @@ onClick = {
 It seeks into the raw video at the selection's start but never stops or
 loops at `uiState.trimEndMs` — playback continues past the selection into
 the rest of the raw clip, and `repeatMode = Player.REPEAT_MODE_ONE`
-(`TrimScreen.kt:76`) loops the *whole raw file*, not the selected window.
+(`TrimScreen.kt:84`) loops the *whole raw file*, not the selected window.
 
 Root cause was already understood when this item was filed (unlike item 1)
 — this is a design-choice fix, not an investigation.
@@ -43,9 +43,11 @@ indistinguishable from the real output.
 **Scope of enforcement (confirmed with user):** the boundary is enforced
 **only** for playback triggered via the Preview button — not for the
 built-in ExoPlayer controls exposed by `PlayerView(useController = true)`
-(`TrimScreen.kt:175-183`), which remain free to scrub/play the full raw
-video as they do today. This is the narrower of two options discussed; the
-broader "always enforce while playing" option was not chosen.
+(`TrimScreen.kt:210-218`), which remain free to scrub/play the full raw
+video as they do today outside of an active Preview session — see Scope
+clarification below for the in-session case. This is the narrower of two
+options discussed; the broader "always enforce while playing" option was
+not chosen.
 
 ## Fix
 

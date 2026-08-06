@@ -66,3 +66,48 @@ def test_track_midpoint_ms_returns_none_when_fps_is_none():
 def test_track_midpoint_ms_returns_none_when_fps_is_zero_or_negative():
     assert compute_track_midpoint_ms(0, 29, 0.0) is None
     assert compute_track_midpoint_ms(0, 29, -5.0) is None
+
+
+def test_near_centered_approaching_vehicle_returns_180_degrees():
+    # Centroids barely move (lateral displacement well under the 8.0px floor), but the
+    # bounding box grows dramatically - a vehicle driving straight at the camera.
+    centroids = [(50.0, 50.0)] * 8
+    early_bbox = (40.0, 40.0, 60.0, 60.0)   # diagonal ~28.28
+    late_bbox = (0.0, 0.0, 100.0, 100.0)    # diagonal ~141.42
+    bboxes = [early_bbox] * 4 + [late_bbox] * 4
+
+    assert compute_bearing_degrees(centroids, bboxes) == 180.0
+
+
+def test_near_centered_receding_vehicle_returns_0_degrees():
+    centroids = [(50.0, 50.0)] * 8
+    early_bbox = (0.0, 0.0, 100.0, 100.0)   # diagonal ~141.42
+    late_bbox = (40.0, 40.0, 60.0, 60.0)    # diagonal ~28.28
+    bboxes = [early_bbox] * 4 + [late_bbox] * 4
+
+    assert compute_bearing_degrees(centroids, bboxes) == 0.0
+
+
+def test_neither_lateral_nor_scale_change_is_significant_returns_none():
+    centroids = [(50.0, 50.0)] * 4 + [(50.5, 50.0)] * 4  # lateral displacement 0.5px
+    early_bbox = (40.0, 40.0, 60.0, 60.0)   # diagonal ~28.28
+    late_bbox = (42.0, 42.0, 62.0, 62.0)    # same size, diagonal ~28.28 - no scale change
+    bboxes = [early_bbox] * 4 + [late_bbox] * 4
+
+    assert compute_bearing_degrees(centroids, bboxes) is None
+
+
+def test_real_lateral_motion_is_unaffected_by_the_new_bboxes_parameter():
+    track = _linear_track((50.0, 100.0), (300.0, 100.0))
+    dummy_bboxes = [(0.0, 0.0, 10.0, 10.0)] * len(track)
+
+    # Identical result whether bboxes is omitted (existing callers) or passed (new caller) -
+    # lateral displacement alone already clears the floor, so the fallback never activates.
+    assert compute_bearing_degrees(track) == pytest.approx(90.0, abs=1e-6)
+    assert compute_bearing_degrees(track, dummy_bboxes) == pytest.approx(90.0, abs=1e-6)
+
+
+def test_bbox_diagonal_computes_the_euclidean_diagonal():
+    from app.tracking_bearing import bbox_diagonal
+
+    assert bbox_diagonal((0.0, 0.0, 3.0, 4.0)) == pytest.approx(5.0, abs=1e-9)

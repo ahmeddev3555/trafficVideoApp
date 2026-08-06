@@ -48,6 +48,14 @@ class FileUtil @Inject constructor(@ApplicationContext private val context: Cont
     }
 }
 
+/**
+ * Ceiling passed to [okio.Source.read] per iteration of the streaming loop below - NOT a
+ * guaranteed chunk size. Okio's [okio.Source.read] on an [okio.Source] backed by an
+ * `InputStream` fills at most one internal segment (~8KB) per call regardless of this
+ * value, so [onProgress] fires roughly every ~8KB in practice, not every 64KB. Harmless
+ * for progress reporting (throttled downstream by [UploadProgressTracker]), but don't
+ * assume this constant reflects real chunk boundaries.
+ */
 private const val UPLOAD_CHUNK_SIZE_BYTES = 64 * 1024L
 
 /**
@@ -71,7 +79,7 @@ fun File.asStreamingRequestBody(
                     val read = source.read(sink.buffer, UPLOAD_CHUNK_SIZE_BYTES)
                     if (read == -1L) break
                     written += read
-                    sink.flush()
+                    sink.emitCompleteSegments()
                     onProgress?.invoke(written, total)
                 }
             }

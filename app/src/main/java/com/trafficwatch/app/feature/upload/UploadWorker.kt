@@ -79,7 +79,7 @@ class UploadWorker @AssistedInject constructor(
                 "video",
                 videoFile.name,
                 videoFile.asStreamingRequestBody("video/mp4".toMediaType()) { bytesWritten, totalBytes ->
-                    tracker.onChunk(bytesWritten, System.currentTimeMillis())?.let { snapshot ->
+                    tracker.onChunk(bytesWritten, android.os.SystemClock.elapsedRealtime())?.let { snapshot ->
                         setProgressAsync(
                             workDataOf(
                                 KEY_PROGRESS to snapshot.percent,
@@ -110,7 +110,14 @@ class UploadWorker @AssistedInject constructor(
                 rotationSamples = rotationSamplesJson?.toRequestBody()
             )
 
-            setProgress(workDataOf(KEY_PROGRESS to 100))
+            setProgress(
+                workDataOf(
+                    KEY_PROGRESS to 100,
+                    KEY_BYTES_UPLOADED to videoFile.length(),
+                    KEY_TOTAL_BYTES to videoFile.length(),
+                    KEY_BYTES_PER_SECOND to 0L
+                )
+            )
 
             reportRepository.updateStatus(localReportId, ReportStatus.PENDING, response.reportId)
 

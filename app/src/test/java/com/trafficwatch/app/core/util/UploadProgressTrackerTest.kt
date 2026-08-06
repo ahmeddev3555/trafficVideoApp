@@ -66,4 +66,15 @@ class UploadProgressTrackerTest {
         // (500 - 100) bytes over exactly 300ms = 1333 bytes/sec
         assertEquals(UploadProgressSnapshot(percent = 50, bytesUploaded = 500L, totalBytes = 1000L, bytesPerSecond = 1333L), result)
     }
+
+    @Test
+    fun `bytesWritten going backwards is treated as a fresh first emission`() {
+        val tracker = UploadProgressTracker(totalBytes = 1000L)
+        tracker.onChunk(bytesWritten = 500L, nowMs = 5000L)
+
+        // simulates OkHttp re-invoking writeTo from the start (e.g. a connection retry)
+        val result = tracker.onChunk(bytesWritten = 100L, nowMs = 5050L)
+
+        assertEquals(UploadProgressSnapshot(percent = 10, bytesUploaded = 100L, totalBytes = 1000L, bytesPerSecond = 0L), result)
+    }
 }

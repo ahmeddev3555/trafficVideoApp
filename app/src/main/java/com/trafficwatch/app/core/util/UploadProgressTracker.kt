@@ -22,6 +22,9 @@ class UploadProgressTracker(private val totalBytes: Long) {
 
     /** Returns a snapshot to report, or null if this chunk should be throttled (not the final one). */
     fun onChunk(bytesWritten: Long, nowMs: Long): UploadProgressSnapshot? {
+        if (bytesWritten < lastEmittedBytes) {
+            hasEmitted = false
+        }
         val isFinal = bytesWritten >= totalBytes
         if (hasEmitted && !isFinal && nowMs - lastEmittedAtMs < PROGRESS_EMIT_INTERVAL_MS) return null
 

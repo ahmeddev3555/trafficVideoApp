@@ -11,7 +11,10 @@ class FileUtilTest {
 
     @Test
     fun `asStreamingRequestBody reports monotonically increasing progress ending at file size`() {
-        val fileSize = 132_072L // just over two 64KB chunks
+        // note: actual chunk boundaries are driven by Okio's internal segment size (~8KB),
+        // not this constant - UPLOAD_CHUNK_SIZE_BYTES is a read-size ceiling passed to
+        // Source.read(), not a guaranteed chunk size
+        val fileSize = 132_072L
         val tempFile = File.createTempFile("upload_test", ".mp4")
         tempFile.deleteOnExit()
         tempFile.writeBytes(ByteArray(fileSize.toInt()) { it.toByte() })

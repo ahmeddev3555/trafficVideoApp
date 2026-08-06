@@ -66,7 +66,7 @@ class HistoryViewModel @Inject constructor(
                 combine(
                     uploadingIds.map { id ->
                         workManager.getWorkInfosForUniqueWorkFlow(UploadWorker.uniqueWorkName(id))
-                            .map { workInfos -> id to workInfos.firstOrNull()?.toUploadProgress() }
+                            .map { workInfos -> id to workInfos.firstOrNull { it.state == WorkInfo.State.RUNNING }?.toUploadProgress() }
                     }
                 ) { pairs -> pairs.mapNotNull { (id, progress) -> progress?.let { id to it } }.toMap() }
             }

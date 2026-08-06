@@ -62,6 +62,7 @@ class HistoryViewModelTest {
             .build()
         return mockk<WorkInfo> {
             every { this@mockk.progress } returns progress
+            every { this@mockk.state } returns WorkInfo.State.RUNNING
         }
     }
 
@@ -74,6 +75,7 @@ class HistoryViewModelTest {
             .build()
         return mockk<WorkInfo> {
             every { this@mockk.progress } returns progress
+            every { this@mockk.state } returns WorkInfo.State.RUNNING
         }
     }
 

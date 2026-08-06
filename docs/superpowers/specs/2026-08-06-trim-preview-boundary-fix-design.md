@@ -126,9 +126,25 @@ is manual: build, install, open Trim on a clip longer than the max window,
 select a sub-window, tap Preview, and confirm playback loops within
 `[trimStartMs, trimEndMs]` repeatedly without drifting into the rest of the
 raw clip. Also confirm: tapping Preview again mid-loop restarts cleanly;
-dragging the built-in ExoPlayer seek bar past `trimEndMs` is unaffected
-(plays past it, per the confirmed scope); pausing via the built-in controls
-stops the loop-back until Preview is tapped again.
+dragging the built-in ExoPlayer seek bar past `trimEndMs` while a Preview
+session is still playing gets pulled back into the loop within ~150ms
+(the boundary applies to the whole session once triggered by Preview, not
+just the moment it was tapped - see the scope clarification below);
+pausing via the built-in controls stops the loop-back until Preview is
+tapped again.
+
+**Scope clarification (resolved 2026-08-06, during task review):** "scoped
+only to the Preview button" means a bounded session must *originate* from a
+Preview tap - it does not mean every individual seek within that session is
+exempt if it happens to come from the built-in controls. The implementation
+has no way to distinguish "played naturally to `trimEndMs`" from "user
+manually scrubbed past `trimEndMs` via the built-in seek bar while a
+Preview session is still active" (both look identical: `currentPosition`
+crossed `trimEndMs` while `isPlaying` is true) - and there is no need to
+add that distinction. Once Preview is tapped, the session stays bounded
+until playback actually stops (pause or navigating away); only playback
+that was never Preview-triggered in the first place (`previewToken == 0`)
+is exempt from the boundary.
 
 ## Non-goals
 

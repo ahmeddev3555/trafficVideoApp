@@ -48,12 +48,32 @@ class FileUtil @Inject constructor(@ApplicationContext private val context: Cont
     }
 }
 
-/** Streams a file to OkHttp without loading it entirely into memory. */
-fun File.asStreamingRequestBody(mediaType: MediaType = "video/mp4".toMediaType()): RequestBody =
+private const val UPLOAD_CHUNK_SIZE_BYTES = 64 * 1024L
+
+/**
+ * Streams a file to OkHttp without loading it entirely into memory, in fixed-size
+ * chunks so [onProgress] can be observed as the upload proceeds. Carries no timing or
+ * throttling logic of its own - callers that need throttled updates should filter
+ * through something like [UploadProgressTracker].
+ */
+fun File.asStreamingRequestBody(
+    mediaType: MediaType = "video/mp4".toMediaType(),
+    onProgress: ((bytesWritten: Long, totalBytes: Long) -> Unit)? = null
+): RequestBody =
     object : RequestBody() {
         override fun contentType(): MediaType = mediaType
         override fun contentLength(): Long = length()
         override fun writeTo(sink: BufferedSink) {
-            source().use { sink.writeAll(it) }
+            val total = contentLength()
+            var written = 0L
+            source().use { source ->
+                while (true) {
+                    val read = source.read(sink.buffer, UPLOAD_CHUNK_SIZE_BYTES)
+                    if (read == -1L) break
+                    written += read
+                    sink.flush()
+                    onProgress?.invoke(written, total)
+                }
+            }
         }
     }

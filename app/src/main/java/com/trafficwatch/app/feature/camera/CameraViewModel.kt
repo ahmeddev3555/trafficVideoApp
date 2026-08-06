@@ -159,7 +159,7 @@ class CameraViewModel @Inject constructor(
             samplingJob?.cancel()
             rotationSamplingJob?.cancel()
             maxDurationJob?.cancel()
-            _uiState.update { it.copy(cameraError = error) }
+            _uiState.update { it.copy(cameraError = error, currentHeadingDegrees = null) }
         }
         maxDurationJob = viewModelScope.launch {
             delay(MAX_RECORDING_MS)

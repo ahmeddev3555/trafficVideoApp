@@ -86,6 +86,24 @@ considered rather than forgotten.
   computed, or if users specifically ask for it again.
   *(added 2026-08-02)*
 
+- **Show a small map on the recording screen with the current location and
+  the direction the camera is pointing.** User-requested. Gives the person
+  recording live feedback that GPS/compass data is actually being captured
+  (today there's no visual indication at all), and could help them
+  understand why a report might later come back with weak/`Unknown`
+  direction evidence (e.g. no GPS fix yet). `core/ui/components/LocationMapView.kt`
+  already exists (osmdroid, non-interactive, static pin) but only shows a
+  plain marker with no heading/rotation - would need a rotating
+  arrow/cone overlay driven by `CameraViewModel`'s already-live location
+  and rotation-vector streams (the same continuous samples captured for
+  sub-projects 1/2, `LocationUtil.observeLocation`/`CompassProvider.observeHeadings`)
+  rather than a new capture mechanism. Needs a design pass: exact placement
+  on `CameraScreen.kt`'s recording UI (already fairly dense - preview,
+  record button, timer), size/prominence trade-off against not obscuring
+  the camera preview, and whether to show it only pre-recording, only
+  during recording, or both.
+  *(added 2026-08-06)*
+
 ## Location / GPS accuracy
 
 **Area:** `app/src/main/java/com/trafficwatch/app/core/util/LocationUtil.kt`

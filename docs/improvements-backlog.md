@@ -104,6 +104,35 @@ considered rather than forgotten.
   during recording, or both.
   *(added 2026-08-06)*
 
+- **The recording-screen map's heading pin can pop out of and back into the
+  layout while recording, given a GPS fix oscillating near the accuracy
+  threshold.** `CameraUiState.locationState` reverts from `Fixed` to
+  `Acquiring` whenever `accuracy > MAX_ACCEPTABLE_ACCURACY_METERS`
+  (`CameraViewModel.kt`) - the map (and, per the just-shipped heading-map
+  feature, the heading arrow with it) is gated on `locationState is Fixed`,
+  so a fix bouncing around that threshold destroys and rebuilds the
+  underlying `MapView` (re-fetching tiles) each time, a visible flash. This
+  state-machine behavior predates the heading-map feature but is newly
+  visible through it. Consider retaining the last known `Fixed` location
+  for display purposes while actively recording, rather than reverting to
+  no-map on a transient accuracy dip.
+  *(added 2026-08-06, found during recording-screen-heading-map final review)*
+
+- **The heading shown on the recording-screen map (and captured in
+  `rotation_samples`) reflects the phone's physical top-of-device axis, not
+  necessarily the camera's optical axis.** While filming in landscape
+  orientation (the natural way to hold a phone for video), the top-of-device
+  axis is roughly 90° off from the direction the camera lens is actually
+  pointing. This is pre-existing capture semantics (shared with
+  `rotation_samples`, used for direction analysis server-side), not
+  something the heading-map feature introduced - but a user looking at the
+  new live map, reading the pin as "where the camera points," could be
+  misled by up to ~90° depending on how they're holding the phone. Would
+  need either an orientation-aware remap (portrait vs. landscape,
+  potentially device-rotation-sensor-driven) or explicit UI framing that
+  the value represents device heading, not camera-lens heading.
+  *(added 2026-08-06, found during recording-screen-heading-map final review)*
+
 ## Location / GPS accuracy
 
 **Area:** `app/src/main/java/com/trafficwatch/app/core/util/LocationUtil.kt`

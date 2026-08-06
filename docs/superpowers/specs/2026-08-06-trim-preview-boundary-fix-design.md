@@ -75,11 +75,12 @@ whenever it reaches `trimEndMs`, for as long as the player keeps playing:
 ```kotlin
 LaunchedEffect(previewToken) {
     if (previewToken == 0) return@LaunchedEffect
-    while (exoPlayer.isPlaying) {
+    if (uiState.trimEndMs <= uiState.trimStartMs) return@LaunchedEffect
+    while (exoPlayer.playWhenReady) {
         if (exoPlayer.currentPosition >= uiState.trimEndMs) {
             exoPlayer.seekTo(uiState.trimStartMs)
         }
-        delay(150)
+        delay(PREVIEW_POLL_INTERVAL_MS)
     }
 }
 ```
@@ -97,19 +98,36 @@ human perception for a loop-back) is the standard, simple way to watch
 effect.
 
 **Why keyed on an incrementing counter, not `Unit`:** `LaunchedEffect`
-restarts its coroutine only when its key changes. Re-tapping Preview while
-already mid-preview must restart the poll cleanly (in particular, so it
-picks up a `trimStartMs`/`trimEndMs` that may have changed since the last
-tap) — an `Int` key that increments on every tap guarantees a fresh
-coroutine launch each time, including consecutive taps.
+restarts its coroutine only when its key changes. `uiState.trimStartMs`/
+`trimEndMs` are already live Compose `State` reads inside the loop, so a
+still-running session already tracks a changed window without needing a
+restart — the counter's real job is guaranteeing a clean relaunch when the
+previous session's loop has already exited (e.g. after a pause) and on
+consecutive taps, where an `Int` key wouldn't otherwise change on its own.
 
-**Why the loop self-terminates on `!exoPlayer.isPlaying`, not a separate
-"stop enforcing" flag:** any reason playback stops — the user pausing via
-the built-in controls, navigating away (which disposes the composable and
-cancels the effect via structural concurrency), or the screen being torn
-down — should stop the enforcement with it. Checking `isPlaying` each
-iteration means pausing to look at a frame doesn't fight an unwanted
-auto-resume; tapping Preview again cleanly starts a new bounded session.
+**Why the loop condition is `exoPlayer.playWhenReady`, not
+`exoPlayer.isPlaying`:** `isPlaying` requires `STATE_READY`, but
+`ExoPlayer.seekTo()` synchronously masks the player into `STATE_BUFFERING`
+whenever it was `STATE_READY` — including both the Preview button's own
+`seekTo()` and this loop's own backward `seekTo(trimStartMs)`. That means
+`isPlaying` can spuriously read `false` right when the loop checks it,
+exiting before the bounded session ever starts (on the initial tap) or
+mid-session (right after the loop's own loop-back seek) — silently
+restoring the exact unbounded-playback bug this fix exists to remove.
+`playWhenReady` is set synchronously by `play()`/`pause()` and is
+unaffected by that buffering transient, so it reflects user/loop intent
+(did something ask playback to stop?) rather than transient decoder state,
+while still stopping the loop for every reason it should: the user pausing
+via the built-in controls, navigating away (which disposes the composable
+and cancels the effect via structural concurrency), or the screen being
+torn down. Tapping Preview again cleanly starts a new bounded session.
+
+**Zero-width-selection guard:** if `trimEndMs <= trimStartMs` (e.g.
+`totalDurationMs == 0` because `MediaMetadataRetriever` failed to extract a
+duration for a file ExoPlayer can still otherwise play), the effect returns
+immediately instead of entering the loop — without this guard, the poll
+would re-seek to the same position every `PREVIEW_POLL_INTERVAL_MS`
+forever, freezing/stuttering the preview rather than simply doing nothing.
 
 **Known minor edge case, not fixed:** if the selection's end coincides
 exactly with the end of the raw video (`trimEndMs == totalDurationMs`),

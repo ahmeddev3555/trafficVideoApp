@@ -6,7 +6,7 @@ Backlog item (`docs/improvements-backlog.md`, "Navigation / UI flow", added
 2026-08-04, item 2): the Trim screen's "Preview" button doesn't actually
 preview the trimmed clip. `TrimScreen.kt`'s `ExoPlayer` is loaded with the
 raw (untrimmed) recording; the Preview button
-(`TrimScreen.kt:286-292`) does only:
+(`TrimScreen.kt:321-328`) does only:
 
 ```kotlin
 onClick = {
@@ -18,7 +18,7 @@ onClick = {
 It seeks into the raw video at the selection's start but never stops or
 loops at `uiState.trimEndMs` — playback continues past the selection into
 the rest of the raw clip, and `repeatMode = Player.REPEAT_MODE_ONE`
-(`TrimScreen.kt:76`) loops the *whole raw file*, not the selected window.
+(`TrimScreen.kt:84`) loops the *whole raw file*, not the selected window.
 
 Root cause was already understood when this item was filed (unlike item 1)
 — this is a design-choice fix, not an investigation.
@@ -43,9 +43,11 @@ indistinguishable from the real output.
 **Scope of enforcement (confirmed with user):** the boundary is enforced
 **only** for playback triggered via the Preview button — not for the
 built-in ExoPlayer controls exposed by `PlayerView(useController = true)`
-(`TrimScreen.kt:175-183`), which remain free to scrub/play the full raw
-video as they do today. This is the narrower of two options discussed; the
-broader "always enforce while playing" option was not chosen.
+(`TrimScreen.kt:210-218`), which remain free to scrub/play the full raw
+video as they do today outside of an active Preview session — see Scope
+clarification below for the in-session case. This is the narrower of two
+options discussed; the broader "always enforce while playing" option was
+not chosen.
 
 ## Fix
 
@@ -73,11 +75,12 @@ whenever it reaches `trimEndMs`, for as long as the player keeps playing:
 ```kotlin
 LaunchedEffect(previewToken) {
     if (previewToken == 0) return@LaunchedEffect
-    while (exoPlayer.isPlaying) {
+    if (uiState.trimEndMs <= uiState.trimStartMs) return@LaunchedEffect
+    while (exoPlayer.playWhenReady) {
         if (exoPlayer.currentPosition >= uiState.trimEndMs) {
             exoPlayer.seekTo(uiState.trimStartMs)
         }
-        delay(150)
+        delay(PREVIEW_POLL_INTERVAL_MS)
     }
 }
 ```
@@ -95,19 +98,36 @@ human perception for a loop-back) is the standard, simple way to watch
 effect.
 
 **Why keyed on an incrementing counter, not `Unit`:** `LaunchedEffect`
-restarts its coroutine only when its key changes. Re-tapping Preview while
-already mid-preview must restart the poll cleanly (in particular, so it
-picks up a `trimStartMs`/`trimEndMs` that may have changed since the last
-tap) — an `Int` key that increments on every tap guarantees a fresh
-coroutine launch each time, including consecutive taps.
+restarts its coroutine only when its key changes. `uiState.trimStartMs`/
+`trimEndMs` are already live Compose `State` reads inside the loop, so a
+still-running session already tracks a changed window without needing a
+restart — the counter's real job is guaranteeing a clean relaunch when the
+previous session's loop has already exited (e.g. after a pause) and on
+consecutive taps, where an `Int` key wouldn't otherwise change on its own.
 
-**Why the loop self-terminates on `!exoPlayer.isPlaying`, not a separate
-"stop enforcing" flag:** any reason playback stops — the user pausing via
-the built-in controls, navigating away (which disposes the composable and
-cancels the effect via structural concurrency), or the screen being torn
-down — should stop the enforcement with it. Checking `isPlaying` each
-iteration means pausing to look at a frame doesn't fight an unwanted
-auto-resume; tapping Preview again cleanly starts a new bounded session.
+**Why the loop condition is `exoPlayer.playWhenReady`, not
+`exoPlayer.isPlaying`:** `isPlaying` requires `STATE_READY`, but
+`ExoPlayer.seekTo()` synchronously masks the player into `STATE_BUFFERING`
+whenever it was `STATE_READY` — including both the Preview button's own
+`seekTo()` and this loop's own backward `seekTo(trimStartMs)`. That means
+`isPlaying` can spuriously read `false` right when the loop checks it,
+exiting before the bounded session ever starts (on the initial tap) or
+mid-session (right after the loop's own loop-back seek) — silently
+restoring the exact unbounded-playback bug this fix exists to remove.
+`playWhenReady` is set synchronously by `play()`/`pause()` and is
+unaffected by that buffering transient, so it reflects user/loop intent
+(did something ask playback to stop?) rather than transient decoder state,
+while still stopping the loop for every reason it should: the user pausing
+via the built-in controls, navigating away (which disposes the composable
+and cancels the effect via structural concurrency), or the screen being
+torn down. Tapping Preview again cleanly starts a new bounded session.
+
+**Zero-width-selection guard:** if `trimEndMs <= trimStartMs` (e.g.
+`totalDurationMs == 0` because `MediaMetadataRetriever` failed to extract a
+duration for a file ExoPlayer can still otherwise play), the effect returns
+immediately instead of entering the loop — without this guard, the poll
+would re-seek to the same position every `PREVIEW_POLL_INTERVAL_MS`
+forever, freezing/stuttering the preview rather than simply doing nothing.
 
 **Known minor edge case, not fixed:** if the selection's end coincides
 exactly with the end of the raw video (`trimEndMs == totalDurationMs`),
@@ -126,9 +146,25 @@ is manual: build, install, open Trim on a clip longer than the max window,
 select a sub-window, tap Preview, and confirm playback loops within
 `[trimStartMs, trimEndMs]` repeatedly without drifting into the rest of the
 raw clip. Also confirm: tapping Preview again mid-loop restarts cleanly;
-dragging the built-in ExoPlayer seek bar past `trimEndMs` is unaffected
-(plays past it, per the confirmed scope); pausing via the built-in controls
-stops the loop-back until Preview is tapped again.
+dragging the built-in ExoPlayer seek bar past `trimEndMs` while a Preview
+session is still playing gets pulled back into the loop within ~150ms
+(the boundary applies to the whole session once triggered by Preview, not
+just the moment it was tapped - see the scope clarification below);
+pausing via the built-in controls stops the loop-back until Preview is
+tapped again.
+
+**Scope clarification (resolved 2026-08-06, during task review):** "scoped
+only to the Preview button" means a bounded session must *originate* from a
+Preview tap - it does not mean every individual seek within that session is
+exempt if it happens to come from the built-in controls. The implementation
+has no way to distinguish "played naturally to `trimEndMs`" from "user
+manually scrubbed past `trimEndMs` via the built-in seek bar while a
+Preview session is still active" (both look identical: `currentPosition`
+crossed `trimEndMs` while `isPlaying` is true) - and there is no need to
+add that distinction. Once Preview is tapped, the session stays bounded
+until playback actually stops (pause or navigating away); only playback
+that was never Preview-triggered in the first place (`previewToken == 0`)
+is exempt from the boundary.
 
 ## Non-goals
 

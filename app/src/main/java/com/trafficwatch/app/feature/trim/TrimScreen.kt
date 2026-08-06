@@ -35,6 +35,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -52,6 +53,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.ui.PlayerView
 import java.io.File
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class, androidx.media3.common.util.UnstableApi::class)
 @Composable
@@ -70,6 +72,12 @@ fun TrimScreen(
     // (rotation-corrected) display aspect ratio once ExoPlayer reports it, so portrait
     // clips get a properly-shaped preview instead of being squeezed into a 16:9 box.
     var videoAspectRatio by remember { mutableFloatStateOf(16f / 9f) }
+
+    // Incremented on every Preview-button tap to restart the bounding effect below with a
+    // fresh coroutine. This guarantees a clean relaunch even when the previous session's
+    // loop has already exited (e.g. after a pause) and on consecutive taps where an Int
+    // key wouldn't otherwise change on its own.
+    var previewToken by remember { mutableIntStateOf(0) }
 
     val exoPlayer = remember {
         ExoPlayer.Builder(context).build().apply {
@@ -120,6 +128,33 @@ fun TrimScreen(
             exoPlayer.seekTo(positionMs)
         } else {
             exoPlayer.setSeekParameters(SeekParameters.EXACT)
+        }
+    }
+
+    // Bounds Preview-button playback to [trimStartMs, trimEndMs], looping within that
+    // window rather than continuing into the rest of the raw clip. Scoped only to
+    // Preview-triggered playback (previewToken > 0) - the built-in ExoPlayer controls
+    // (PlayerView's useController = true) are unaffected and can still play/scrub the
+    // full raw video, per the confirmed design scope. The loop self-terminates on
+    // !exoPlayer.playWhenReady for any reason (manual pause via built-in controls,
+    // navigating away and disposing this composable, etc.) so pausing never fights an
+    // unwanted auto-resume - tapping Preview again starts a fresh bounded session.
+    // Uses playWhenReady rather than isPlaying: isPlaying requires STATE_READY, but
+    // seekTo() synchronously masks the player into STATE_BUFFERING whenever it was
+    // STATE_READY - including both the Preview button's own seekTo() and this loop's
+    // backward seekTo(trimStartMs) - so isPlaying can spuriously read false right when
+    // the loop checks it, exiting before (or mid-way through) the bounded session.
+    // playWhenReady is set synchronously by play()/pause() and is unaffected by that
+    // buffering transient, so it reflects user/loop intent rather than transient decoder
+    // state.
+    LaunchedEffect(previewToken) {
+        if (previewToken == 0) return@LaunchedEffect
+        if (uiState.trimEndMs <= uiState.trimStartMs) return@LaunchedEffect
+        while (exoPlayer.playWhenReady) {
+            if (exoPlayer.currentPosition >= uiState.trimEndMs) {
+                exoPlayer.seekTo(uiState.trimStartMs)
+            }
+            delay(PREVIEW_POLL_INTERVAL_MS)
         }
     }
 
@@ -287,6 +322,7 @@ fun TrimScreen(
                     onClick = {
                         exoPlayer.seekTo(uiState.trimStartMs)
                         exoPlayer.play()
+                        previewToken++
                     },
                     modifier = Modifier.weight(1f)
                 ) { Text("Preview") }
@@ -311,6 +347,8 @@ fun TrimScreen(
         }
     }
 }
+
+private const val PREVIEW_POLL_INTERVAL_MS = 150L
 
 private fun formatMs(ms: Long): String {
     val totalSec = ms / 1000

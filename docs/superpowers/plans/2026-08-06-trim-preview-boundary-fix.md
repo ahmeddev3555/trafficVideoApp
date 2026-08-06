@@ -167,7 +167,9 @@ Manual verification steps:
 4. **Expected**: playback starts at the selection's start, plays through to the selection's end, then jumps back to the selection's start and keeps playing — repeating indefinitely — without ever playing content past `trimEndMs` into the rest of the raw clip.
 5. While it's looping, tap "Preview" again.
 6. **Expected**: playback restarts cleanly at the selection's start and continues looping correctly (confirms re-tapping mid-preview doesn't break the loop).
-7. While it's looping, drag the built-in ExoPlayer seek bar (the native controls overlaid on the video, not the app's `TrimWindowScrubBar`) to a position past `trimEndMs`.
-8. **Expected**: playback continues past `trimEndMs` normally (per the confirmed scope, the boundary only applies to Preview-triggered playback, not manual scrubbing via built-in controls).
-9. Tap "Preview" again to resume bounded looping, then pause using the built-in controls' pause button.
-10. **Expected**: playback stays paused — it does not auto-resume/auto-loop on its own.
+7. While it's looping, drag the built-in ExoPlayer seek bar (the native controls overlaid on the video, not the app's `TrimWindowScrubBar`) to a position past `trimEndMs`, while playback is still active.
+8. **Expected**: within ~150ms, playback snaps back into the loop (seeks to `trimStartMs` and continues looping) rather than continuing past `trimEndMs`. Confirmed as the intended behavior (2026-08-06): a Preview-triggered session stays bounded for its whole duration, including through manual scrubbing, until playback actually stops (pause, or navigating away) — "scoped only to the Preview button" means the *session* must originate from a Preview tap, not that every individual position change within that session is exempt if it came from the built-in controls.
+9. Tap the built-in controls' pause button while it's looping.
+10. **Expected**: playback stays paused — it does not auto-resume/auto-loop on its own (the polling loop's `while (exoPlayer.isPlaying)` exits once paused).
+11. Tap "Preview" again after the pause.
+12. **Expected**: a fresh bounded session starts cleanly at `trimStartMs`.

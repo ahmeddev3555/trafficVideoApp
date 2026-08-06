@@ -343,18 +343,27 @@ plan follows this codebase's general JUnit4 + MockK +
   with the correct `(bytesWritten - lastEmittedBytes) * 1000 / elapsedMs`
   rate; a call where `bytesWritten >= totalBytes` always emits regardless
   of the window; `totalBytes == 0` doesn't divide by zero (`percent == 0`).
-- **`UploadWorker`** gains its first test file. Note: mocking
-  `ApiService.submitReport` (as every other `UploadWorker` behavior would
-  naturally be tested) does *not* exercise the progress callback at all,
-  because a MockK-mocked Retrofit call never serializes its `MultipartBody`
-  - `RequestBody.writeTo()` simply never runs. Given `UploadProgressTracker`
-  already has full direct coverage above, `UploadWorker`'s own test scope
-  is the existing behaviors unaffected by this feature (success path
-  updates status/deletes the file, failure path retries within
-  `runAttemptCount < 3` then fails) using MockK fakes for
-  `ApiService`/`ReportRepository`/`TokenStore`/`FileUtil` - the
-  progress-callback wiring itself is thin, untested glue by design (see
-  Part A's rationale above).
+- **`UploadWorker.doWork()` itself is not unit-tested** - it has zero test
+  coverage today (confirmed, pre-existing gap, not introduced by this
+  feature) and stays that way here rather than taking on new scope to fix
+  it. `CoroutineWorker` unit testing normally goes through
+  `androidx.work:work-testing`'s `TestListenableWorkerBuilder` - not a
+  dependency of this project - and raw-constructing `UploadWorker` with a
+  hand-mocked `WorkerParameters` is impractical: `setProgress`/
+  `setProgressAsync` (both already present before this feature, at
+  `UploadWorker.kt:73` and `:100`) reach into `WorkerParameters`'
+  real internal `ProgressUpdater`/`TaskExecutor` collaborators, which
+  MockK cannot usefully substitute without turning the test into a
+  reimplementation of WorkManager's own internals. Adding
+  `work-testing` (and likely Robolectric alongside it, for a usable
+  `Context`) solely to unit-test this one Worker is out of scope for
+  "add progress tracking to an existing upload path." Given
+  `UploadProgressTracker` and `asStreamingRequestBody` already have full
+  direct coverage above - the only genuinely new *logic* this feature
+  adds - `UploadWorker`'s own change is verified by a successful
+  `:app:assembleDebug` (confirms the wiring type-checks against Task 1's
+  signatures) plus the manual on-device verification described next, not a
+  new automated test.
 - **`HistoryViewModel.uploadProgress`** is tested with `mockk<WorkManager>()`
   (trivial to construct thanks to the constructor-injection change above)
   stubbed via `every` to return a fake `getWorkInfosForUniqueWorkFlow`
@@ -364,3 +373,10 @@ plan follows this codebase's general JUnit4 + MockK +
   confirming the resulting map updates as both the underlying reports list
   and the fake `WorkInfo` flows emit, and that a report with no matching
   `WorkInfo` progress data is simply absent from the map.
+- **Manual on-device verification** (no Compose UI test infra exists in
+  this codebase, same situation as items 1/2): build, install, record and
+  submit a real report over a connection slow enough to observe
+  intermediate progress (e.g. throttle to a few Mbps, or use a larger
+  test clip), and confirm the Reports list shows a progress bar with
+  growing "X MB / Y MB · Z MB/s" text that reaches 100% and disappears
+  once the card's status leaves `UPLOADING`.

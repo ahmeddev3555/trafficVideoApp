@@ -35,8 +35,10 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -70,6 +72,11 @@ fun TrimScreen(
     // (rotation-corrected) display aspect ratio once ExoPlayer reports it, so portrait
     // clips get a properly-shaped preview instead of being squeezed into a 16:9 box.
     var videoAspectRatio by remember { mutableFloatStateOf(16f / 9f) }
+
+    // Incremented on every Preview-button tap to restart the bounding effect below with a
+    // fresh coroutine (so a re-tap mid-preview picks up the current trim window immediately,
+    // even on consecutive taps where the value itself wouldn't otherwise change).
+    var previewToken by remember { mutableIntStateOf(0) }
 
     val exoPlayer = remember {
         ExoPlayer.Builder(context).build().apply {
@@ -120,6 +127,24 @@ fun TrimScreen(
             exoPlayer.seekTo(positionMs)
         } else {
             exoPlayer.setSeekParameters(SeekParameters.EXACT)
+        }
+    }
+
+    // Bounds Preview-button playback to [trimStartMs, trimEndMs], looping within that
+    // window rather than continuing into the rest of the raw clip. Scoped only to
+    // Preview-triggered playback (previewToken > 0) - the built-in ExoPlayer controls
+    // (PlayerView's useController = true) are unaffected and can still play/scrub the
+    // full raw video, per the confirmed design scope. The loop self-terminates on
+    // !exoPlayer.isPlaying for any reason (manual pause via built-in controls,
+    // navigating away and disposing this composable, etc.) so pausing never fights an
+    // unwanted auto-resume - tapping Preview again starts a fresh bounded session.
+    LaunchedEffect(previewToken) {
+        if (previewToken == 0) return@LaunchedEffect
+        while (exoPlayer.isPlaying) {
+            if (exoPlayer.currentPosition >= uiState.trimEndMs) {
+                exoPlayer.seekTo(uiState.trimStartMs)
+            }
+            delay(150)
         }
     }
 
@@ -287,6 +312,7 @@ fun TrimScreen(
                     onClick = {
                         exoPlayer.seekTo(uiState.trimStartMs)
                         exoPlayer.play()
+                        previewToken++
                     },
                     modifier = Modifier.weight(1f)
                 ) { Text("Preview") }

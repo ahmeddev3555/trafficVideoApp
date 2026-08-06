@@ -65,6 +65,18 @@ class HistoryViewModelTest {
         }
     }
 
+    // Mirrors UploadWorker.kt's very first setProgress(workDataOf(KEY_PROGRESS to 0)) call,
+    // which fires before any chunk callback has reported byte counts - the WorkInfo is real
+    // and non-empty, but its Data carries none of the byte keys yet.
+    private fun workInfoWithOnlyStartProgress(): WorkInfo {
+        val progress = Data.Builder()
+            .putInt(UploadWorker.KEY_PROGRESS, 0)
+            .build()
+        return mockk<WorkInfo> {
+            every { this@mockk.progress } returns progress
+        }
+    }
+
     @Before
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
@@ -107,6 +119,22 @@ class HistoryViewModelTest {
         val reportId = UUID.randomUUID().toString()
         every { reportRepository.observeReports() } returns MutableStateFlow(listOf(report(reportId, ReportStatus.UPLOADING)))
         every { workManager.getWorkInfosForUniqueWorkFlow(UploadWorker.uniqueWorkName(reportId)) } returns MutableStateFlow(emptyList())
+
+        val viewModel = HistoryViewModel(reportRepository, authRepository, getReportStatusUseCase, retryUploadUseCase, workManager)
+
+        viewModel.uploadProgress.test {
+            testDispatcher.scheduler.advanceUntilIdle()
+            assertTrue(expectMostRecentItem().isEmpty())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `uploadProgress has no entry when WorkInfo has not reported byte counts yet`() = runTest {
+        val reportId = UUID.randomUUID().toString()
+        every { reportRepository.observeReports() } returns MutableStateFlow(listOf(report(reportId, ReportStatus.UPLOADING)))
+        val workInfoFlow = MutableStateFlow(listOf(workInfoWithOnlyStartProgress()))
+        every { workManager.getWorkInfosForUniqueWorkFlow(UploadWorker.uniqueWorkName(reportId)) } returns workInfoFlow
 
         val viewModel = HistoryViewModel(reportRepository, authRepository, getReportStatusUseCase, retryUploadUseCase, workManager)
 

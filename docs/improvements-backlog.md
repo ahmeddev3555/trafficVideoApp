@@ -233,6 +233,33 @@ considered rather than forgotten.
   after a user-reported wrong-way motorcycle at 8.5s had no corresponding
   scored candidate)*
 
+- **`ClipFlowAnalyzer.qualifiesForFlowExceptOrientation` doesn't mirror the
+  new scale-bearing/recording-speed safety gate, causing an inaccurate
+  REJECTED message in one case.** Found during the final-review fix wave's
+  own scoped re-review for the 2026-08-06 approach-recession-bearing-fix
+  plan. `qualifyVehicles` (`server/src/main/kotlin/com/trafficwatch/server/geo/ClipFlowAnalyzer.kt`)
+  now drops any vehicle whose bearing came from the video-analysis service's
+  bbox-scale fallback (`bearingSource == "scale"`) unless the recording
+  vehicle's own GPS speed was verified low at that moment (see the plan's
+  Critical fix - a moving dashcam closing on a parked/slower vehicle must
+  not fabricate a wrong-way bearing). `qualifiesForFlowExceptOrientation`, a
+  separate helper whose own docstring promises to mirror every
+  `qualifyVehicles` gate except orientation resolution (used only to decide
+  which REJECTED message to show), was not updated with this same check.
+  Confirmed effect is limited to diagnostic message wording, not the
+  safety-critical accept/reject decision itself: a vehicle correctly
+  dropped by the real gate can cause the report to say "Vehicle orientation
+  could not be determined for this report" instead of a more accurate
+  "scale-sourced bearing could not be verified" reason - the report still
+  correctly lands on REJECTED either way; no false wrong-way CONFIRMED
+  verdict is possible from this gap. Fix: add the same
+  `bearingSource == "scale"` + recording-speed check to
+  `qualifiesForFlowExceptOrientation`, keeping it a true mirror of
+  `qualifyVehicles` as its docstring already claims.
+  *(added 2026-08-06, parked at the final-review fix wave's breaker rather
+  than triggering a second fix wave - not load-bearing, message-accuracy
+  only)*
+
 ## Upload reliability / data integrity
 
 **Area:** `app/src/main/java/com/trafficwatch/app/feature/upload/UploadWorker.kt`,

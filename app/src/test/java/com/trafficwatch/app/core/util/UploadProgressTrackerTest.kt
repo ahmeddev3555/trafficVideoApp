@@ -55,4 +55,15 @@ class UploadProgressTrackerTest {
 
         assertEquals(UploadProgressSnapshot(percent = 0, bytesUploaded = 0L, totalBytes = 0L, bytesPerSecond = 0L), result)
     }
+
+    @Test
+    fun `chunk at exactly throttle boundary emits without throttling`() {
+        val tracker = UploadProgressTracker(totalBytes = 1000L)
+        tracker.onChunk(bytesWritten = 100L, nowMs = 5000L)
+
+        val result = tracker.onChunk(bytesWritten = 500L, nowMs = 5300L)
+
+        // (500 - 100) bytes over exactly 300ms = 1333 bytes/sec
+        assertEquals(UploadProgressSnapshot(percent = 50, bytesUploaded = 500L, totalBytes = 1000L, bytesPerSecond = 1333L), result)
+    }
 }

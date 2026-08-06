@@ -8,7 +8,7 @@ from app.config import Settings
 from app.corridors import cluster_tracks, corridor_cohesion
 from app.frame_encoding import encode_frame_to_base64_jpeg
 from app.schemas import AnalyzeResponse, BoundingBox, VehicleResult
-from app.tracking_bearing import compute_bearing_degrees, compute_track_midpoint_ms
+from app.tracking_bearing import bbox_diagonal, compute_bearing_degrees, compute_track_midpoint_ms
 
 if TYPE_CHECKING:
     from app.detection import TrackedFrame, VehicleDetector
@@ -68,14 +68,17 @@ class AnalysisPipeline:
     def _summarize_track(self, track_id: int, frames: list["TrackedFrame"], corridor_id: int, cohesion: float, fps: float | None) -> VehicleResult:
         frames_sorted = sorted(frames, key=lambda f: f.frame_index)
         centroids = [f.centroid for f in frames_sorted]
-        bearing = compute_bearing_degrees(centroids)
+        bboxes = [f.bbox for f in frames_sorted]
+        bearing = compute_bearing_degrees(centroids, bboxes)
         track_midpoint_ms = compute_track_midpoint_ms(
             frames_sorted[0].frame_index, frames_sorted[-1].frame_index, fps
         )
 
-        displacement = math.hypot(
+        lateral_displacement = math.hypot(
             centroids[-1][0] - centroids[0][0], centroids[-1][1] - centroids[0][1]
         )
+        scale_displacement = abs(bbox_diagonal(bboxes[-1]) - bbox_diagonal(bboxes[0]))
+        displacement = math.hypot(lateral_displacement, scale_displacement)
 
         vehicle_type = frames_sorted[0].vehicle_type
         detection_confidence = max(f.confidence for f in frames_sorted)

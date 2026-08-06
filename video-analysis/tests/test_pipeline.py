@@ -135,3 +135,32 @@ def test_summarize_track_track_midpoint_ms_is_none_when_fps_unavailable():
     response = pipeline.analyze("unused.mp4")
 
     assert response.vehicles[0].track_midpoint_ms is None
+
+
+def test_head_on_approaching_track_gets_a_real_bearing_and_a_scale_dominated_displacement():
+    # Centroid stays fixed (zero lateral motion) while the bounding box grows dramatically -
+    # a vehicle driving straight at the camera. Before this fix, bearing_degrees would be
+    # None and displacement_pixels would be 0.0 (lateral-only), silently dropping the vehicle
+    # from all downstream flow analysis regardless of how obvious the approach was visually.
+    frames = [
+        _make_frame(track_id=1, frame_index=i, bbox=(40.0, 40.0, 60.0, 60.0))
+        for i in range(4)
+    ] + [
+        _make_frame(track_id=1, frame_index=i, bbox=(0.0, 0.0, 100.0, 100.0))
+        for i in range(4, 8)
+    ]
+    pipeline = AnalysisPipeline(
+        settings=_fake_settings(), detector=FakeDetector(frames), plate_reader=FakePlateReader()
+    )
+
+    response = pipeline.analyze("unused.mp4")
+
+    vehicle = response.vehicles[0]
+    assert vehicle.bearing_degrees == 180.0
+    # lateral displacement is 0 (all _make_frame calls use bbox center (50,50) as centroid,
+    # since _make_frame derives centroid from the bbox passed in); scale displacement is
+    # |diagonal(100,100 box) - diagonal(20,20 box)| = |141.42... - 28.28...| ~= 113.14,
+    # combined via hypot(0, scale) = the same ~113.14 - large enough to clear
+    # ClipFlowAnalyzer's existing displacement floor on the Kotlin side (unmodified by this
+    # plan), where today's lateral-only 0.0 would not have.
+    assert vehicle.displacement_pixels == pytest.approx(113.137, abs=0.01)

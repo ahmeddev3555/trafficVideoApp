@@ -33,7 +33,8 @@ sealed class LocationState {
 
 data class CameraUiState(
     val locationState: LocationState = LocationState.Acquiring,
-    val cameraError: String? = null
+    val cameraError: String? = null,
+    val currentHeadingDegrees: Float? = null
 )
 
 @HiltViewModel
@@ -130,6 +131,7 @@ class CameraViewModel @Inject constructor(
             }
             headings.filterNotNull().collect { heading ->
                 rotationSamples.add(RotationSample(capturedAt = System.currentTimeMillis(), headingDegrees = heading))
+                _uiState.update { it.copy(currentHeadingDegrees = heading) }
             }
         }
 
@@ -170,6 +172,7 @@ class CameraViewModel @Inject constructor(
         samplingJob?.cancel()
         rotationSamplingJob?.cancel()
         cameraController.stopRecording()
+        _uiState.update { it.copy(currentHeadingDegrees = null) }
     }
 
     fun getSnapshotLocation(): LocationData? =

@@ -20,9 +20,14 @@ private const val DEFAULT_ZOOM = 17.0
  * key/billing needed.
  */
 @Composable
-fun LocationMapView(latitude: Double, longitude: Double, modifier: Modifier = Modifier) {
+fun LocationMapView(
+    latitude: Double,
+    longitude: Double,
+    headingDegrees: Float? = null,
+    modifier: Modifier = Modifier
+) {
     AndroidView(
-        modifier = modifier.fillMaxWidth().height(150.dp),
+        modifier = modifier,
         factory = { context ->
             MapView(context).apply {
                 layoutParams = ViewGroup.LayoutParams(
@@ -34,14 +39,24 @@ fun LocationMapView(latitude: Double, longitude: Double, modifier: Modifier = Mo
                 val point = GeoPoint(latitude, longitude)
                 controller.setZoom(DEFAULT_ZOOM)
                 controller.setCenter(point)
-                overlays.add(Marker(this).apply { position = point })
+                overlays.add(
+                    Marker(this).apply {
+                        position = point
+                        headingDegrees?.let { rotation = it }
+                    }
+                )
             }
         },
         update = { mapView ->
             val point = GeoPoint(latitude, longitude)
             mapView.controller.setCenter(point)
             mapView.overlays.clear()
-            mapView.overlays.add(Marker(mapView).apply { position = point })
+            mapView.overlays.add(
+                Marker(mapView).apply {
+                    position = point
+                    headingDegrees?.let { rotation = it }
+                }
+            )
         },
         onRelease = { mapView ->
             mapView.onDetach()

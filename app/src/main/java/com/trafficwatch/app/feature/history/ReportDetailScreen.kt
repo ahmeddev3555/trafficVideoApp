@@ -144,7 +144,11 @@ fun ReportDetailScreen(
                             Text("Location", style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Spacer(Modifier.height(8.dp))
-                            LocationMapView(latitude = r.location.latitude, longitude = r.location.longitude)
+                            LocationMapView(
+                                latitude = r.location.latitude,
+                                longitude = r.location.longitude,
+                                modifier = Modifier.fillMaxWidth().height(150.dp)
+                            )
                         }
                     }
 

@@ -56,7 +56,6 @@ fun AppNavigation(
     var rawVideoFile by rememberSaveable { mutableStateOf<String?>(null) }
     var trimmedVideoFile by rememberSaveable { mutableStateOf<String?>(null) }
     var snapshotLocation by remember { mutableStateOf<LocationData?>(null) }
-    var locationForConfirmation by remember { mutableStateOf<LocationData?>(null) }
     var locationSamples by remember { mutableStateOf<List<LocationData>>(emptyList()) }
     var rotationSamples by remember { mutableStateOf<List<RotationSample>>(emptyList()) }
     var recordingStartedAt by rememberSaveable { mutableLongStateOf(0L) }
@@ -201,15 +200,14 @@ fun AppNavigation(
                 },
                 onRetrim = { navController.popBackStack() },
                 onNavigateBack = { navController.popBackStack() },
-                onConfirmLocation = { location ->
-                    locationForConfirmation = location
+                onConfirmLocation = {
                     navController.navigate(Routes.CONFIRM_LOCATION)
                 }
             )
         }
 
         composable(Routes.CONFIRM_LOCATION) {
-            val loc = locationForConfirmation ?: return@composable
+            val loc = snapshotLocation ?: return@composable
             ConfirmLocationScreen(
                 initialLatitude = loc.latitude,
                 initialLongitude = loc.longitude,

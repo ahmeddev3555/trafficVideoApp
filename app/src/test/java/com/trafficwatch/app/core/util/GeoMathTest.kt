@@ -40,4 +40,19 @@ class GeoMathTest {
         assertEquals(0.0, result.latitude, 1e-6)
         assertEquals(0.5729577951308232, result.longitude, 1e-6)
     }
+
+    @Test
+    fun `due west movement at the equator via a negative bearing changes only longitude, by exactly the negative angular distance`() {
+        // Location.distanceBetween's real bearing range is [-180, 180], so negative bearings
+        // (unlike the all-positive 0/45/90 used above) are the common case in practice - this
+        // mirrors the due-east test exactly (same atan2(sin(d), cos(d)) = d identity), just
+        // negated, since bearing -90 is due west.
+        val origin = GeoPoint(0.0, 0.0)
+        val distanceMeters = 63710.0 // angularDistance = 0.01 rad exactly
+
+        val result = pointAtBearingAndDistance(origin, bearingDegrees = -90.0, distanceMeters = distanceMeters)
+
+        assertEquals(0.0, result.latitude, 1e-6)
+        assertEquals(-0.5729577951308232, result.longitude, 1e-6)
+    }
 }

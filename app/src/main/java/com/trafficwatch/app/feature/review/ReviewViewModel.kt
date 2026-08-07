@@ -81,7 +81,12 @@ class ReviewViewModel @Inject constructor(
         _uiState.update {
             it.copy(
                 trimmedFilePath = trimmedFile.absolutePath,
-                location = location,
+                // ReviewScreen re-enters composition (and re-runs this LaunchedEffect) when
+                // ConfirmLocationScreen pops back, since Navigation Compose fully disposes a
+                // destination's composable while it's not the current back-stack top - init()
+                // must not clobber a location the user already confirmed with the original,
+                // now-stale caller-supplied value.
+                location = if (it.locationConfirmed) it.location else location,
                 locationSamples = locationSamples,
                 rotationSamples = rotationSamples,
                 recordingStartedAt = recordingStartedAt,

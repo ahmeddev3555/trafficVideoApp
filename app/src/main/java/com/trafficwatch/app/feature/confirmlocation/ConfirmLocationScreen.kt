@@ -14,6 +14,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -21,8 +22,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
@@ -66,55 +69,75 @@ fun ConfirmLocationScreen(
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
                     factory = { context ->
-                        MapView(context).apply {
+                        val mapView = MapView(context).apply {
                             layoutParams = ViewGroup.LayoutParams(
                                 ViewGroup.LayoutParams.MATCH_PARENT,
                                 ViewGroup.LayoutParams.MATCH_PARENT,
                             )
                             setMultiTouchControls(true)
-                            controller.setZoom(DEFAULT_ZOOM)
-                            controller.setCenter(originPoint)
-
-                            val boundary = Polygon(this).apply {
-                                points = Polygon.pointsAsCircle(originPoint, maxRadiusMeters)
-                                fillPaint.color = Color.argb(30, 255, 0, 0)
-                                outlinePaint.color = Color.RED
-                                outlinePaint.strokeWidth = 3f
-                            }
-                            overlays.add(boundary)
-
-                            val marker = Marker(this).apply {
-                                position = confirmedPosition.value
-                                isDraggable = true
-                                setOnMarkerDragListener(object : Marker.OnMarkerDragListener {
-                                    override fun onMarkerDrag(marker: Marker) = Unit
-                                    override fun onMarkerDragStart(marker: Marker) = Unit
-                                    override fun onMarkerDragEnd(marker: Marker) {
-                                        val results = FloatArray(2)
-                                        Location.distanceBetween(
-                                            originPoint.latitude, originPoint.longitude,
-                                            marker.position.latitude, marker.position.longitude,
-                                            results
-                                        )
-                                        val distanceMeters = results[0]
-                                        val bearingDegrees = results[1]
-                                        if (distanceMeters > maxRadiusMeters) {
-                                            val clamped = pointAtBearingAndDistance(
-                                                originPoint, bearingDegrees.toDouble(), maxRadiusMeters
-                                            )
-                                            marker.position = clamped
-                                            invalidate()
-                                        }
-                                        confirmedPosition.value = marker.position
-                                    }
-                                })
-                            }
-                            overlays.add(marker)
                         }
+
+                        val boundary = Polygon(mapView).apply {
+                            points = Polygon.pointsAsCircle(originPoint, maxRadiusMeters)
+                            fillPaint.color = Color.argb(30, 255, 0, 0)
+                            outlinePaint.color = Color.RED
+                            outlinePaint.strokeWidth = 3f
+                        }
+                        mapView.overlays.add(boundary)
+
+                        // Fixed DEFAULT_ZOOM alone can't guarantee the boundary circle is fully
+                        // visible for large accuracy radii, so fit the view to the boundary's
+                        // actual bounding box; setZoom/setCenter still run first as a reasonable
+                        // fallback and to ensure a sane starting center (zoomToBoundingBox is a
+                        // MapView method, not IMapController - osmdroid has no Polygon.bounds,
+                        // so the box is derived from the boundary's own points).
+                        mapView.controller.setZoom(DEFAULT_ZOOM)
+                        mapView.controller.setCenter(originPoint)
+                        mapView.zoomToBoundingBox(BoundingBox.fromGeoPoints(boundary.points), false)
+
+                        val marker = Marker(mapView).apply {
+                            position = confirmedPosition.value
+                            isDraggable = true
+                            setOnMarkerDragListener(object : Marker.OnMarkerDragListener {
+                                override fun onMarkerDrag(marker: Marker) = Unit
+                                override fun onMarkerDragStart(marker: Marker) = Unit
+                                override fun onMarkerDragEnd(marker: Marker) {
+                                    val results = FloatArray(2)
+                                    Location.distanceBetween(
+                                        originPoint.latitude, originPoint.longitude,
+                                        marker.position.latitude, marker.position.longitude,
+                                        results
+                                    )
+                                    val distanceMeters = results[0]
+                                    val bearingDegrees = results[1]
+                                    if (distanceMeters > maxRadiusMeters) {
+                                        val clamped = pointAtBearingAndDistance(
+                                            originPoint, bearingDegrees.toDouble(), maxRadiusMeters
+                                        )
+                                        marker.position = clamped
+                                        mapView.invalidate()
+                                    }
+                                    // Defensive copy - marker.position is the Marker's own mutable
+                                    // GeoPoint, so storing it directly would alias it instead of
+                                    // capturing a snapshot.
+                                    confirmedPosition.value = GeoPoint(marker.position)
+                                }
+                            })
+                        }
+                        mapView.overlays.add(marker)
+
+                        mapView
                     },
                     onRelease = { mapView -> mapView.onDetach() },
                 )
             }
+
+            Text(
+                "Long-press and drag the pin to adjust your location",
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.bodySmall
+            )
 
             Button(
                 onClick = { onConfirm(confirmedPosition.value.latitude, confirmedPosition.value.longitude) },

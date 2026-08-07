@@ -69,6 +69,7 @@ fun ReviewScreen(
     viewModel: ReviewViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val effectiveLocation = uiState.location ?: location
     val context = LocalContext.current
 
     val exoPlayer = remember {
@@ -140,13 +141,13 @@ fun ReviewScreen(
                         MetadataRow("Duration", formatDuration(durationMs))
                         HorizontalDivider()
                         MetadataRow("File Size", FileUtil(context).formatFileSize(trimmedFile.length()))
-                        if (location != null) {
+                        if (effectiveLocation != null) {
                             HorizontalDivider()
-                            MetadataRow("Latitude", "%.6f°".format(location.latitude))
+                            MetadataRow("Latitude", "%.6f°".format(effectiveLocation.latitude))
                             HorizontalDivider()
-                            MetadataRow("Longitude", "%.6f°".format(location.longitude))
+                            MetadataRow("Longitude", "%.6f°".format(effectiveLocation.longitude))
                             HorizontalDivider()
-                            MetadataRow("GPS Accuracy", "±%.0f m".format(location.accuracy))
+                            MetadataRow("GPS Accuracy", "±%.0f m".format(effectiveLocation.accuracy))
                         } else {
                             HorizontalDivider()
                             MetadataRow("Location", "Not available")
@@ -154,25 +155,22 @@ fun ReviewScreen(
                     }
                 }
 
-                val weakAccuracyUnconfirmed = location != null &&
-                    location.accuracy > ReviewViewModel.ACCURACY_THRESHOLD_METERS &&
+                val locationNeedsConfirmation = effectiveLocation != null &&
+                    effectiveLocation.accuracy > ReviewViewModel.ACCURACY_THRESHOLD_METERS &&
                     !uiState.locationConfirmed
-                if (weakAccuracyUnconfirmed) {
+                if (locationNeedsConfirmation) {
                     Spacer(Modifier.height(12.dp))
                     OutlinedButton(
-                        onClick = { onConfirmLocation(location!!) },
+                        onClick = { onConfirmLocation(effectiveLocation!!) },
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("Confirm Location") }
                 }
 
                 Spacer(Modifier.height(24.dp))
 
-                val locationBlocksSubmit = location != null &&
-                    location.accuracy > ReviewViewModel.ACCURACY_THRESHOLD_METERS &&
-                    !uiState.locationConfirmed
                 Button(
                     onClick = viewModel::submit,
-                    enabled = !uiState.isSubmitting && !locationBlocksSubmit,
+                    enabled = !uiState.isSubmitting && !locationNeedsConfirmation,
                     modifier = Modifier.fillMaxWidth().height(48.dp)
                 ) { Text("Submit Report") }
 

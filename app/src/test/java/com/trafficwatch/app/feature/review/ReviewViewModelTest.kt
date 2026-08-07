@@ -153,4 +153,68 @@ class ReviewViewModelTest {
         assertEquals(74.5, updated?.longitude)
         assertTrue(viewModel.uiState.value.locationConfirmed)
     }
+
+    @Test
+    fun `re-init after confirmation keeps the confirmed location, not the original`() {
+        val savedStateHandle = SavedStateHandle()
+        val viewModel = ReviewViewModel(submitReportUseCase, savedStateHandle)
+        viewModel.init(testFile, location, locationSamples, emptyList(), 1000L, 8000L)
+
+        viewModel.updateLocation(latitude = 31.6, longitude = 74.4)
+        // Simulates ReviewScreen re-entering composition (and its LaunchedEffect re-firing
+        // init()) after ConfirmLocationScreen pops back - the exact sequence that caused the
+        // Critical bug this test guards against.
+        viewModel.init(testFile, location, locationSamples, emptyList(), 1000L, 8000L)
+
+        val updated = viewModel.uiState.value.location
+        assertEquals(31.6, updated?.latitude)
+        assertEquals(74.4, updated?.longitude)
+        assertEquals(ReviewViewModel.CONFIRMED_ACCURACY_METERS, updated?.accuracy)
+        assertTrue(viewModel.uiState.value.locationConfirmed)
+    }
+
+    @Test
+    fun `locationConfirmed defaults to false`() {
+        val savedStateHandle = SavedStateHandle()
+        val viewModel = ReviewViewModel(submitReportUseCase, savedStateHandle)
+        viewModel.init(testFile, location, locationSamples, emptyList(), 1000L, 8000L)
+
+        assertFalse(viewModel.uiState.value.locationConfirmed)
+    }
+
+    @Test
+    fun `updateLocation on a null location is a no-op`() {
+        val savedStateHandle = SavedStateHandle()
+        val viewModel = ReviewViewModel(submitReportUseCase, savedStateHandle)
+        viewModel.init(testFile, null, locationSamples, emptyList(), 1000L, 8000L)
+
+        viewModel.updateLocation(latitude = 31.6, longitude = 74.4)
+
+        assertEquals(null, viewModel.uiState.value.location)
+        assertFalse(viewModel.uiState.value.locationConfirmed)
+    }
+
+    @Test
+    fun `a wrong-size DoubleArray posted to the SavedStateHandle key is ignored`() = runTest {
+        val savedStateHandle = SavedStateHandle()
+        val viewModel = ReviewViewModel(submitReportUseCase, savedStateHandle)
+        viewModel.init(testFile, location, locationSamples, emptyList(), 1000L, 8000L)
+
+        savedStateHandle[ReviewViewModel.KEY_CONFIRMED_LOCATION] = doubleArrayOf(31.7)
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertFalse(viewModel.uiState.value.locationConfirmed)
+    }
+
+    @Test
+    fun `the SavedStateHandle key is cleared after being consumed`() = runTest {
+        val savedStateHandle = SavedStateHandle()
+        val viewModel = ReviewViewModel(submitReportUseCase, savedStateHandle)
+        viewModel.init(testFile, location, locationSamples, emptyList(), 1000L, 8000L)
+
+        savedStateHandle[ReviewViewModel.KEY_CONFIRMED_LOCATION] = doubleArrayOf(31.7, 74.5)
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(null, savedStateHandle.get<DoubleArray?>(ReviewViewModel.KEY_CONFIRMED_LOCATION))
+    }
 }

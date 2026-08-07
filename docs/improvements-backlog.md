@@ -139,18 +139,26 @@ considered rather than forgotten.
 (capture side), `server/src/main/kotlin/com/trafficwatch/server/geo/`
 (OSM street resolution side)
 
-- **Prompt the user to confirm/correct the exact location on a map when GPS
-  accuracy is weak** (e.g. accuracy > 10m). Confirmed real-world impact:
-  a submitted report with 37.7m GPS accuracy resolved to the wrong OSM
-  street ("Street 4", a small residential road) instead of the actual road
-  in the video ("Khayaban-e-Jinnah", a major arterial) — the true position
-  was ~56m from the reported point, exceeding both the phone's own accuracy
-  estimate and the server's fixed 50m Overpass search radius. The server
-  currently searches a flat 50m radius around the raw GPS point regardless
-  of how uncertain that point actually is. A map-confirmation prompt (or,
-  alternatively, widening the search radius to scale with reported
-  accuracy) would directly address this.
-  *(added 2026-08-02)*
+- **The client-side half of this is shipped** (2026-08-07,
+  `feature/confirmlocation/ConfirmLocationScreen.kt`): the Review screen
+  now shows a "Confirm Location" step whenever `accuracy > 10m`, letting
+  the user drag the pin (constrained to `accuracy × 1.5` meters from the
+  original GPS point) before submitting, with the submitted accuracy
+  replaced by a fixed 5m "user-confirmed" value regardless of whether the
+  pin was actually moved. **The server-side half remains open** - the
+  server still searches a flat 50m Overpass radius regardless of a
+  report's accuracy; scaling that radius to the reported accuracy was
+  explicitly deferred as a separate, independent fix during the
+  client-side design (a report with strong accuracy today still gets the
+  same fixed 50m radius as one with a corrected/confirmed 5m accuracy -
+  there's no server-side benefit yet from the client-side improvement).
+  Original context, still accurate: a submitted report with 37.7m GPS
+  accuracy resolved to the wrong OSM street ("Street 4", a small
+  residential road) instead of the actual road in the video
+  ("Khayaban-e-Jinnah", a major arterial) — the true position was ~56m
+  from the reported point, exceeding both the phone's own accuracy
+  estimate and the server's fixed 50m search radius.
+  *(added 2026-08-02, client-side half shipped 2026-08-07)*
 
 - **A divided-carriageway one-way road can be misjudged as a wrong-way
   violation on the far carriageway.** Found during the final review of the

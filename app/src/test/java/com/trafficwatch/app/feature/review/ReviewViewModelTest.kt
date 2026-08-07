@@ -1,5 +1,6 @@
 package com.trafficwatch.app.feature.review
 
+import androidx.lifecycle.SavedStateHandle
 import app.cash.turbine.test
 import com.trafficwatch.app.core.domain.model.LocationData
 import com.trafficwatch.app.core.domain.usecase.SubmitReportResult
@@ -16,6 +17,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -36,7 +38,7 @@ class ReviewViewModelTest {
     @Before
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
-        viewModel = ReviewViewModel(submitReportUseCase)
+        viewModel = ReviewViewModel(submitReportUseCase, SavedStateHandle())
         viewModel.init(testFile, location, locationSamples, emptyList(), 1000L, 8000L)
     }
 
@@ -120,5 +122,35 @@ class ReviewViewModelTest {
             submitReportUseCase.confirmCellular(any(), any(), any(), any(), any(), any(), any())
         }
         assertFalse(viewModel.uiState.value.showCellularPrompt)
+    }
+
+    @Test
+    fun `updateLocation replaces lat-lon and accuracy, and marks location confirmed`() {
+        val savedStateHandle = SavedStateHandle()
+        val viewModel = ReviewViewModel(submitReportUseCase, savedStateHandle)
+        viewModel.init(testFile, location, locationSamples, emptyList(), 1000L, 8000L)
+
+        viewModel.updateLocation(latitude = 31.6, longitude = 74.4)
+
+        val updated = viewModel.uiState.value.location
+        assertEquals(31.6, updated?.latitude)
+        assertEquals(74.4, updated?.longitude)
+        assertEquals(ReviewViewModel.CONFIRMED_ACCURACY_METERS, updated?.accuracy)
+        assertTrue(viewModel.uiState.value.locationConfirmed)
+    }
+
+    @Test
+    fun `a value posted to the SavedStateHandle confirmed-location key triggers updateLocation`() = runTest {
+        val savedStateHandle = SavedStateHandle()
+        val viewModel = ReviewViewModel(submitReportUseCase, savedStateHandle)
+        viewModel.init(testFile, location, locationSamples, emptyList(), 1000L, 8000L)
+
+        savedStateHandle[ReviewViewModel.KEY_CONFIRMED_LOCATION] = doubleArrayOf(31.7, 74.5)
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val updated = viewModel.uiState.value.location
+        assertEquals(31.7, updated?.latitude)
+        assertEquals(74.5, updated?.longitude)
+        assertTrue(viewModel.uiState.value.locationConfirmed)
     }
 }

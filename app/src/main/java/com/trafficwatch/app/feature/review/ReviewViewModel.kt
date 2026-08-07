@@ -1,5 +1,6 @@
 package com.trafficwatch.app.feature.review
 
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.trafficwatch.app.core.domain.model.LocationData
@@ -25,12 +26,14 @@ data class ReviewUiState(
     val durationMs: Long = 0L,
     val fileSizeBytes: Long = 0L,
     val showCellularPrompt: Boolean = false,
-    val isSubmitting: Boolean = false
+    val isSubmitting: Boolean = false,
+    val locationConfirmed: Boolean = false
 )
 
 @HiltViewModel
 class ReviewViewModel @Inject constructor(
-    private val submitReportUseCase: SubmitReportUseCase
+    private val submitReportUseCase: SubmitReportUseCase,
+    private val savedStateHandle: SavedStateHandle
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(ReviewUiState())
     val uiState = _uiState.asStateFlow()
@@ -44,6 +47,28 @@ class ReviewViewModel @Inject constructor(
 
     private var lastReportId: String? = null
     private var lastEffectiveLocation: LocationData? = null
+
+    init {
+        observeConfirmedLocationResult()
+    }
+
+    // ConfirmLocationScreen (pushed on top of Review, not replacing it) posts a result here
+    // via NavController.previousBackStackEntry's SavedStateHandle - the standard Navigation
+    // Compose pattern for one screen returning a value to the screen that pushed it, without
+    // either screen needing direct references to the other. DoubleArray is a natively
+    // Bundle-safe type, avoiding any Parcelable requirement on LocationData.
+    private fun observeConfirmedLocationResult() {
+        viewModelScope.launch {
+            savedStateHandle.getStateFlow<DoubleArray?>(KEY_CONFIRMED_LOCATION, null).collect { confirmed ->
+                if (confirmed != null && confirmed.size == 2) {
+                    updateLocation(confirmed[0], confirmed[1])
+                    // Clear immediately so this doesn't re-fire on a later recomposition/
+                    // process-death-restore replaying the same saved value.
+                    savedStateHandle[KEY_CONFIRMED_LOCATION] = null
+                }
+            }
+        }
+    }
 
     fun init(
         trimmedFile: File,
@@ -62,6 +87,24 @@ class ReviewViewModel @Inject constructor(
                 recordingStartedAt = recordingStartedAt,
                 durationMs = durationMs,
                 fileSizeBytes = trimmedFile.length()
+            )
+        }
+    }
+
+    /**
+     * Replaces the current location's latitude/longitude with a user-confirmed/corrected
+     * position from [com.trafficwatch.app.feature.confirmlocation.ConfirmLocationScreen], and
+     * replaces its accuracy with [CONFIRMED_ACCURACY_METERS] - once a human has looked at a
+     * map and explicitly agreed with (or corrected) the position, that's treated as
+     * higher-confidence than the raw GPS reading it started from, regardless of whether the
+     * pin was actually moved.
+     */
+    fun updateLocation(latitude: Double, longitude: Double) {
+        _uiState.update { state ->
+            val current = state.location ?: return@update state
+            state.copy(
+                location = current.copy(latitude = latitude, longitude = longitude, accuracy = CONFIRMED_ACCURACY_METERS),
+                locationConfirmed = true
             )
         }
     }
@@ -105,5 +148,11 @@ class ReviewViewModel @Inject constructor(
     fun dismissCellularPrompt() {
         _uiState.update { it.copy(showCellularPrompt = false) }
         viewModelScope.launch { _submitted.send(Unit) }
+    }
+
+    companion object {
+        const val ACCURACY_THRESHOLD_METERS = 10f
+        const val CONFIRMED_ACCURACY_METERS = 5f
+        const val KEY_CONFIRMED_LOCATION = "confirmed_location"
     }
 }

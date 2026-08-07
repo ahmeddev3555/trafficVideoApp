@@ -23,6 +23,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -39,6 +40,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -47,6 +49,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.trafficwatch.app.core.domain.model.Report
 import com.trafficwatch.app.core.domain.model.ReportStatus
 import com.trafficwatch.app.core.ui.components.CellularConfirmDialog
+import com.trafficwatch.app.core.util.FileUtil
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -60,6 +63,7 @@ fun HistoryScreen(
     viewModel: HistoryViewModel = hiltViewModel()
 ) {
     val reports by viewModel.reports.collectAsStateWithLifecycle()
+    val uploadProgress by viewModel.uploadProgress.collectAsStateWithLifecycle()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -124,6 +128,7 @@ fun HistoryScreen(
                     items(reports, key = { it.id }) { report ->
                         ReportCard(
                             report = report,
+                            uploadProgress = uploadProgress[report.id],
                             onClick = { onReportClick(report.id) },
                             onRetry = { viewModel.retryUpload(report) }
                         )
@@ -135,7 +140,12 @@ fun HistoryScreen(
 }
 
 @Composable
-private fun ReportCard(report: Report, onClick: () -> Unit, onRetry: () -> Unit) {
+private fun ReportCard(
+    report: Report,
+    uploadProgress: HistoryViewModel.UploadProgress?,
+    onClick: () -> Unit,
+    onRetry: () -> Unit
+) {
     Card(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
@@ -160,6 +170,23 @@ private fun ReportCard(report: Report, onClick: () -> Unit, onRetry: () -> Unit)
                     }
                     StatusChip(report.status)
                 }
+            }
+            if (report.status == ReportStatus.UPLOADING && uploadProgress != null) {
+                Spacer(Modifier.height(8.dp))
+                val context = LocalContext.current
+                val fileUtil = remember(context) { FileUtil(context) }
+                LinearProgressIndicator(
+                    progress = { uploadProgress.bytesUploaded / uploadProgress.totalBytes.toFloat() },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "${fileUtil.formatFileSize(uploadProgress.bytesUploaded)} / " +
+                        "${fileUtil.formatFileSize(uploadProgress.totalBytes)} · " +
+                        "${fileUtil.formatFileSize(uploadProgress.bytesPerSecond)}/s",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
             Spacer(Modifier.height(8.dp))
             Text(

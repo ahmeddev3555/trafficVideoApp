@@ -22,6 +22,7 @@ import com.trafficwatch.app.core.domain.model.ReportStatus
 import com.trafficwatch.app.core.domain.model.RotationSample
 import com.trafficwatch.app.core.util.FileUtil
 import com.trafficwatch.app.core.util.TokenStore
+import com.trafficwatch.app.core.util.UploadProgressTracker
 import com.trafficwatch.app.core.util.asStreamingRequestBody
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
@@ -73,10 +74,22 @@ class UploadWorker @AssistedInject constructor(
         setProgress(workDataOf(KEY_PROGRESS to 0))
 
         return try {
+            val tracker = UploadProgressTracker(videoFile.length())
             val videoPart = MultipartBody.Part.createFormData(
                 "video",
                 videoFile.name,
-                videoFile.asStreamingRequestBody("video/mp4".toMediaType())
+                videoFile.asStreamingRequestBody("video/mp4".toMediaType()) { bytesWritten, totalBytes ->
+                    tracker.onChunk(bytesWritten, android.os.SystemClock.elapsedRealtime())?.let { snapshot ->
+                        setProgressAsync(
+                            workDataOf(
+                                KEY_PROGRESS to snapshot.percent,
+                                KEY_BYTES_UPLOADED to snapshot.bytesUploaded,
+                                KEY_TOTAL_BYTES to snapshot.totalBytes,
+                                KEY_BYTES_PER_SECOND to snapshot.bytesPerSecond
+                            )
+                        )
+                    }
+                }
             )
 
             val isoDate = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).format(Date(recordedAt))
@@ -97,7 +110,14 @@ class UploadWorker @AssistedInject constructor(
                 rotationSamples = rotationSamplesJson?.toRequestBody()
             )
 
-            setProgress(workDataOf(KEY_PROGRESS to 100))
+            setProgress(
+                workDataOf(
+                    KEY_PROGRESS to 100,
+                    KEY_BYTES_UPLOADED to videoFile.length(),
+                    KEY_TOTAL_BYTES to videoFile.length(),
+                    KEY_BYTES_PER_SECOND to 0L
+                )
+            )
 
             reportRepository.updateStatus(localReportId, ReportStatus.PENDING, response.reportId)
 
@@ -127,6 +147,9 @@ class UploadWorker @AssistedInject constructor(
         const val KEY_LOCATION_SAMPLES_JSON = "location_samples_json"
         const val KEY_ROTATION_SAMPLES_JSON = "rotation_samples_json"
         const val KEY_PROGRESS = "progress"
+        const val KEY_BYTES_UPLOADED = "bytes_uploaded"
+        const val KEY_TOTAL_BYTES = "total_bytes"
+        const val KEY_BYTES_PER_SECOND = "bytes_per_second"
         const val KEY_SERVER_ID = "server_id"
 
         fun buildInputData(

@@ -388,3 +388,40 @@ considered rather than forgotten.
   distinguish "sensor unavailable" from "duration extraction failed" for
   either signal.
   *(added 2026-08-05, found during continuous-rotation-vector-capture final review)*
+- **Automatic WorkManager retries (attempts 2-3, per `Result.retry()` with
+  `runAttemptCount < 3`) show a "Failed" chip with no upload progress at
+  all, even while bytes are actively moving.** `UploadWorker.kt` writes
+  `ReportStatus.UPLOAD_FAILED` to Room on any exception before retrying -
+  nothing resets the row back to `ReportStatus.UPLOADING` when WorkManager
+  re-runs the worker for a retry attempt (only `SubmitReportUseCase` and
+  `RetryUploadUseCase`, both user/first-attempt-triggered paths, ever write
+  `UPLOADING`). `HistoryViewModel.uploadProgress` filters on
+  `status == UPLOADING`, so it correctly excludes these reports - the chip
+  was already showing the wrong status before the upload-progress-indicator
+  feature existed, but that feature is now invisible for exactly the
+  attempts (2 and 3) most likely to belong to a slow/flaky connection a
+  user most wants feedback on. Fix: have `UploadWorker.doWork()` write the
+  row back to `UPLOADING` at the very top (or right after catching an
+  exception, before returning `Result.retry()`), matching the status the
+  work is actually still doing.
+  *(added 2026-08-06, found during upload-progress-indicator final review)*
+- **Two call sites still construct `WorkManager` via
+  `WorkManager.getInstance(context)` instead of the new
+  `WorkManagerModule`-provided injected instance.** `SubmitReportUseCase.kt`
+  and `RetryUploadUseCase.kt` predate the DI module added for
+  `HistoryViewModel`'s testability - both still call `getInstance` inline.
+  No functional divergence (same process singleton either way), purely a
+  style inconsistency now that the injected pattern exists. Migrate both to
+  constructor-injected `WorkManager` for consistency, next time either file
+  is touched.
+  *(added 2026-08-06, found during upload-progress-indicator final review)*
+- **The live upload-progress "Z MB/s" figure is an instantaneous
+  ~300ms-sample rate and will visibly jitter.** `UploadProgressTracker`
+  computes rate from just the two most recent emission points
+  (`(bytesWritten - lastEmittedBytes) * 1000 / elapsedMs`) - correct, but
+  noisy frame-to-frame on a real connection with variable throughput. An
+  exponential moving average over the last few emissions (a small,
+  self-contained change confined to `UploadProgressTracker`, fully
+  unit-testable like the rest of that class) would read much more smoothly
+  without changing the class's external contract.
+  *(added 2026-08-06, found during upload-progress-indicator final review)*

@@ -93,7 +93,14 @@ fun ConfirmLocationScreen(
                         // so the box is derived from the boundary's own points).
                         mapView.controller.setZoom(DEFAULT_ZOOM)
                         mapView.controller.setCenter(originPoint)
-                        mapView.zoomToBoundingBox(BoundingBox.fromGeoPoints(boundary.points), false)
+                        // zoomToBoundingBox needs the view's real measured dimensions to compute
+                        // a sane zoom level - calling it synchronously here, before the view is
+                        // attached/laid out, computes against a 0x0 view and produces an
+                        // unusably zoomed-out (effectively whole-world) result. post() defers it
+                        // until after the first real layout pass.
+                        mapView.post {
+                            mapView.zoomToBoundingBox(BoundingBox.fromGeoPoints(boundary.points), false)
+                        }
 
                         val marker = Marker(mapView).apply {
                             position = confirmedPosition.value

@@ -26,6 +26,8 @@ import com.trafficwatch.app.feature.history.HistoryScreen
 import com.trafficwatch.app.feature.history.ReportDetailScreen
 import com.trafficwatch.app.feature.permissions.PermissionsScreen
 import com.trafficwatch.app.feature.review.ReviewScreen
+import com.trafficwatch.app.feature.review.ReviewViewModel
+import com.trafficwatch.app.feature.confirmlocation.ConfirmLocationScreen
 import com.trafficwatch.app.feature.trim.TrimScreen
 import java.io.File
 
@@ -36,6 +38,7 @@ private object Routes {
     const val CAMERA = "camera"
     const val TRIM = "trim"
     const val REVIEW = "review"
+    const val CONFIRM_LOCATION = "confirm_location"
     const val HISTORY = "history"
     const val REPORT_DETAIL = "report_detail/{reportId}"
     fun reportDetail(id: String) = "report_detail/$id"
@@ -53,6 +56,7 @@ fun AppNavigation(
     var rawVideoFile by rememberSaveable { mutableStateOf<String?>(null) }
     var trimmedVideoFile by rememberSaveable { mutableStateOf<String?>(null) }
     var snapshotLocation by remember { mutableStateOf<LocationData?>(null) }
+    var locationForConfirmation by remember { mutableStateOf<LocationData?>(null) }
     var locationSamples by remember { mutableStateOf<List<LocationData>>(emptyList()) }
     var rotationSamples by remember { mutableStateOf<List<RotationSample>>(emptyList()) }
     var recordingStartedAt by rememberSaveable { mutableLongStateOf(0L) }
@@ -196,6 +200,26 @@ fun AppNavigation(
                     }
                 },
                 onRetrim = { navController.popBackStack() },
+                onNavigateBack = { navController.popBackStack() },
+                onConfirmLocation = { location ->
+                    locationForConfirmation = location
+                    navController.navigate(Routes.CONFIRM_LOCATION)
+                }
+            )
+        }
+
+        composable(Routes.CONFIRM_LOCATION) {
+            val loc = locationForConfirmation ?: return@composable
+            ConfirmLocationScreen(
+                initialLatitude = loc.latitude,
+                initialLongitude = loc.longitude,
+                maxRadiusMeters = loc.accuracy * 1.5,
+                onConfirm = { latitude, longitude ->
+                    navController.previousBackStackEntry
+                        ?.savedStateHandle
+                        ?.set(ReviewViewModel.KEY_CONFIRMED_LOCATION, doubleArrayOf(latitude, longitude))
+                    navController.popBackStack()
+                },
                 onNavigateBack = { navController.popBackStack() }
             )
         }

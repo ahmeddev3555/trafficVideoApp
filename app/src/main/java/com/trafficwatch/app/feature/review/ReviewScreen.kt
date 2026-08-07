@@ -65,6 +65,7 @@ fun ReviewScreen(
     onSubmit: () -> Unit,
     onRetrim: () -> Unit,
     onNavigateBack: () -> Unit,
+    onConfirmLocation: (LocationData) -> Unit,
     viewModel: ReviewViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -153,11 +154,25 @@ fun ReviewScreen(
                     }
                 }
 
+                val weakAccuracyUnconfirmed = location != null &&
+                    location.accuracy > ReviewViewModel.ACCURACY_THRESHOLD_METERS &&
+                    !uiState.locationConfirmed
+                if (weakAccuracyUnconfirmed) {
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedButton(
+                        onClick = { onConfirmLocation(location!!) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Confirm Location") }
+                }
+
                 Spacer(Modifier.height(24.dp))
 
+                val locationBlocksSubmit = location != null &&
+                    location.accuracy > ReviewViewModel.ACCURACY_THRESHOLD_METERS &&
+                    !uiState.locationConfirmed
                 Button(
                     onClick = viewModel::submit,
-                    enabled = !uiState.isSubmitting,
+                    enabled = !uiState.isSubmitting && !locationBlocksSubmit,
                     modifier = Modifier.fillMaxWidth().height(48.dp)
                 ) { Text("Submit Report") }
 

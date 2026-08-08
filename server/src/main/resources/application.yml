@@ -35,6 +35,8 @@ app:
     connect-timeout-ms: 5000
     read-timeout-ms: 8000
     search-radius-meters: 50
+    max-search-radius-meters: 200
+    radius-accuracy-multiplier: 2.0
     lookup-retry-attempts: 3
     lookup-retry-delay-ms: 500
   video-analysis:

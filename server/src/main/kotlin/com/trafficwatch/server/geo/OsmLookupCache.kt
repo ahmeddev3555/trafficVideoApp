@@ -34,6 +34,12 @@ class OsmLookupCache(
     @Column(name = "lon_bucket", nullable = false)
     var lonBucket: BigDecimal,
 
+    @Column(name = "search_radius_meters", nullable = false)
+    var searchRadiusMeters: BigDecimal,
+
+    @Column(name = "accuracy_meters", nullable = false)
+    var accuracyMeters: BigDecimal,
+
     @Column(name = "street_name")
     var streetName: String? = null,
 

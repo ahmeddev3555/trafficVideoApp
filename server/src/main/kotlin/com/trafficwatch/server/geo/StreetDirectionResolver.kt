@@ -4,6 +4,7 @@ import com.trafficwatch.server.geo.dto.OverpassElement
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.time.OffsetDateTime
 
 private const val DIVIDED_CARRIAGEWAY_ANTI_PARALLEL_TOLERANCE_DEGREES = 45.0
 private const val DIVIDED_CARRIAGEWAY_MAX_DISTANCE_GAP_METERS = 30.0
@@ -39,8 +40,9 @@ class StreetDirectionResolver(
             osmProperties.maxSearchRadiusMeters.toDouble(),
         )
 
-        cacheRepository.findByLatBucketAndLonBucket(latBucket, lonBucket)?.let {
-            return it.toDirectionResolution()
+        val cached = cacheRepository.findByLatBucketAndLonBucket(latBucket, lonBucket)
+        if (cached != null && cached.searchRadiusMeters.toDouble() >= searchRadius) {
+            return cached.toDirectionResolution()
         }
 
         val resolution = try {
@@ -49,7 +51,7 @@ class StreetDirectionResolver(
             return DirectionResolution.LookupFailed(ex.message ?: "OSM lookup failed")
         }
 
-        persist(latBucket, lonBucket, resolution)
+        persist(cached, latBucket, lonBucket, searchRadius, resolution)
         return resolution
     }
 
@@ -131,16 +133,26 @@ class StreetDirectionResolver(
 
     private fun roundToBucket(value: BigDecimal): BigDecimal = value.setScale(4, RoundingMode.HALF_UP)
 
-    private fun persist(latBucket: BigDecimal, lonBucket: BigDecimal, resolution: DirectionResolution) {
-        val entity = OsmLookupCache(
+    private fun persist(
+        existing: OsmLookupCache?,
+        latBucket: BigDecimal,
+        lonBucket: BigDecimal,
+        searchRadiusMeters: Double,
+        resolution: DirectionResolution,
+    ) {
+        val entity = existing ?: OsmLookupCache(
             latBucket = latBucket,
             lonBucket = lonBucket,
-            streetName = resolution.streetNameOrNull(),
+            searchRadiusMeters = searchRadiusMeters.toBigDecimal(),
             directionState = resolution.toDirectionState(),
-            legalBearingDegrees = (resolution as? DirectionResolution.OneWay)
-                ?.legalBearingDegrees
-                ?.toBigDecimal(),
         )
+        entity.searchRadiusMeters = searchRadiusMeters.toBigDecimal()
+        entity.streetName = resolution.streetNameOrNull()
+        entity.directionState = resolution.toDirectionState()
+        entity.legalBearingDegrees = (resolution as? DirectionResolution.OneWay)
+            ?.legalBearingDegrees
+            ?.toBigDecimal()
+        entity.updatedAt = OffsetDateTime.now()
         cacheRepository.save(entity)
     }
 

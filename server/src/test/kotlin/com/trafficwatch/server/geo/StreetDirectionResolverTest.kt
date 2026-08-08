@@ -1,4 +1,4 @@
-package com.trafficwatch.server.geo
+﻿package com.trafficwatch.server.geo
 
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock.aResponse
@@ -247,6 +247,33 @@ class StreetDirectionResolverTest @Autowired constructor(
         assertThat((result as DirectionResolution.OneWay).streetName).isEqualTo("Avenue A")
     }
 
+    @Test
+    fun `reuses a cached result when its stored radius covers the current lookup's needed radius`() {
+        wireMockServer.stubFor(
+            post(urlMatching(".*")).willReturn(okJson(overpassResponseJson(oneway = "yes", name = "Wide Search Street"))),
+        )
+
+        // accuracy 40.0 -> needs 80.0m radius; cache row is written with searchRadiusMeters = 80.0.
+        streetDirectionResolver.resolve(BigDecimal("65.000000"), BigDecimal("65.000000"), accuracyMeters = 40.0)
+        // accuracy 10.0 -> only needs 50.0m; 80.0 >= 50.0, so this must be served from cache.
+        streetDirectionResolver.resolve(BigDecimal("65.000000"), BigDecimal("65.000000"), accuracyMeters = 10.0)
+
+        wireMockServer.verify(1, postRequestedFor(urlMatching(".*")))
+    }
+
+    @Test
+    fun `re-resolves and overwrites the cache when its stored radius is smaller than the current lookup needs`() {
+        wireMockServer.stubFor(
+            post(urlMatching(".*")).willReturn(okJson(overpassResponseJson(oneway = "yes", name = "Narrow Search Street"))),
+        )
+
+        // accuracy 5.0 -> needs only the 50.0m floor; cache row is written with searchRadiusMeters = 50.0.
+        streetDirectionResolver.resolve(BigDecimal("66.000000"), BigDecimal("66.000000"), accuracyMeters = 5.0)
+        // accuracy 80.0 -> needs 160.0m; 50.0 < 160.0, so this must NOT be served from the stale cache row.
+        streetDirectionResolver.resolve(BigDecimal("66.000000"), BigDecimal("66.000000"), accuracyMeters = 80.0)
+
+        wireMockServer.verify(2, postRequestedFor(urlMatching(".*")))
+    }
     private fun overpassResponseJson(oneway: String?, name: String): String {
         val tagsJson = buildString {
             append(""""name": "$name"""")

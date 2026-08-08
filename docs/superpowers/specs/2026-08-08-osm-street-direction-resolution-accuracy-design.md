@@ -136,8 +136,9 @@ candidates, it never removes closer ones already considered.
   `OsmLookupCache.kt` (new `searchRadiusMeters` column),
   `ReportAnalysisJob.kt` (pass `report.accuracy.toDouble()` through to
   `resolve()`).
-- **New migration:** `V5__add_search_radius_to_osm_lookup_cache.sql` - adds
-  `search_radius_meters` column, backfilled to `50.0` for existing rows.
+- **New migration:** `V9__add_search_radius_to_osm_lookup_cache.sql` (next
+  free version - V1-V8 already exist) - adds `search_radius_meters` column,
+  backfilled to `50.0` for existing rows.
 - **Tests:** `OverpassClientTest.kt` (radius appears in the request body),
   `StreetDirectionResolverTest.kt` (radius scales with accuracy; ambiguous
   same-distance different-street pair returns `Unknown`; same-street

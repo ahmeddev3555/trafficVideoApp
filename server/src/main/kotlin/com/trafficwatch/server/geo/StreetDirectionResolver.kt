@@ -5,6 +5,16 @@ import org.springframework.stereotype.Component
 import java.math.BigDecimal
 import java.math.RoundingMode
 
+private const val DIVIDED_CARRIAGEWAY_ANTI_PARALLEL_TOLERANCE_DEGREES = 45.0
+private const val DIVIDED_CARRIAGEWAY_MAX_DISTANCE_GAP_METERS = 30.0
+
+private data class WayCandidate(
+    val way: OverpassElement,
+    val nodes: List<GeoPoint>,
+    val segmentIndex: Int,
+    val distanceMeters: Double,
+)
+
 /**
  * Resolves the street and legal traffic direction nearest a report's coordinates, backed by
  * a lat/lon-bucketed cache table. Always returns a [DirectionResolution] - never throws - so
@@ -34,7 +44,7 @@ class StreetDirectionResolver(
         }
 
         val resolution = try {
-            resolveFresh(latitude.toDouble(), longitude.toDouble(), searchRadius)
+            resolveFresh(latitude.toDouble(), longitude.toDouble(), searchRadius, accuracyMeters)
         } catch (ex: OsmLookupException) {
             return DirectionResolution.LookupFailed(ex.message ?: "OSM lookup failed")
         }
@@ -43,48 +53,72 @@ class StreetDirectionResolver(
         return resolution
     }
 
-    private fun resolveFresh(lat: Double, lon: Double, searchRadius: Double): DirectionResolution {
+    private fun resolveFresh(lat: Double, lon: Double, searchRadius: Double, accuracyMeters: Double): DirectionResolution {
         val ways = overpassClient.findNearbyWays(lat, lon, searchRadius)
-        if (ways.isEmpty()) {
-            return DirectionResolution.NotFound
-        }
-
         val point = GeoPoint(lat, lon)
-        var bestWay: OverpassElement? = null
-        var bestNodes: List<GeoPoint>? = null
-        var bestSegmentIndex = -1
-        var bestDistance = Double.MAX_VALUE
 
-        for (way in ways) {
-            val nodes = way.geometry?.map { GeoPoint(it.lat, it.lon) } ?: continue
-            val segmentIndex = BearingMath.nearestSegmentIndex(point, nodes) ?: continue
+        val candidates = ways.mapNotNull { way ->
+            val nodes = way.geometry?.map { GeoPoint(it.lat, it.lon) } ?: return@mapNotNull null
+            val segmentIndex = BearingMath.nearestSegmentIndex(point, nodes) ?: return@mapNotNull null
             val distance = BearingMath.distanceToSegmentMeters(point, nodes[segmentIndex], nodes[segmentIndex + 1])
-            if (distance < bestDistance) {
-                bestDistance = distance
-                bestWay = way
-                bestNodes = nodes
-                bestSegmentIndex = segmentIndex
+            WayCandidate(way, nodes, segmentIndex, distance)
+        }.sortedBy { it.distanceMeters }
+
+        val best = candidates.firstOrNull() ?: return DirectionResolution.NotFound
+        val streetName = best.way.tags?.get("name") ?: reverseGeocodeStreetName(lat, lon)
+
+        val runnerUp = candidates.getOrNull(1)
+        if (runnerUp != null) {
+            val bestNameTag = best.way.tags?.get("name")
+            val runnerUpNameTag = runnerUp.way.tags?.get("name")
+            val sameStreet = bestNameTag != null && runnerUpNameTag != null && bestNameTag == runnerUpNameTag
+            if (!sameStreet && (runnerUp.distanceMeters - best.distanceMeters) < accuracyMeters) {
+                return DirectionResolution.Unknown(streetName)
             }
         }
 
-        val way = bestWay ?: return DirectionResolution.NotFound
-        val nodes = bestNodes ?: return DirectionResolution.NotFound
-        val streetName = way.tags?.get("name") ?: reverseGeocodeStreetName(lat, lon)
-
-        return when (way.tags?.get("oneway")) {
+        val resolution = when (best.way.tags?.get("oneway")) {
             "yes", "true", "1" -> DirectionResolution.OneWay(
                 streetName,
-                BearingMath.initialBearingDegrees(nodes[bestSegmentIndex], nodes[bestSegmentIndex + 1]),
+                BearingMath.initialBearingDegrees(best.nodes[best.segmentIndex], best.nodes[best.segmentIndex + 1]),
             )
             "-1", "reverse" -> DirectionResolution.OneWay(
                 streetName,
-                BearingMath.initialBearingDegrees(nodes[bestSegmentIndex + 1], nodes[bestSegmentIndex]),
+                BearingMath.initialBearingDegrees(best.nodes[best.segmentIndex + 1], best.nodes[best.segmentIndex]),
             )
             "no" -> DirectionResolution.TwoWay(streetName)
             // Tag absent or an unrecognized value: OSM coverage here is too sparse to
             // safely assume "no tag" means "legally two-way" - see DirectionResolution's
             // doc comment.
             else -> DirectionResolution.Unknown(streetName)
+        }
+
+        if (resolution is DirectionResolution.OneWay && hasAntiParallelOneWayNeighbor(best, candidates)) {
+            return DirectionResolution.Unknown(streetName)
+        }
+        return resolution
+    }
+
+    /**
+     * True when another candidate way, also tagged `oneway`, has a legal bearing anti-parallel
+     * to [best]'s (within [DIVIDED_CARRIAGEWAY_ANTI_PARALLEL_TOLERANCE_DEGREES] of exactly
+     * 180 degrees apart) and sits within [DIVIDED_CARRIAGEWAY_MAX_DISTANCE_GAP_METERS] of
+     * [best]'s own distance to the point - the physical signature of a divided road's two
+     * separately-tagged, oppositely-legal carriageways.
+     */
+    private fun hasAntiParallelOneWayNeighbor(best: WayCandidate, candidates: List<WayCandidate>): Boolean {
+        val onewayTags = setOf("yes", "true", "1", "-1", "reverse")
+        fun legalBearing(candidate: WayCandidate): Double = when (candidate.way.tags?.get("oneway")) {
+            "-1", "reverse" -> BearingMath.initialBearingDegrees(candidate.nodes[candidate.segmentIndex + 1], candidate.nodes[candidate.segmentIndex])
+            else -> BearingMath.initialBearingDegrees(candidate.nodes[candidate.segmentIndex], candidate.nodes[candidate.segmentIndex + 1])
+        }
+        val bestBearing = legalBearing(best)
+
+        return candidates.any { other ->
+            other !== best &&
+                other.way.tags?.get("oneway") in onewayTags &&
+                kotlin.math.abs(other.distanceMeters - best.distanceMeters) <= DIVIDED_CARRIAGEWAY_MAX_DISTANCE_GAP_METERS &&
+                BearingMath.angularDifferenceDegrees(legalBearing(other), bestBearing) > (180.0 - DIVIDED_CARRIAGEWAY_ANTI_PARALLEL_TOLERANCE_DEGREES)
         }
     }
 

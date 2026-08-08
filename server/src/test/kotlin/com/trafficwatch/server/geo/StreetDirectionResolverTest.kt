@@ -160,6 +160,93 @@ class StreetDirectionResolverTest @Autowired constructor(
         )
     }
 
+    @Test
+    fun `returns Unknown when two different-named ways are within accuracy meters of each other`() {
+        // Way A ~11.1m away, Way B ~22.2m away - gap ~11.1m, smaller than the 15.0m accuracy below.
+        wireMockServer.stubFor(
+            post(urlMatching(".*")).willReturn(
+                okJson(
+                    twoWayOverpassResponseJson(
+                        wayAId = 301, wayAName = "Street A", wayAOneway = "yes", wayALatOffsetDegrees = 0.000100, wayAWestToEast = true,
+                        wayBId = 302, wayBName = "Street B", wayBOneway = null, wayBLatOffsetDegrees = 0.000200, wayBWestToEast = true,
+                        baseLat = 61.000000, baseLon = 61.000000,
+                    ),
+                ),
+            ),
+        )
+
+        val result = streetDirectionResolver.resolve(BigDecimal("61.000000"), BigDecimal("61.000000"), accuracyMeters = 15.0)
+
+        assertThat(result).isInstanceOf(DirectionResolution.Unknown::class.java)
+        assertThat((result as DirectionResolution.Unknown).streetName).isEqualTo("Street A")
+    }
+
+    @Test
+    fun `does not treat two segments of the same named street as ambiguous`() {
+        // Same gap (~11.1m) as the previous test, but both ways share a name.
+        wireMockServer.stubFor(
+            post(urlMatching(".*")).willReturn(
+                okJson(
+                    twoWayOverpassResponseJson(
+                        wayAId = 303, wayAName = "Shared Street", wayAOneway = "yes", wayALatOffsetDegrees = 0.000100, wayAWestToEast = true,
+                        wayBId = 304, wayBName = "Shared Street", wayBOneway = "yes", wayBLatOffsetDegrees = 0.000200, wayBWestToEast = true,
+                        baseLat = 62.000000, baseLon = 62.000000,
+                    ),
+                ),
+            ),
+        )
+
+        val result = streetDirectionResolver.resolve(BigDecimal("62.000000"), BigDecimal("62.000000"), accuracyMeters = 15.0)
+
+        assertThat(result).isInstanceOf(DirectionResolution.OneWay::class.java)
+        assertThat((result as DirectionResolution.OneWay).streetName).isEqualTo("Shared Street")
+    }
+
+    @Test
+    fun `downgrades to Unknown when a nearby anti-parallel oneway way signals a divided carriageway`() {
+        // Way A ~11.1m away bearing ~90 deg (east); Way B ~27.8m away bearing ~270 deg (west,
+        // anti-parallel). Gap ~16.7m: bigger than the 5.0m accuracy below (so the ambiguity
+        // check does NOT fire), smaller than the 30m divided-carriageway proximity cap.
+        wireMockServer.stubFor(
+            post(urlMatching(".*")).willReturn(
+                okJson(
+                    twoWayOverpassResponseJson(
+                        wayAId = 305, wayAName = "Ring Road North", wayAOneway = "yes", wayALatOffsetDegrees = 0.000100, wayAWestToEast = true,
+                        wayBId = 306, wayBName = "Ring Road South", wayBOneway = "yes", wayBLatOffsetDegrees = 0.000250, wayBWestToEast = false,
+                        baseLat = 63.000000, baseLon = 63.000000,
+                    ),
+                ),
+            ),
+        )
+
+        val result = streetDirectionResolver.resolve(BigDecimal("63.000000"), BigDecimal("63.000000"), accuracyMeters = 5.0)
+
+        assertThat(result).isInstanceOf(DirectionResolution.Unknown::class.java)
+        assertThat((result as DirectionResolution.Unknown).streetName).isEqualTo("Ring Road North")
+    }
+
+    @Test
+    fun `does not downgrade for a distant anti-parallel oneway way outside the carriageway proximity cap`() {
+        // Way A ~11.1m away bearing ~90 deg; Way B ~55.6m away bearing ~270 deg (anti-parallel,
+        // but the ~44.5m gap exceeds the 30m divided-carriageway proximity cap).
+        wireMockServer.stubFor(
+            post(urlMatching(".*")).willReturn(
+                okJson(
+                    twoWayOverpassResponseJson(
+                        wayAId = 307, wayAName = "Avenue A", wayAOneway = "yes", wayALatOffsetDegrees = 0.000100, wayAWestToEast = true,
+                        wayBId = 308, wayBName = "Avenue B", wayBOneway = "yes", wayBLatOffsetDegrees = 0.000500, wayBWestToEast = false,
+                        baseLat = 64.000000, baseLon = 64.000000,
+                    ),
+                ),
+            ),
+        )
+
+        val result = streetDirectionResolver.resolve(BigDecimal("64.000000"), BigDecimal("64.000000"), accuracyMeters = 5.0)
+
+        assertThat(result).isInstanceOf(DirectionResolution.OneWay::class.java)
+        assertThat((result as DirectionResolution.OneWay).streetName).isEqualTo("Avenue A")
+    }
+
     private fun overpassResponseJson(oneway: String?, name: String): String {
         val tagsJson = buildString {
             append(""""name": "$name"""")
@@ -180,5 +267,35 @@ class StreetDirectionResolverTest @Autowired constructor(
               ]
             }
         """.trimIndent()
+    }
+
+    private fun twoWayOverpassResponseJson(
+        wayAId: Long, wayAName: String?, wayAOneway: String?, wayALatOffsetDegrees: Double, wayAWestToEast: Boolean,
+        wayBId: Long, wayBName: String?, wayBOneway: String?, wayBLatOffsetDegrees: Double, wayBWestToEast: Boolean,
+        baseLat: Double, baseLon: Double,
+    ): String {
+        fun wayJson(id: Long, name: String?, oneway: String?, latOffset: Double, westToEast: Boolean): String {
+            val lat = baseLat + latOffset
+            val (lon1, lon2) = if (westToEast) (baseLon - 0.0010) to (baseLon + 0.0010) else (baseLon + 0.0010) to (baseLon - 0.0010)
+            val tagsJson = buildString {
+                if (name != null) append(""""name": "$name"""")
+                if (oneway != null) {
+                    if (name != null) append(", ")
+                    append(""""oneway": "$oneway"""")
+                }
+            }
+            return """
+                {
+                  "type": "way",
+                  "id": $id,
+                  "tags": { $tagsJson },
+                  "geometry": [
+                    {"lat": $lat, "lon": $lon1},
+                    {"lat": $lat, "lon": $lon2}
+                  ]
+                }
+            """.trimIndent()
+        }
+        return """{"elements": [${wayJson(wayAId, wayAName, wayAOneway, wayALatOffsetDegrees, wayAWestToEast)}, ${wayJson(wayBId, wayBName, wayBOneway, wayBLatOffsetDegrees, wayBWestToEast)}]}"""
     }
 }

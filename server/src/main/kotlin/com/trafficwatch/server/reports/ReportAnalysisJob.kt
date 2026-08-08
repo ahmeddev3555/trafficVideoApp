@@ -94,7 +94,7 @@ class ReportAnalysisJob(
     }
 
     private fun determineOutcome(report: Report): AnalysisOutcome {
-        val resolution = streetDirectionResolver.resolve(report.latitude, report.longitude)
+        val resolution = streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
 
         // TwoWay is the one terminal OSM outcome: an explicit oneway=no means
         // opposing traffic is legal, and video inference must never run (the

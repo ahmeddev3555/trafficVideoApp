@@ -18,6 +18,8 @@ data class OsmProperties(
     var connectTimeoutMs: Int = 5000,
     var readTimeoutMs: Int = 8000,
     var searchRadiusMeters: Int = 50,
+    var maxSearchRadiusMeters: Int = 200,
+    var radiusAccuracyMultiplier: Double = 2.0,
     // A transient failure (network error, or a 5xx from the upstream API) is retried this
     // many times total before giving up - a 4xx is never retried, see withOsmRetry.
     var lookupRetryAttempts: Int = 3,

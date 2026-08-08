@@ -16,18 +16,25 @@ class StreetDirectionResolver(
     private val nominatimClient: NominatimClient,
     private val overpassClient: OverpassClient,
     private val cacheRepository: OsmLookupCacheRepository,
+    private val osmProperties: OsmProperties,
 ) {
 
-    fun resolve(latitude: BigDecimal, longitude: BigDecimal): DirectionResolution {
+    fun resolve(latitude: BigDecimal, longitude: BigDecimal, accuracyMeters: Double): DirectionResolution {
         val latBucket = roundToBucket(latitude)
         val lonBucket = roundToBucket(longitude)
+        val searchRadius = computeSearchRadius(
+            accuracyMeters,
+            osmProperties.searchRadiusMeters.toDouble(),
+            osmProperties.radiusAccuracyMultiplier,
+            osmProperties.maxSearchRadiusMeters.toDouble(),
+        )
 
         cacheRepository.findByLatBucketAndLonBucket(latBucket, lonBucket)?.let {
             return it.toDirectionResolution()
         }
 
         val resolution = try {
-            resolveFresh(latitude.toDouble(), longitude.toDouble())
+            resolveFresh(latitude.toDouble(), longitude.toDouble(), searchRadius)
         } catch (ex: OsmLookupException) {
             return DirectionResolution.LookupFailed(ex.message ?: "OSM lookup failed")
         }
@@ -36,8 +43,8 @@ class StreetDirectionResolver(
         return resolution
     }
 
-    private fun resolveFresh(lat: Double, lon: Double): DirectionResolution {
-        val ways = overpassClient.findNearbyWays(lat, lon)
+    private fun resolveFresh(lat: Double, lon: Double, searchRadius: Double): DirectionResolution {
+        val ways = overpassClient.findNearbyWays(lat, lon, searchRadius)
         if (ways.isEmpty()) {
             return DirectionResolution.NotFound
         }
@@ -132,3 +139,13 @@ class StreetDirectionResolver(
 }
 
 private fun Double.toBigDecimal(): BigDecimal = BigDecimal.valueOf(this)
+
+/**
+ * Search radius scaled from the report's GPS accuracy - wider accuracy uncertainty means a
+ * wider net is needed to have any chance of including the true street as a candidate.
+ * Clamped between [floorMeters] (today's fixed default, so a very precise fix still gets a
+ * sane minimum search area) and [capMeters] (bounds Overpass query cost/latency for a very
+ * poor GPS fix).
+ */
+internal fun computeSearchRadius(accuracyMeters: Double, floorMeters: Double, multiplier: Double, capMeters: Double): Double =
+    (accuracyMeters * multiplier).coerceIn(floorMeters, capMeters)

@@ -18,11 +18,11 @@ class OverpassClient(
     private val osmProperties: OsmProperties,
 ) {
 
-    /** Ways with a `highway` tag within [OsmProperties.searchRadiusMeters] of [lat]/[lon]. */
-    fun findNearbyWays(lat: Double, lon: Double): List<OverpassElement> = withOsmRetry(osmProperties) {
+    /** Ways with a `highway` tag within [radiusMeters] of [lat]/[lon]. */
+    fun findNearbyWays(lat: Double, lon: Double, radiusMeters: Double): List<OverpassElement> = withOsmRetry(osmProperties) {
         val query = """
             [out:json];
-            way(around:${osmProperties.searchRadiusMeters},$lat,$lon)["highway"];
+            way(around:$radiusMeters,$lat,$lon)["highway"];
             out geom;
         """.trimIndent()
 

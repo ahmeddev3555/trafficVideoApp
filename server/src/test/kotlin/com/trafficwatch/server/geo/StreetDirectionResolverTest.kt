@@ -2,6 +2,7 @@ package com.trafficwatch.server.geo
 
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock.aResponse
+import com.github.tomakehurst.wiremock.client.WireMock.containing
 import com.github.tomakehurst.wiremock.client.WireMock.okJson
 import com.github.tomakehurst.wiremock.client.WireMock.post
 import com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor
@@ -67,7 +68,7 @@ class StreetDirectionResolverTest @Autowired constructor(
             post(urlMatching(".*")).willReturn(okJson(overpassResponseJson(oneway = "yes", name = "Main Boulevard"))),
         )
 
-        val result = streetDirectionResolver.resolve(BigDecimal("31.520000"), BigDecimal("74.350000"))
+        val result = streetDirectionResolver.resolve(BigDecimal("31.520000"), BigDecimal("74.350000"), accuracyMeters = 10.0)
 
         assertThat(result).isInstanceOf(DirectionResolution.OneWay::class.java)
         assertThat((result as DirectionResolution.OneWay).streetName).isEqualTo("Main Boulevard")
@@ -79,12 +80,12 @@ class StreetDirectionResolverTest @Autowired constructor(
             post(urlMatching(".*")).willReturn(okJson(overpassResponseJson(oneway = "-1", name = "Reverse Street"))),
         )
 
-        val forward = streetDirectionResolver.resolve(BigDecimal("32.520000"), BigDecimal("75.350000"))
+        val forward = streetDirectionResolver.resolve(BigDecimal("32.520000"), BigDecimal("75.350000"), accuracyMeters = 10.0)
         wireMockServer.resetAll()
         wireMockServer.stubFor(
             post(urlMatching(".*")).willReturn(okJson(overpassResponseJson(oneway = "yes", name = "Reverse Street"))),
         )
-        val reverse = streetDirectionResolver.resolve(BigDecimal("33.520000"), BigDecimal("76.350000"))
+        val reverse = streetDirectionResolver.resolve(BigDecimal("33.520000"), BigDecimal("76.350000"), accuracyMeters = 10.0)
 
         val forwardBearing = (forward as DirectionResolution.OneWay).legalBearingDegrees
         val reverseBearing = (reverse as DirectionResolution.OneWay).legalBearingDegrees
@@ -98,7 +99,7 @@ class StreetDirectionResolverTest @Autowired constructor(
     fun `returns NotFound when Overpass returns no elements`() {
         wireMockServer.stubFor(post(urlMatching(".*")).willReturn(okJson("""{"elements": []}""")))
 
-        val result = streetDirectionResolver.resolve(BigDecimal("10.000000"), BigDecimal("10.000000"))
+        val result = streetDirectionResolver.resolve(BigDecimal("10.000000"), BigDecimal("10.000000"), accuracyMeters = 10.0)
 
         assertThat(result).isEqualTo(DirectionResolution.NotFound)
     }
@@ -109,7 +110,7 @@ class StreetDirectionResolverTest @Autowired constructor(
             post(urlMatching(".*")).willReturn(okJson(overpassResponseJson(oneway = null, name = "Side Street"))),
         )
 
-        val result = streetDirectionResolver.resolve(BigDecimal("20.000000"), BigDecimal("20.000000"))
+        val result = streetDirectionResolver.resolve(BigDecimal("20.000000"), BigDecimal("20.000000"), accuracyMeters = 10.0)
 
         assertThat(result).isInstanceOf(DirectionResolution.Unknown::class.java)
         assertThat((result as DirectionResolution.Unknown).streetName).isEqualTo("Side Street")
@@ -121,7 +122,7 @@ class StreetDirectionResolverTest @Autowired constructor(
             post(urlMatching(".*")).willReturn(okJson(overpassResponseJson(oneway = "no", name = "Two Way Ave"))),
         )
 
-        val result = streetDirectionResolver.resolve(BigDecimal("30.000000"), BigDecimal("30.000000"))
+        val result = streetDirectionResolver.resolve(BigDecimal("30.000000"), BigDecimal("30.000000"), accuracyMeters = 10.0)
 
         assertThat(result).isInstanceOf(DirectionResolution.TwoWay::class.java)
     }
@@ -132,8 +133,8 @@ class StreetDirectionResolverTest @Autowired constructor(
             post(urlMatching(".*")).willReturn(okJson(overpassResponseJson(oneway = "yes", name = "Cached Street"))),
         )
 
-        streetDirectionResolver.resolve(BigDecimal("40.000000"), BigDecimal("40.000000"))
-        streetDirectionResolver.resolve(BigDecimal("40.000000"), BigDecimal("40.000000"))
+        streetDirectionResolver.resolve(BigDecimal("40.000000"), BigDecimal("40.000000"), accuracyMeters = 10.0)
+        streetDirectionResolver.resolve(BigDecimal("40.000000"), BigDecimal("40.000000"), accuracyMeters = 10.0)
 
         wireMockServer.verify(1, postRequestedFor(urlMatching(".*")))
     }
@@ -142,10 +143,21 @@ class StreetDirectionResolverTest @Autowired constructor(
     fun `returns LookupFailed without caching when Overpass errors`() {
         wireMockServer.stubFor(post(urlMatching(".*")).willReturn(aResponse().withStatus(500)))
 
-        val result = streetDirectionResolver.resolve(BigDecimal("50.000000"), BigDecimal("50.000000"))
+        val result = streetDirectionResolver.resolve(BigDecimal("50.000000"), BigDecimal("50.000000"), accuracyMeters = 10.0)
 
         assertThat(result).isInstanceOf(DirectionResolution.LookupFailed::class.java)
         assertThat(cacheRepository.findByLatBucketAndLonBucket(BigDecimal("50.0000"), BigDecimal("50.0000"))).isNull()
+    }
+
+    @Test
+    fun `scales the Overpass search radius with the report's accuracy`() {
+        wireMockServer.stubFor(post(urlMatching(".*")).willReturn(okJson("""{"elements": []}""")))
+
+        streetDirectionResolver.resolve(BigDecimal("60.000000"), BigDecimal("60.000000"), accuracyMeters = 80.0)
+
+        wireMockServer.verify(
+            postRequestedFor(urlMatching(".*")).withRequestBody(containing("around%3A160.0")),
+        )
     }
 
     private fun overpassResponseJson(oneway: String?, name: String): String {

@@ -26,7 +26,6 @@ import com.trafficwatch.app.feature.history.HistoryScreen
 import com.trafficwatch.app.feature.history.ReportDetailScreen
 import com.trafficwatch.app.feature.permissions.PermissionsScreen
 import com.trafficwatch.app.feature.review.ReviewScreen
-import com.trafficwatch.app.feature.review.ReviewViewModel
 import com.trafficwatch.app.feature.confirmlocation.ConfirmLocationScreen
 import com.trafficwatch.app.feature.trim.TrimScreen
 import java.io.File
@@ -56,6 +55,15 @@ fun AppNavigation(
     var rawVideoFile by rememberSaveable { mutableStateOf<String?>(null) }
     var trimmedVideoFile by rememberSaveable { mutableStateOf<String?>(null) }
     var snapshotLocation by remember { mutableStateOf<LocationData?>(null) }
+    // Result channel for ConfirmLocationScreen -> Review. Deliberately a plain remember-scoped
+    // var (matching every other piece of state threaded through this pipeline) rather than
+    // NavController.previousBackStackEntry's SavedStateHandle - that route was tried first and,
+    // in this app's actual runtime, the SavedStateHandle Hilt injects into ReviewViewModel did
+    // not observe values set via previousBackStackEntry.savedStateHandle (confirmed via on-device
+    // logcat: the set() call landed, but ReviewViewModel's collector never emitted it) - root
+    // cause not fully isolated (Hilt/Navigation-Compose SavedStateHandle sharing behavior across
+    // versions), but this codebase's own already-proven pattern sidesteps the question entirely.
+    var confirmedLocationLatLon by remember { mutableStateOf<Pair<Double, Double>?>(null) }
     var locationSamples by remember { mutableStateOf<List<LocationData>>(emptyList()) }
     var rotationSamples by remember { mutableStateOf<List<RotationSample>>(emptyList()) }
     var recordingStartedAt by rememberSaveable { mutableLongStateOf(0L) }
@@ -202,7 +210,9 @@ fun AppNavigation(
                 onNavigateBack = { navController.popBackStack() },
                 onConfirmLocation = {
                     navController.navigate(Routes.CONFIRM_LOCATION)
-                }
+                },
+                confirmedLocation = confirmedLocationLatLon,
+                onConfirmedLocationConsumed = { confirmedLocationLatLon = null }
             )
         }
 
@@ -213,9 +223,7 @@ fun AppNavigation(
                 initialLongitude = loc.longitude,
                 maxRadiusMeters = loc.accuracy * 1.5,
                 onConfirm = { latitude, longitude ->
-                    navController.previousBackStackEntry
-                        ?.savedStateHandle
-                        ?.set(ReviewViewModel.KEY_CONFIRMED_LOCATION, doubleArrayOf(latitude, longitude))
+                    confirmedLocationLatLon = latitude to longitude
                     navController.popBackStack()
                 },
                 onNavigateBack = { navController.popBackStack() }

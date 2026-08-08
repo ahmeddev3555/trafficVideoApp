@@ -1,6 +1,5 @@
 package com.trafficwatch.app.feature.review
 
-import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.trafficwatch.app.core.domain.model.LocationData
@@ -32,8 +31,7 @@ data class ReviewUiState(
 
 @HiltViewModel
 class ReviewViewModel @Inject constructor(
-    private val submitReportUseCase: SubmitReportUseCase,
-    private val savedStateHandle: SavedStateHandle
+    private val submitReportUseCase: SubmitReportUseCase
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(ReviewUiState())
     val uiState = _uiState.asStateFlow()
@@ -47,28 +45,6 @@ class ReviewViewModel @Inject constructor(
 
     private var lastReportId: String? = null
     private var lastEffectiveLocation: LocationData? = null
-
-    init {
-        observeConfirmedLocationResult()
-    }
-
-    // ConfirmLocationScreen (pushed on top of Review, not replacing it) posts a result here
-    // via NavController.previousBackStackEntry's SavedStateHandle - the standard Navigation
-    // Compose pattern for one screen returning a value to the screen that pushed it, without
-    // either screen needing direct references to the other. DoubleArray is a natively
-    // Bundle-safe type, avoiding any Parcelable requirement on LocationData.
-    private fun observeConfirmedLocationResult() {
-        viewModelScope.launch {
-            savedStateHandle.getStateFlow<DoubleArray?>(KEY_CONFIRMED_LOCATION, null).collect { confirmed ->
-                if (confirmed != null && confirmed.size == 2) {
-                    updateLocation(confirmed[0], confirmed[1])
-                    // Clear immediately so this doesn't re-fire on a later recomposition/
-                    // process-death-restore replaying the same saved value.
-                    savedStateHandle[KEY_CONFIRMED_LOCATION] = null
-                }
-            }
-        }
-    }
 
     fun init(
         trimmedFile: File,
@@ -158,6 +134,5 @@ class ReviewViewModel @Inject constructor(
     companion object {
         const val ACCURACY_THRESHOLD_METERS = 10f
         const val CONFIRMED_ACCURACY_METERS = 5f
-        const val KEY_CONFIRMED_LOCATION = "confirmed_location"
     }
 }

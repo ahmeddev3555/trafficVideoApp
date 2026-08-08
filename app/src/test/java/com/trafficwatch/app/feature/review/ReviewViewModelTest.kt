@@ -1,6 +1,5 @@
 package com.trafficwatch.app.feature.review
 
-import androidx.lifecycle.SavedStateHandle
 import app.cash.turbine.test
 import com.trafficwatch.app.core.domain.model.LocationData
 import com.trafficwatch.app.core.domain.usecase.SubmitReportResult
@@ -38,7 +37,7 @@ class ReviewViewModelTest {
     @Before
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
-        viewModel = ReviewViewModel(submitReportUseCase, SavedStateHandle())
+        viewModel = ReviewViewModel(submitReportUseCase)
         viewModel.init(testFile, location, locationSamples, emptyList(), 1000L, 8000L)
     }
 
@@ -126,10 +125,6 @@ class ReviewViewModelTest {
 
     @Test
     fun `updateLocation replaces lat-lon and accuracy, and marks location confirmed`() {
-        val savedStateHandle = SavedStateHandle()
-        val viewModel = ReviewViewModel(submitReportUseCase, savedStateHandle)
-        viewModel.init(testFile, location, locationSamples, emptyList(), 1000L, 8000L)
-
         viewModel.updateLocation(latitude = 31.6, longitude = 74.4)
 
         val updated = viewModel.uiState.value.location
@@ -140,26 +135,7 @@ class ReviewViewModelTest {
     }
 
     @Test
-    fun `a value posted to the SavedStateHandle confirmed-location key triggers updateLocation`() = runTest {
-        val savedStateHandle = SavedStateHandle()
-        val viewModel = ReviewViewModel(submitReportUseCase, savedStateHandle)
-        viewModel.init(testFile, location, locationSamples, emptyList(), 1000L, 8000L)
-
-        savedStateHandle[ReviewViewModel.KEY_CONFIRMED_LOCATION] = doubleArrayOf(31.7, 74.5)
-        testDispatcher.scheduler.advanceUntilIdle()
-
-        val updated = viewModel.uiState.value.location
-        assertEquals(31.7, updated?.latitude)
-        assertEquals(74.5, updated?.longitude)
-        assertTrue(viewModel.uiState.value.locationConfirmed)
-    }
-
-    @Test
     fun `re-init after confirmation keeps the confirmed location, not the original`() {
-        val savedStateHandle = SavedStateHandle()
-        val viewModel = ReviewViewModel(submitReportUseCase, savedStateHandle)
-        viewModel.init(testFile, location, locationSamples, emptyList(), 1000L, 8000L)
-
         viewModel.updateLocation(latitude = 31.6, longitude = 74.4)
         // Simulates ReviewScreen re-entering composition (and its LaunchedEffect re-firing
         // init()) after ConfirmLocationScreen pops back - the exact sequence that caused the
@@ -175,46 +151,16 @@ class ReviewViewModelTest {
 
     @Test
     fun `locationConfirmed defaults to false`() {
-        val savedStateHandle = SavedStateHandle()
-        val viewModel = ReviewViewModel(submitReportUseCase, savedStateHandle)
-        viewModel.init(testFile, location, locationSamples, emptyList(), 1000L, 8000L)
-
         assertFalse(viewModel.uiState.value.locationConfirmed)
     }
 
     @Test
     fun `updateLocation on a null location is a no-op`() {
-        val savedStateHandle = SavedStateHandle()
-        val viewModel = ReviewViewModel(submitReportUseCase, savedStateHandle)
         viewModel.init(testFile, null, locationSamples, emptyList(), 1000L, 8000L)
 
         viewModel.updateLocation(latitude = 31.6, longitude = 74.4)
 
         assertEquals(null, viewModel.uiState.value.location)
         assertFalse(viewModel.uiState.value.locationConfirmed)
-    }
-
-    @Test
-    fun `a wrong-size DoubleArray posted to the SavedStateHandle key is ignored`() = runTest {
-        val savedStateHandle = SavedStateHandle()
-        val viewModel = ReviewViewModel(submitReportUseCase, savedStateHandle)
-        viewModel.init(testFile, location, locationSamples, emptyList(), 1000L, 8000L)
-
-        savedStateHandle[ReviewViewModel.KEY_CONFIRMED_LOCATION] = doubleArrayOf(31.7)
-        testDispatcher.scheduler.advanceUntilIdle()
-
-        assertFalse(viewModel.uiState.value.locationConfirmed)
-    }
-
-    @Test
-    fun `the SavedStateHandle key is cleared after being consumed`() = runTest {
-        val savedStateHandle = SavedStateHandle()
-        val viewModel = ReviewViewModel(submitReportUseCase, savedStateHandle)
-        viewModel.init(testFile, location, locationSamples, emptyList(), 1000L, 8000L)
-
-        savedStateHandle[ReviewViewModel.KEY_CONFIRMED_LOCATION] = doubleArrayOf(31.7, 74.5)
-        testDispatcher.scheduler.advanceUntilIdle()
-
-        assertEquals(null, savedStateHandle.get<DoubleArray?>(ReviewViewModel.KEY_CONFIRMED_LOCATION))
     }
 }

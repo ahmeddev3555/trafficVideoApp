@@ -65,12 +65,24 @@ fun ReviewScreen(
     onSubmit: () -> Unit,
     onRetrim: () -> Unit,
     onNavigateBack: () -> Unit,
-    onConfirmLocation: (LocationData) -> Unit,
+    onConfirmLocation: () -> Unit,
+    confirmedLocation: Pair<Double, Double>?,
+    onConfirmedLocationConsumed: () -> Unit,
     viewModel: ReviewViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val effectiveLocation = uiState.location ?: location
     val context = LocalContext.current
+
+    // ConfirmLocationScreen (pushed on top of this screen) reports its result here via a
+    // plain state var owned by AppNavigation - see that file's comment for why this isn't
+    // routed through NavController.previousBackStackEntry's SavedStateHandle.
+    LaunchedEffect(confirmedLocation) {
+        if (confirmedLocation != null) {
+            viewModel.updateLocation(confirmedLocation.first, confirmedLocation.second)
+            onConfirmedLocationConsumed()
+        }
+    }
 
     val exoPlayer = remember {
         ExoPlayer.Builder(context).build().apply {
@@ -161,7 +173,7 @@ fun ReviewScreen(
                 if (locationNeedsConfirmation) {
                     Spacer(Modifier.height(12.dp))
                     OutlinedButton(
-                        onClick = { onConfirmLocation(effectiveLocation!!) },
+                        onClick = onConfirmLocation,
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("Confirm Location") }
                 }

@@ -74,55 +74,34 @@ considered rather than forgotten.
 (capture side), `server/src/main/kotlin/com/trafficwatch/server/geo/`
 (OSM street resolution side)
 
-- **The client-side half of this is shipped** (2026-08-07,
-  `feature/confirmlocation/ConfirmLocationScreen.kt`): the Review screen
-  now shows a "Confirm Location" step whenever `accuracy > 10m`, letting
-  the user drag the pin (constrained to `accuracy × 1.5` meters from the
-  original GPS point) before submitting, with the submitted accuracy
-  replaced by a fixed 5m "user-confirmed" value regardless of whether the
-  pin was actually moved. **The server-side half remains open** - the
-  server still searches a flat 50m Overpass radius regardless of a
-  report's accuracy; scaling that radius to the reported accuracy was
-  explicitly deferred as a separate, independent fix during the
-  client-side design (a report with strong accuracy today still gets the
-  same fixed 50m radius as one with a corrected/confirmed 5m accuracy -
-  there's no server-side benefit yet from the client-side improvement).
-  Original context, still accurate: a submitted report with 37.7m GPS
-  accuracy resolved to the wrong OSM street ("Street 4", a small
-  residential road) instead of the actual road in the video
-  ("Khayaban-e-Jinnah", a major arterial) — the true position was ~56m
-  from the reported point, exceeding both the phone's own accuracy
-  estimate and the server's fixed 50m search radius.
-  *(added 2026-08-02, client-side half shipped 2026-08-07)*
+- **Shipped 2026-08-08** (`StreetDirectionResolver.kt`,
+  `docs/superpowers/specs/2026-08-08-osm-street-direction-resolution-accuracy-design.md`):
+  both the client-side (2026-08-07) and server-side halves of the
+  weak-GPS-accuracy problem are now closed, plus the separate
+  divided-carriageway misjudgment risk below. The server's Overpass search
+  radius now scales with the report's own accuracy
+  (`clamp(accuracy × 2.0, 50m, 200m)`, config-driven via `OsmProperties`),
+  the nearest-way selection is ambiguity-aware (two different-named
+  candidates within accuracy-meters of each other in distance downgrade to
+  `Unknown` instead of confidently picking one - scanning past same-name
+  sibling segments to find the nearest genuinely different street), and the
+  lat/lon result cache is radius-and-accuracy-aware so a result cached from
+  a narrow/precise lookup is never wrongly served to a later
+  wider/less-precise one. Original context: a submitted report with 37.7m
+  GPS accuracy once resolved to the wrong OSM street ("Street 4") instead
+  of the actual road ("Khayaban-e-Jinnah") — the true position was ~56m
+  from the reported point, exceeding both the phone's accuracy estimate and
+  the old fixed 50m search radius.
 
-- **A divided-carriageway one-way road can be misjudged as a wrong-way
-  violation on the far carriageway.** Found during the final review of the
-  2026-08-04 OSM-lookup-retry/contested-corridor plan
-  (`docs/superpowers/specs/2026-08-04-osm-lookup-retry-and-contested-corridor-fix-design.md`).
-  That plan's fix lets a candidate in a "contested" (bimodal-bearing)
-  corridor reach OSM evidence when at least one other corridor member
-  shares its bearing (`ClipFlowAnalyzer.hasPeerSupport`) - the design
-  reasoned this was safe because a genuinely two-way road is already caught
-  earlier by `DirectionResolution.TwoWay`. That reasoning has a gap: a real
-  divided road (physically separated carriageways, opposite legal
-  directions) is mapped in OSM as *two separate ways, each tagged
-  `oneway=yes`* - not one `oneway=no` way - so `StreetDirectionResolver`
-  picks whichever carriageway is nearest and returns `OneWay`, never
-  `TwoWay`. If `corridors.py`'s direction-agnostic spatial clustering
-  (correct, intentional per the 2026-08-02 corridor-cohesion fix) merges
-  both carriageways into one corridor, every legally-driving vehicle on the
-  far carriageway now has peer support from its own carriageway-mates and
-  gets evaluated against the near carriageway's OSM tag alone - a real risk
-  of confirming a legally-driving motorist as a wrong-way violator, with
-  their plate captured. Considered net-positive to ship anyway (the
-  status quo - the contested-corridor gate blocking ALL confirmations
-  whenever any traffic shares a corridor - demonstrably broke the primary
-  one-way-street use case this whole system exists for), but this specific
-  gap needs a real fix: either have `StreetDirectionResolver` detect a
-  second nearby way that's roughly anti-parallel and also one-way (the
-  dual-carriageway signature) and downgrade to `TwoWay`/`Unknown`, or
-  require more than OSM-alone evidence when a corridor is contested.
-  *(added 2026-08-04)*
+- **Divided-carriageway false-positive risk - shipped 2026-08-08** (same
+  plan as above): `StreetDirectionResolver` now detects a second nearby way
+  that's also `oneway`-tagged and anti-parallel to the chosen way's legal
+  bearing (measured by genuine segment-to-segment separation, within 30m),
+  and downgrades the result to `Unknown` instead of confidently asserting a
+  legal direction from just one carriageway's tag - closing the real risk
+  (found 2026-08-04) of confirming a legally-driving motorist on the far
+  carriageway as a wrong-way violator.
+  *(added 2026-08-02 and 2026-08-04, both shipped 2026-08-08)*
 
 ## Direction analysis (compass + moving camera)
 

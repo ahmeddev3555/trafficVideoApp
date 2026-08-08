@@ -1,4 +1,4 @@
-﻿package com.trafficwatch.server.geo
+package com.trafficwatch.server.geo
 
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock.aResponse
@@ -274,6 +274,98 @@ class StreetDirectionResolverTest @Autowired constructor(
 
         wireMockServer.verify(2, postRequestedFor(urlMatching(".*")))
     }
+
+    @Test
+    fun `a confident result cached from a precise report is not served to a later imprecise report that should be ambiguous`() {
+        wireMockServer.stubFor(
+            post(urlMatching(".*")).willReturn(
+                okJson(
+                    twoWayOverpassResponseJson(
+                        wayAId = 401, wayAName = "Precise Street A", wayAOneway = "yes", wayALatOffsetDegrees = 0.000100, wayAWestToEast = true,
+                        wayBId = 402, wayBName = "Precise Street B", wayBOneway = null, wayBLatOffsetDegrees = 0.000200, wayBWestToEast = true,
+                        baseLat = 67.000000, baseLon = 67.000000,
+                    ),
+                ),
+            ),
+        )
+
+        // accuracy 3.0: gap ~11.1m is not < 3.0, so this resolves confidently to OneWay and gets cached
+        // with searchRadiusMeters=50.0 (floor) and accuracyMeters=3.0.
+        val precise = streetDirectionResolver.resolve(BigDecimal("67.000000"), BigDecimal("67.000000"), accuracyMeters = 3.0)
+        assertThat(precise).isInstanceOf(DirectionResolution.OneWay::class.java)
+
+        // accuracy 20.0: same bucket, same radius (still 50.0 after clamping), but the cached row's
+        // accuracyMeters (3.0) is LESS than what this lookup needs (20.0) - must NOT be served from
+        // cache. A fresh resolve at accuracy=20.0 must trigger the ambiguity check (gap ~11.1m < 20.0).
+        val imprecise = streetDirectionResolver.resolve(BigDecimal("67.000000"), BigDecimal("67.000000"), accuracyMeters = 20.0)
+        assertThat(imprecise).isInstanceOf(DirectionResolution.Unknown::class.java)
+
+        wireMockServer.verify(2, postRequestedFor(urlMatching(".*")))
+    }
+
+    @Test
+    fun `does not downgrade when the point sits between two anti-parallel oneway ways that are genuinely far apart`() {
+        // Way A ~55.6m north of the point; Way B ~55.6m south of the point (negative offset) -
+        // their distances-to-point are nearly equal (so the old buggy metric would see a ~0 gap
+        // and wrongly fire), but their actual physical separation is ~111.2m, well outside the 30m cap.
+        // Both ways share a name so the ambiguity check's same-street exemption applies (their
+        // near-equal distances-to-point would otherwise trigger the ambiguity downgrade first) -
+        // this isolates the divided-carriageway check, which is what this test targets.
+        wireMockServer.stubFor(
+            post(urlMatching(".*")).willReturn(
+                okJson(
+                    twoWayOverpassResponseJson(
+                        wayAId = 403, wayAName = "Far Ave", wayAOneway = "yes", wayALatOffsetDegrees = 0.000500, wayAWestToEast = true,
+                        wayBId = 404, wayBName = "Far Ave", wayBOneway = "yes", wayBLatOffsetDegrees = -0.000500, wayBWestToEast = false,
+                        baseLat = 68.000000, baseLon = 68.000000,
+                    ),
+                ),
+            ),
+        )
+
+        val result = streetDirectionResolver.resolve(BigDecimal("68.000000"), BigDecimal("68.000000"), accuracyMeters = 1.0)
+
+        assertThat(result).isInstanceOf(DirectionResolution.OneWay::class.java)
+    }
+
+    @Test
+    fun `ambiguity check looks past a same-name sibling to find a genuinely different, ambiguous street`() {
+        // Way A seg1 (best, ~11.1m), Way A seg2 (same name, ~13.9m - would be the naive runner-up
+        // and would wrongly mask the ambiguity if only candidates[1] were checked), Way B
+        // (different name, ~14.5m - gap from best is only ~3.4m, well inside the 10.0m accuracy
+        // below, and MUST trigger the ambiguity downgrade).
+        val responseJson = """
+            {"elements": [
+              {"type": "way", "id": 501, "tags": {"name": "Shared Street", "oneway": "yes"},
+               "geometry": [{"lat": 69.000100, "lon": 68.999000}, {"lat": 69.000100, "lon": 69.001000}]},
+              {"type": "way", "id": 502, "tags": {"name": "Shared Street", "oneway": "yes"},
+               "geometry": [{"lat": 69.000125, "lon": 68.999000}, {"lat": 69.000125, "lon": 69.001000}]},
+              {"type": "way", "id": 503, "tags": {"name": "Different Street"},
+               "geometry": [{"lat": 69.000130, "lon": 68.999000}, {"lat": 69.000130, "lon": 69.001000}]}
+            ]}
+        """.trimIndent()
+        wireMockServer.stubFor(post(urlMatching(".*")).willReturn(okJson(responseJson)))
+
+        val result = streetDirectionResolver.resolve(BigDecimal("69.000000"), BigDecimal("69.000000"), accuracyMeters = 10.0)
+
+        assertThat(result).isInstanceOf(DirectionResolution.Unknown::class.java)
+    }
+
+    @Test
+    fun `a radius that does not round evenly to 2 decimal places is still reused on a repeat lookup`() {
+        wireMockServer.stubFor(
+            post(urlMatching(".*")).willReturn(okJson(overpassResponseJson(oneway = "yes", name = "Odd Radius Street"))),
+        )
+
+        // accuracy 33.332 -> radius 66.664, which does not round evenly to 2 decimal places.
+        streetDirectionResolver.resolve(BigDecimal("70.000000"), BigDecimal("70.000000"), accuracyMeters = 33.332)
+        // Same accuracy again - if the stored radius rounded DOWN (66.66 < 66.664), this would
+        // incorrectly miss the cache and issue a second Overpass call.
+        streetDirectionResolver.resolve(BigDecimal("70.000000"), BigDecimal("70.000000"), accuracyMeters = 33.332)
+
+        wireMockServer.verify(1, postRequestedFor(urlMatching(".*")))
+    }
+
     private fun overpassResponseJson(oneway: String?, name: String): String {
         val tagsJson = buildString {
             append(""""name": "$name"""")

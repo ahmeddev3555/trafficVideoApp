@@ -9,6 +9,9 @@ import java.time.OffsetDateTime
 private const val DIVIDED_CARRIAGEWAY_ANTI_PARALLEL_TOLERANCE_DEGREES = 45.0
 private const val DIVIDED_CARRIAGEWAY_MAX_DISTANCE_GAP_METERS = 30.0
 
+private val ONEWAY_FORWARD_VALUES = setOf("yes", "true", "1")
+private val ONEWAY_REVERSE_VALUES = setOf("-1", "reverse")
+
 private data class WayCandidate(
     val way: OverpassElement,
     val nodes: List<GeoPoint>,
@@ -31,27 +34,28 @@ class StreetDirectionResolver(
 ) {
 
     fun resolve(latitude: BigDecimal, longitude: BigDecimal, accuracyMeters: Double): DirectionResolution {
+        val clampedAccuracy = accuracyMeters.coerceIn(1.0, osmProperties.maxSearchRadiusMeters.toDouble())
         val latBucket = roundToBucket(latitude)
         val lonBucket = roundToBucket(longitude)
         val searchRadius = computeSearchRadius(
-            accuracyMeters,
+            clampedAccuracy,
             osmProperties.searchRadiusMeters.toDouble(),
             osmProperties.radiusAccuracyMultiplier,
             osmProperties.maxSearchRadiusMeters.toDouble(),
         )
 
         val cached = cacheRepository.findByLatBucketAndLonBucket(latBucket, lonBucket)
-        if (cached != null && cached.searchRadiusMeters.toDouble() >= searchRadius) {
+        if (cached != null && cached.searchRadiusMeters.toDouble() >= searchRadius && cached.accuracyMeters.toDouble() >= clampedAccuracy) {
             return cached.toDirectionResolution()
         }
 
         val resolution = try {
-            resolveFresh(latitude.toDouble(), longitude.toDouble(), searchRadius, accuracyMeters)
+            resolveFresh(latitude.toDouble(), longitude.toDouble(), searchRadius, clampedAccuracy)
         } catch (ex: OsmLookupException) {
             return DirectionResolution.LookupFailed(ex.message ?: "OSM lookup failed")
         }
 
-        persist(cached, latBucket, lonBucket, searchRadius, resolution)
+        persist(cached, latBucket, lonBucket, searchRadius, clampedAccuracy, resolution)
         return resolution
     }
 
@@ -69,22 +73,21 @@ class StreetDirectionResolver(
         val best = candidates.firstOrNull() ?: return DirectionResolution.NotFound
         val streetName = best.way.tags?.get("name") ?: reverseGeocodeStreetName(lat, lon)
 
-        val runnerUp = candidates.getOrNull(1)
-        if (runnerUp != null) {
-            val bestNameTag = best.way.tags?.get("name")
-            val runnerUpNameTag = runnerUp.way.tags?.get("name")
-            val sameStreet = bestNameTag != null && runnerUpNameTag != null && bestNameTag == runnerUpNameTag
-            if (!sameStreet && (runnerUp.distanceMeters - best.distanceMeters) < accuracyMeters) {
-                return DirectionResolution.Unknown(streetName)
-            }
+        val bestNameTag = best.way.tags?.get("name")
+        val nearestDifferentStreet = candidates.drop(1).firstOrNull { candidate ->
+            val nameTag = candidate.way.tags?.get("name")
+            !(bestNameTag != null && nameTag != null && bestNameTag == nameTag)
+        }
+        if (nearestDifferentStreet != null && (nearestDifferentStreet.distanceMeters - best.distanceMeters) < accuracyMeters) {
+            return DirectionResolution.Unknown(streetName)
         }
 
         val resolution = when (best.way.tags?.get("oneway")) {
-            "yes", "true", "1" -> DirectionResolution.OneWay(
+            in ONEWAY_FORWARD_VALUES -> DirectionResolution.OneWay(
                 streetName,
                 BearingMath.initialBearingDegrees(best.nodes[best.segmentIndex], best.nodes[best.segmentIndex + 1]),
             )
-            "-1", "reverse" -> DirectionResolution.OneWay(
+            in ONEWAY_REVERSE_VALUES -> DirectionResolution.OneWay(
                 streetName,
                 BearingMath.initialBearingDegrees(best.nodes[best.segmentIndex + 1], best.nodes[best.segmentIndex]),
             )
@@ -109,19 +112,24 @@ class StreetDirectionResolver(
      * separately-tagged, oppositely-legal carriageways.
      */
     private fun hasAntiParallelOneWayNeighbor(best: WayCandidate, candidates: List<WayCandidate>): Boolean {
-        val onewayTags = setOf("yes", "true", "1", "-1", "reverse")
         fun legalBearing(candidate: WayCandidate): Double = when (candidate.way.tags?.get("oneway")) {
-            "-1", "reverse" -> BearingMath.initialBearingDegrees(candidate.nodes[candidate.segmentIndex + 1], candidate.nodes[candidate.segmentIndex])
+            in ONEWAY_REVERSE_VALUES -> BearingMath.initialBearingDegrees(candidate.nodes[candidate.segmentIndex + 1], candidate.nodes[candidate.segmentIndex])
             else -> BearingMath.initialBearingDegrees(candidate.nodes[candidate.segmentIndex], candidate.nodes[candidate.segmentIndex + 1])
         }
         val bestBearing = legalBearing(best)
 
         return candidates.any { other ->
             other !== best &&
-                other.way.tags?.get("oneway") in onewayTags &&
-                kotlin.math.abs(other.distanceMeters - best.distanceMeters) <= DIVIDED_CARRIAGEWAY_MAX_DISTANCE_GAP_METERS &&
+                other.way.tags?.get("oneway") in (ONEWAY_FORWARD_VALUES + ONEWAY_REVERSE_VALUES) &&
+                BearingMath.distanceToSegmentMeters(segmentMidpoint(best), other.nodes[other.segmentIndex], other.nodes[other.segmentIndex + 1]) <= DIVIDED_CARRIAGEWAY_MAX_DISTANCE_GAP_METERS &&
                 BearingMath.angularDifferenceDegrees(legalBearing(other), bestBearing) > (180.0 - DIVIDED_CARRIAGEWAY_ANTI_PARALLEL_TOLERANCE_DEGREES)
         }
+    }
+
+    private fun segmentMidpoint(candidate: WayCandidate): GeoPoint {
+        val a = candidate.nodes[candidate.segmentIndex]
+        val b = candidate.nodes[candidate.segmentIndex + 1]
+        return GeoPoint((a.latitude + b.latitude) / 2.0, (a.longitude + b.longitude) / 2.0)
     }
 
     private fun reverseGeocodeStreetName(lat: Double, lon: Double): String? =
@@ -138,15 +146,18 @@ class StreetDirectionResolver(
         latBucket: BigDecimal,
         lonBucket: BigDecimal,
         searchRadiusMeters: Double,
+        accuracyMeters: Double,
         resolution: DirectionResolution,
     ) {
         val entity = existing ?: OsmLookupCache(
             latBucket = latBucket,
             lonBucket = lonBucket,
             searchRadiusMeters = searchRadiusMeters.toBigDecimal(),
+            accuracyMeters = accuracyMeters.toBigDecimal(),
             directionState = resolution.toDirectionState(),
         )
         entity.searchRadiusMeters = searchRadiusMeters.toBigDecimal()
+        entity.accuracyMeters = accuracyMeters.toBigDecimal()
         entity.streetName = resolution.streetNameOrNull()
         entity.directionState = resolution.toDirectionState()
         entity.legalBearingDegrees = (resolution as? DirectionResolution.OneWay)
@@ -184,7 +195,7 @@ class StreetDirectionResolver(
     }
 }
 
-private fun Double.toBigDecimal(): BigDecimal = BigDecimal.valueOf(this)
+private fun Double.toBigDecimal(): BigDecimal = BigDecimal.valueOf(this).setScale(2, RoundingMode.CEILING)
 
 /**
  * Search radius scaled from the report's GPS accuracy - wider accuracy uncertainty means a

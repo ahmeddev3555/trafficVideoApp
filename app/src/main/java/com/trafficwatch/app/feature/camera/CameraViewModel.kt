@@ -119,6 +119,7 @@ class CameraViewModel @Inject constructor(
                     longitude = declinationReference.longitude,
                     altitude = declinationReference.altitude,
                     intervalMs = ROTATION_SAMPLE_INTERVAL_MS,
+                    currentRotation = cameraController.currentRotation,
                 )
             } else {
                 // No location fix available for declination correction - falls back to
@@ -127,6 +128,7 @@ class CameraViewModel @Inject constructor(
                 compassProvider.observeHeadings(
                     latitude = 0.0, longitude = 0.0, altitude = 0.0,
                     intervalMs = ROTATION_SAMPLE_INTERVAL_MS,
+                    currentRotation = cameraController.currentRotation,
                 )
             }
             headings.filterNotNull().collect { heading ->
@@ -144,11 +146,12 @@ class CameraViewModel @Inject constructor(
                     latitude = declinationReference.latitude,
                     longitude = declinationReference.longitude,
                     altitude = declinationReference.altitude,
+                    rotation = cameraController.currentRotation.value,
                 )
             } else {
                 // No location fix available for declination correction - falls back to a
                 // magnetic-north-only heading rather than skipping compass capture entirely.
-                compassProvider.getSnapshot(latitude = 0.0, longitude = 0.0, altitude = 0.0)
+                compassProvider.getSnapshot(latitude = 0.0, longitude = 0.0, altitude = 0.0, rotation = cameraController.currentRotation.value)
             }
         }
 

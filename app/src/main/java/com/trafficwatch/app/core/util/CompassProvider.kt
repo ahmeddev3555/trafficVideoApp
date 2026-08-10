@@ -5,8 +5,10 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.view.Surface
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
@@ -19,6 +21,20 @@ import kotlin.math.sin
 
 private const val DEFAULT_TIMEOUT_MS = 2_000L
 private const val SAMPLE_COUNT = 3
+
+/**
+ * Which [SensorManager.remapCoordinateSystem] axis pair corrects a rotation-vector
+ * reading for [rotation] (a `Surface.ROTATION_*` value) - the device's *current*
+ * physical orientation - as opposed to [SensorManager.getOrientation]'s default of
+ * always reporting relative to the device's fixed natural (portrait) orientation.
+ * Standard Android compass-correction pattern.
+ */
+internal fun remapAxesFor(rotation: Int): Pair<Int, Int> = when (rotation) {
+    Surface.ROTATION_90 -> SensorManager.AXIS_Y to SensorManager.AXIS_MINUS_X
+    Surface.ROTATION_180 -> SensorManager.AXIS_MINUS_X to SensorManager.AXIS_MINUS_Y
+    Surface.ROTATION_270 -> SensorManager.AXIS_MINUS_Y to SensorManager.AXIS_X
+    else -> SensorManager.AXIS_X to SensorManager.AXIS_Y
+}
 
 /**
  * Returns a single true-north compass heading snapshot at the moment of recording start -
@@ -42,9 +58,10 @@ class CompassProvider @Inject constructor(
         latitude: Double,
         longitude: Double,
         altitude: Double,
+        rotation: Int,
         timeoutMs: Long = DEFAULT_TIMEOUT_MS,
     ): Float? = withTimeoutOrNull(timeoutMs) {
-        val magneticAzimuthDegrees = readAveragedAzimuthDegrees() ?: return@withTimeoutOrNull null
+        val magneticAzimuthDegrees = readAveragedAzimuthDegrees(rotation) ?: return@withTimeoutOrNull null
         val declination = declinationDegrees(latitude, longitude, altitude)
         applyDeclination(magneticAzimuthDegrees, declination)
     }
@@ -63,6 +80,7 @@ class CompassProvider @Inject constructor(
         longitude: Double,
         altitude: Double,
         intervalMs: Long,
+        currentRotation: StateFlow<Int>,
     ): Flow<Float?> = callbackFlow {
         val sensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
         if (sensor == null) {
@@ -73,6 +91,7 @@ class CompassProvider @Inject constructor(
 
         val declination = declinationDegrees(latitude, longitude, altitude)
         val rotationMatrix = FloatArray(9)
+        val remappedMatrix = FloatArray(9)
         val orientation = FloatArray(3)
         var lastEmittedAt = 0L
 
@@ -88,7 +107,7 @@ class CompassProvider @Inject constructor(
                 // eventually overflowing WorkManager's Data size limit at submit time.
                 if (now - lastEmittedAt < intervalMs) return
                 lastEmittedAt = now
-                val magneticAzimuthDegrees = rawAzimuthDegrees(event, rotationMatrix, orientation)
+                val magneticAzimuthDegrees = rawAzimuthDegrees(event, currentRotation.value, rotationMatrix, remappedMatrix, orientation)
                 trySend(applyDeclination(magneticAzimuthDegrees, declination))
             }
 
@@ -99,7 +118,7 @@ class CompassProvider @Inject constructor(
         awaitClose { sensorManager.unregisterListener(listener) }
     }
 
-    private suspend fun readAveragedAzimuthDegrees(): Float? = suspendCancellableCoroutine { continuation ->
+    private suspend fun readAveragedAzimuthDegrees(rotation: Int): Float? = suspendCancellableCoroutine { continuation ->
         val sensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
         if (sensor == null) {
             continuation.resume(null)
@@ -108,11 +127,12 @@ class CompassProvider @Inject constructor(
 
         val samples = mutableListOf<Float>()
         val rotationMatrix = FloatArray(9)
+        val remappedMatrix = FloatArray(9)
         val orientation = FloatArray(3)
 
         val listener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent) {
-                samples.add(rawAzimuthDegrees(event, rotationMatrix, orientation))
+                samples.add(rawAzimuthDegrees(event, rotation, rotationMatrix, remappedMatrix, orientation))
 
                 if (samples.size >= SAMPLE_COUNT) {
                     sensorManager.unregisterListener(this)
@@ -129,12 +149,20 @@ class CompassProvider @Inject constructor(
         continuation.invokeOnCancellation { sensorManager.unregisterListener(listener) }
     }
 
-    // rotationMatrix/orientation are reused across calls by both callers below - safe because
-    // a single SensorEventListener's onSensorChanged is always invoked serially on one thread,
-    // never concurrently.
-    private fun rawAzimuthDegrees(event: SensorEvent, rotationMatrix: FloatArray, orientation: FloatArray): Float {
+    // rotationMatrix/remappedMatrix/orientation are reused across calls by both callers
+    // below - safe because a single SensorEventListener's onSensorChanged is always
+    // invoked serially on one thread, never concurrently.
+    private fun rawAzimuthDegrees(
+        event: SensorEvent,
+        rotation: Int,
+        rotationMatrix: FloatArray,
+        remappedMatrix: FloatArray,
+        orientation: FloatArray,
+    ): Float {
         SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
-        SensorManager.getOrientation(rotationMatrix, orientation)
+        val (axisX, axisY) = remapAxesFor(rotation)
+        SensorManager.remapCoordinateSystem(rotationMatrix, axisX, axisY, remappedMatrix)
+        SensorManager.getOrientation(remappedMatrix, orientation)
         return (Math.toDegrees(orientation[0].toDouble()).toFloat() + 360f) % 360f
     }
 

@@ -37,6 +37,9 @@ class CameraController @Inject constructor(
     private val _recordingState = MutableStateFlow<RecordingState>(RecordingState.Idle)
     val recordingState = _recordingState.asStateFlow()
 
+    private val _currentRotation = MutableStateFlow(Surface.ROTATION_0)
+    val currentRotation = _currentRotation.asStateFlow()
+
     private var videoCapture: VideoCapture<Recorder>? = null
     private var activeRecording: Recording? = null
 
@@ -58,6 +61,7 @@ class CameraController @Inject constructor(
                     else -> Surface.ROTATION_0
                 }
                 videoCapture?.targetRotation = rotation
+                _currentRotation.value = rotation
             }
         }.also { orientationEventListener = it }
 

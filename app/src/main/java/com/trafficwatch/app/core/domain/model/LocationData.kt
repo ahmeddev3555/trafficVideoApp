@@ -14,5 +14,9 @@ data class LocationData(
     val capturedAt: Long,
     // True-north compass heading the camera was pointed at recording start - null if no
     // rotation-vector sensor exists or the read timed out. See CompassProvider.
-    val compassHeadingDegrees: Float? = null
+    val compassHeadingDegrees: Float? = null,
+    // Zoom ratio (1.0-2.0) active when recording started, captured once - null on
+    // submissions from app versions predating zoom support, or if capture failed. See
+    // CameraController.currentZoomRatio.
+    val zoomRatio: Float? = null
 )

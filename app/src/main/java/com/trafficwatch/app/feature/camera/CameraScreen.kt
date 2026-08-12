@@ -8,10 +8,14 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -25,6 +29,7 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Snackbar
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -36,9 +41,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -56,6 +63,7 @@ fun CameraScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val recordingState by viewModel.recordingState.collectAsStateWithLifecycle()
+    val currentZoomRatio by viewModel.currentZoomRatio.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
     val context = LocalContext.current
     val previewView = remember { PreviewView(context) }
@@ -109,19 +117,31 @@ fun CameraScreen(
 
     Box(modifier = Modifier.fillMaxSize()) {
 
-        // Camera preview
+        // Camera preview - pinch anywhere to zoom (no-op once recording has started,
+        // since CameraController.setZoomRatio has no effect on VideoCapture's already-
+        // locked-in framing, so there's no reason to keep reading gesture events then).
         AndroidView(
             factory = { previewView },
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(isRecording) {
+                    if (!isRecording) {
+                        detectTransformGestures { _, _, zoom, _ ->
+                            viewModel.onZoomGesture(zoom)
+                        }
+                    }
+                }
         )
 
-        // GPS status badge (top-left)
-        Box(
+        // GPS status badge + zoom level, stacked (top-left)
+        Column(
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .padding(16.dp)
         ) {
             GpsBadge(uiState.locationState)
+            Spacer(Modifier.height(8.dp))
+            ZoomBadge(currentZoomRatio)
         }
 
         // Recording timer (top-right)
@@ -142,6 +162,38 @@ fun CameraScreen(
                         color = Color.White,
                         style = MaterialTheme.typography.labelLarge
                     )
+                }
+            }
+        }
+
+        // Quick-select zoom buttons (bottom-centre, above the record FAB) - hidden once
+        // recording has started, same reasoning as the pinch gesture above.
+        if (!isRecording) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 112.dp)
+                    .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(16.dp))
+                    .padding(3.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                listOf(1.0f, 1.5f, 2.0f).forEach { ratio ->
+                    val selected = kotlin.math.abs(currentZoomRatio - ratio) < 0.01f
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = if (selected) Color.White else Color.Transparent,
+                        modifier = Modifier
+                            .padding(2.dp)
+                            .clickable { viewModel.setZoomRatio(ratio) }
+                    ) {
+                        Text(
+                            text = formatZoomLabel(ratio),
+                            color = if (selected) Color.Black else Color.White,
+                            style = MaterialTheme.typography.labelMedium,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        )
+                    }
                 }
             }
         }
@@ -263,4 +315,21 @@ private fun RecordingDot() {
 private fun formatElapsed(ms: Long): String {
     val totalSeconds = ms / 1000
     return "%02d:%02d".format(totalSeconds / 60, totalSeconds % 60)
+}
+
+@Composable
+private fun ZoomBadge(zoomRatio: Float) {
+    Row(
+        modifier = Modifier
+            .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
+            .padding(horizontal = 10.dp, vertical = 4.dp)
+    ) {
+        Text(formatZoomLabel(zoomRatio), color = Color.White, style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+/** "1x", "1.5x", "1.7x" - one decimal place, omitted when the value is a whole number. */
+private fun formatZoomLabel(ratio: Float): String {
+    val rounded = (ratio * 10).toInt() / 10.0
+    return if (rounded == rounded.toInt().toDouble()) "${rounded.toInt()}x" else "${rounded}x"
 }

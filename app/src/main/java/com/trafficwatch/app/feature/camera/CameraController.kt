@@ -3,6 +3,7 @@ package com.trafficwatch.app.feature.camera
 import android.content.Context
 import android.view.OrientationEventListener
 import android.view.Surface
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -20,9 +21,29 @@ import androidx.lifecycle.LifecycleOwner
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlin.math.max
+import kotlin.math.min
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
+
+/** This app's own hard cap, independent of whatever a device's hardware would otherwise allow. */
+private const val APP_MAX_ZOOM_RATIO = 2.0f
+private const val APP_MIN_ZOOM_RATIO = 1.0f
+
+/**
+ * Clamps [requested] to the intersection of this app's own [APP_MIN_ZOOM_RATIO]/
+ * [APP_MAX_ZOOM_RATIO] cap and the device's actual supported range
+ * ([deviceMinZoomRatio]/[deviceMaxZoomRatio], from [androidx.camera.core.ZoomState]) - so
+ * [androidx.camera.core.CameraControl.setZoomRatio] is never called with a value outside
+ * what the device itself would accept, on a device whose own range doesn't happen to
+ * bracket this app's [1.0, 2.0] range exactly.
+ */
+internal fun clampZoomRatio(requested: Float, deviceMinZoomRatio: Float, deviceMaxZoomRatio: Float): Float {
+    val lowerBound = max(APP_MIN_ZOOM_RATIO, deviceMinZoomRatio)
+    val upperBound = min(APP_MAX_ZOOM_RATIO, deviceMaxZoomRatio)
+    return requested.coerceIn(lowerBound, upperBound)
+}
 
 sealed class RecordingState {
     object Idle : RecordingState()
@@ -40,6 +61,10 @@ class CameraController @Inject constructor(
     private val _currentRotation = MutableStateFlow(Surface.ROTATION_0)
     val currentRotation = _currentRotation.asStateFlow()
 
+    private val _currentZoomRatio = MutableStateFlow(APP_MIN_ZOOM_RATIO)
+    val currentZoomRatio = _currentZoomRatio.asStateFlow()
+
+    private var camera: Camera? = null
     private var videoCapture: VideoCapture<Recorder>? = null
     private var activeRecording: Recording? = null
 
@@ -103,13 +128,29 @@ class CameraController @Inject constructor(
 
             try {
                 cameraProvider.unbindAll()
-                cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector, preview, videoCapture)
+                camera = cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector, preview, videoCapture)
+                _currentZoomRatio.value = APP_MIN_ZOOM_RATIO
                 startOrientationTracking()
                 onBound()
             } catch (e: Exception) {
                 onError(e.message ?: "Camera bind failed")
             }
         }, ContextCompat.getMainExecutor(context))
+    }
+
+    /**
+     * Requests [requested] as the new zoom ratio, clamped via [clampZoomRatio] against both
+     * this app's own cap and the bound camera's actual supported range. A no-op before
+     * [bindCamera] has completed (no bound [Camera] yet) - the zoom controls are only shown
+     * once the preview is live, so this should not normally be reachable that early, but a
+     * stray call must not crash rather than silently do nothing.
+     */
+    fun setZoomRatio(requested: Float) {
+        val boundCamera = camera ?: return
+        val zoomState = boundCamera.cameraInfo.zoomState.value ?: return
+        val clamped = clampZoomRatio(requested, zoomState.minZoomRatio, zoomState.maxZoomRatio)
+        boundCamera.cameraControl.setZoomRatio(clamped)
+        _currentZoomRatio.value = clamped
     }
 
     @androidx.annotation.OptIn(androidx.camera.video.ExperimentalPersistentRecording::class)

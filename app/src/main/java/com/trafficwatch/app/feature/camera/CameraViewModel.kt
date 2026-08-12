@@ -48,10 +48,12 @@ class CameraViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(CameraUiState())
     val uiState = _uiState.asStateFlow()
     val recordingState = cameraController.recordingState
+    val currentZoomRatio = cameraController.currentZoomRatio
 
     private var maxDurationJob: Job? = null
     private var snapshotLocation: LocationData? = null
     private var snapshotCompassHeading: Float? = null
+    private var snapshotZoomRatio: Float? = null
     private var recordingStartedAt: Long = 0L
     private val locationSamples = mutableListOf<LocationData>()
     private var samplingJob: Job? = null
@@ -87,6 +89,17 @@ class CameraViewModel @Inject constructor(
         )
     }
 
+    /** Absolute zoom level, from a pill button tap. */
+    fun setZoomRatio(ratio: Float) = cameraController.setZoomRatio(ratio)
+
+    /**
+     * Relative zoom, from a pinch gesture's per-frame scale factor (Compose's
+     * `detectTransformGestures` reports zoom as a multiplier on the CURRENT scale each
+     * callback, not an absolute target - e.g. 1.02 means "2% bigger than a moment ago",
+     * not "set zoom to 1.02x").
+     */
+    fun onZoomGesture(scaleFactor: Float) = cameraController.setZoomRatio(currentZoomRatio.value * scaleFactor)
+
     fun newRawFile(): File = fileUtil.newRawRecordingFile()
 
     fun onStartRecording(outputFile: File) {
@@ -98,6 +111,7 @@ class CameraViewModel @Inject constructor(
         maxDurationJob?.cancel()
 
         recordingStartedAt = System.currentTimeMillis()
+        snapshotZoomRatio = cameraController.currentZoomRatio.value
 
         // The record button only enables once locationState is Fixed, so this is a real
         // fix, not a stale/placeholder one - used for magnetic declination without waiting
@@ -179,7 +193,7 @@ class CameraViewModel @Inject constructor(
     }
 
     fun getSnapshotLocation(): LocationData? =
-        snapshotLocation?.copy(compassHeadingDegrees = snapshotCompassHeading)
+        snapshotLocation?.copy(compassHeadingDegrees = snapshotCompassHeading, zoomRatio = snapshotZoomRatio)
 
     fun getLocationSamples(): List<LocationData> = locationSamples.toList()
 

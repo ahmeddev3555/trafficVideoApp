@@ -65,6 +65,11 @@ class UploadWorker @AssistedInject constructor(
         } else {
             null
         }
+        val zoomRatio = if (inputData.hasKeyWithValueOfType<Float>(KEY_ZOOM_RATIO)) {
+            inputData.getFloat(KEY_ZOOM_RATIO, 0f)
+        } else {
+            null
+        }
         val locationSamplesJson = inputData.getString(KEY_LOCATION_SAMPLES_JSON)
         val rotationSamplesJson = inputData.getString(KEY_ROTATION_SAMPLES_JSON)
 
@@ -106,6 +111,7 @@ class UploadWorker @AssistedInject constructor(
                 durationMs = durationMs.toString().toRequestBody(),
                 deviceId = tokenStore.getOrCreateDeviceId().toRequestBody(),
                 compassHeadingDegrees = compassHeadingDegrees?.toString()?.toRequestBody(),
+                zoomRatio = zoomRatio?.toString()?.toRequestBody(),
                 locationSamples = locationSamplesJson?.toRequestBody(),
                 rotationSamples = rotationSamplesJson?.toRequestBody()
             )
@@ -144,6 +150,7 @@ class UploadWorker @AssistedInject constructor(
         const val KEY_RECORDED_AT = "recorded_at"
         const val KEY_DURATION_MS = "duration_ms"
         const val KEY_COMPASS_HEADING = "compass_heading_degrees"
+        const val KEY_ZOOM_RATIO = "zoom_ratio"
         const val KEY_LOCATION_SAMPLES_JSON = "location_samples_json"
         const val KEY_ROTATION_SAMPLES_JSON = "rotation_samples_json"
         const val KEY_PROGRESS = "progress"
@@ -179,6 +186,7 @@ class UploadWorker @AssistedInject constructor(
             // Float, so presence of the key (checked via hasKeyWithValueOfType in doWork)
             // is what distinguishes "unavailable" from "present."
             location.compassHeadingDegrees?.let { builder.putFloat(KEY_COMPASS_HEADING, it) }
+            location.zoomRatio?.let { builder.putFloat(KEY_ZOOM_RATIO, it) }
             // Same "presence, not sentinel" convention: an empty list omits the key entirely
             // rather than storing a "[]" string, so doWork()'s getString(...) naturally
             // returns null (matching "no samples captured") instead of an empty-array string.

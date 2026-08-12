@@ -53,20 +53,49 @@ considered rather than forgotten.
   no-map on a transient accuracy dip.
   *(added 2026-08-06, found during recording-screen-heading-map final review)*
 
-- **The heading shown on the recording-screen map (and captured in
-  `rotation_samples`) reflects the phone's physical top-of-device axis, not
-  necessarily the camera's optical axis.** While filming in landscape
-  orientation (the natural way to hold a phone for video), the top-of-device
-  axis is roughly 90° off from the direction the camera lens is actually
-  pointing. This is pre-existing capture semantics (shared with
-  `rotation_samples`, used for direction analysis server-side), not
-  something the heading-map feature introduced - but a user looking at the
-  new live map, reading the pin as "where the camera points," could be
-  misled by up to ~90° depending on how they're holding the phone. Would
-  need either an orientation-aware remap (portrait vs. landscape,
-  potentially device-rotation-sensor-driven) or explicit UI framing that
-  the value represents device heading, not camera-lens heading.
-  *(added 2026-08-06, found during recording-screen-heading-map final review)*
+- **Shipped 2026-08-12** (`CameraController.kt`, `CompassProvider.kt`,
+  `docs/superpowers/specs/2026-08-10-recording-heading-rotation-correction-design.md`):
+  the heading captured during recording (`rotation_samples` and the
+  one-shot `compassHeadingDegrees` snapshot) previously reflected the
+  phone's physical top-of-device axis via `SensorManager.getOrientation()`,
+  which is always relative to the device's fixed natural (portrait)
+  orientation - a landscape-held recording reported a systematically wrong
+  heading, confirmed by an on-device test (portrait/landscape-left/
+  landscape-right facing the same direction produced three different
+  headings). `CompassProvider` now applies
+  `SensorManager.remapCoordinateSystem()` using `CameraController`'s
+  already-tracked `Surface.ROTATION_*` state, re-evaluated per sample so a
+  mid-recording re-orientation is reflected in later samples rather than
+  only the value at recording start. The final review independently traced
+  the correction against Android's real implementation and confirmed it's
+  mathematically correct for all four rotation states.
+
+- **Residual heading instability specifically in one landscape orientation,
+  found during the above fix's on-device verification.** Across 3 separate
+  on-device tests (2026-08-12), portrait consistently read stable and
+  clean, and one landscape orientation (`Surface.ROTATION_90`) settled
+  cleanly and agreed with portrait within ~6°, but the other
+  (`Surface.ROTATION_270`) was noisy or slow-to-settle in 2 of the 3
+  attempts - in the worst case, never stabilizing at all over ~6 seconds of
+  held-still recording, drifting across an 84° range. The final review's
+  independent math trace ruled out a sign/axis bug in the fix itself (the
+  correction is symmetric across all four rotation states) - the leading
+  hypothesis is that `SensorManager.getOrientation()`'s azimuth computation
+  is inherently more sensitive to small tilt-angle variations at some
+  device orientations than others (a known characteristic of this API, not
+  something the fix introduced - previously masked because landscape
+  recording was *always* wrong, so a stable-but-wrong reading was
+  indistinguishable from a noisy-and-wrong one). Not a new safety risk
+  (unstable orientation evidence is already handled conservatively by the
+  server's evidence-fusion pipeline, rather than being trusted to assert a
+  confident verdict), so shipping the fix as a net improvement was the
+  right call rather than blocking on this. Needs further investigation in
+  a controlled setting (magnetic-interference-free location, or averaging
+  the rotation-vector reading over a longer window) to determine whether
+  smoothing/filtering can close the gap, or whether it's an inherent
+  hardware/API limitation to document instead.
+  *(added 2026-08-06, root-caused and client-side fix shipped 2026-08-12,
+  residual instability found during that fix's on-device verification)*
 
 ## Location / GPS accuracy
 

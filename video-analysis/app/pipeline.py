@@ -48,8 +48,11 @@ class AnalysisPipeline:
 
         # A zoom ratio below 1.0 is physically meaningless (this app never zooms OUT past
         # 1x) and would shrink both scaled thresholds below their calibrated 1x values -
-        # clamp defensively rather than trust the caller.
-        effective_zoom_ratio = max(zoom_ratio, 1.0)
+        # clamp defensively rather than trust the caller. Likewise cap the upper bound at
+        # 2.0, the app's own documented hard cap on zoom - a crafted or buggy client could
+        # otherwise submit an extreme value (e.g. 1000) that isn't blocked by a floor-only
+        # clamp.
+        effective_zoom_ratio = max(min(zoom_ratio, 2.0), 1.0)
 
         # All frames share the source video's dimensions; read them off any one.
         any_frame = next(iter(tracks.values()))[0].frame

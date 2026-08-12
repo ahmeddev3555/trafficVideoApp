@@ -117,9 +117,11 @@ fun CameraScreen(
 
     Box(modifier = Modifier.fillMaxSize()) {
 
-        // Camera preview - pinch anywhere to zoom (no-op once recording has started,
-        // since CameraController.setZoomRatio has no effect on VideoCapture's already-
-        // locked-in framing, so there's no reason to keep reading gesture events then).
+        // Camera preview - pinch anywhere to zoom (gated off once recording has started).
+        // Zoom is a session-wide crop region that DOES affect the live VideoCapture stream,
+        // so this UI-level gate is a convenience, not the enforcement mechanism - the real
+        // lock is CameraController.setZoomRatio's own recording-state guard, which rejects
+        // zoom changes regardless of what the UI does or doesn't wire up.
         AndroidView(
             factory = { previewView },
             modifier = Modifier

@@ -149,6 +149,27 @@ def test_zoom_ratio_at_or_below_zero_is_clamped_to_1x_behavior():
     assert response.vehicles[0].corridor_id == 0
 
 
+def test_zoom_ratio_above_2x_is_clamped_to_2x_behavior():
+    frames = [
+        _make_frame(track_id=1, frame_index=i, bbox=(15.0, 10.0 * i, 25.0, 10.0 * i + 10.0))
+        for i in range(6)
+    ]
+    pipeline = AnalysisPipeline(
+        settings=_fake_settings(), detector=FakeDetector(frames), plate_reader=FakePlateReader()
+    )
+
+    # Must not raise (e.g. from a wildly oversized threshold) and must behave exactly
+    # like the app's own 2.0 hard cap - both the corridor assignment and the underlying
+    # displacement figure (which is directly driven by the zoom-scaled pixel threshold)
+    # must match zoom_ratio=2.0 exactly, since 1000.0 should be clamped down to it.
+    response_at_2x = pipeline.analyze("unused.mp4", zoom_ratio=2.0)
+    response_at_1000x = pipeline.analyze("unused.mp4", zoom_ratio=1000.0)
+
+    assert len(response_at_1000x.vehicles) == 1
+    assert response_at_1000x.vehicles[0].corridor_id == response_at_2x.vehicles[0].corridor_id == 0
+    assert response_at_1000x.vehicles[0].displacement_pixels == response_at_2x.vehicles[0].displacement_pixels
+
+
 def test_empty_video_returns_empty_response_with_zero_dimensions():
     pipeline = AnalysisPipeline(
         settings=_fake_settings(), detector=FakeDetector([]), plate_reader=FakePlateReader()

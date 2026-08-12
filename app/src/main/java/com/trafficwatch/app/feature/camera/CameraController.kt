@@ -144,8 +144,17 @@ class CameraController @Inject constructor(
      * [bindCamera] has completed (no bound [Camera] yet) - the zoom controls are only shown
      * once the preview is live, so this should not normally be reachable that early, but a
      * stray call must not crash rather than silently do nothing.
+     *
+     * Also a no-op once recording is active - zoom must stay locked to whatever was already
+     * snapshotted for upload when recording started. The UI hides the gesture/buttons once
+     * `isRecording` flips true, but that happens slightly after [RecordingState] itself
+     * transitions (on CameraX's `VideoRecordEvent.Start` callback), leaving a short window
+     * where a pinch could otherwise still reach here. Guarding on [recordingState] directly,
+     * rather than relying on the UI, makes the lock structural instead of a UI-visibility
+     * side effect.
      */
     fun setZoomRatio(requested: Float) {
+        if (_recordingState.value !is RecordingState.Idle) return
         val boundCamera = camera ?: return
         val zoomState = boundCamera.cameraInfo.zoomState.value ?: return
         val clamped = clampZoomRatio(requested, zoomState.minZoomRatio, zoomState.maxZoomRatio)

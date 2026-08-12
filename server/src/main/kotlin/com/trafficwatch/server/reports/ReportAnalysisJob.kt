@@ -119,6 +119,7 @@ class ReportAnalysisJob(
             videoAnalysisClient.analyze(
                 videoStorageService.resolve(report.videoPath),
                 requireNotNull(report.id) { "Report must have a generated id before analysis" },
+                report.zoomRatio,
             )
         } catch (ex: VideoAnalysisException) {
             return AnalysisOutcome.rejected("Video analysis service unavailable: ${ex.message}", streetName)

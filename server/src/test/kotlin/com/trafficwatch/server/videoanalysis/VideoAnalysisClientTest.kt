@@ -12,6 +12,7 @@ import org.springframework.http.MediaType
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter
 import org.springframework.test.web.client.ExpectedCount
 import org.springframework.test.web.client.MockRestServiceServer
+import org.springframework.test.web.client.match.MockRestRequestMatchers.content
 import org.springframework.test.web.client.match.MockRestRequestMatchers.header
 import org.springframework.test.web.client.match.MockRestRequestMatchers.method
 import org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo
@@ -95,7 +96,7 @@ class VideoAnalysisClientTest {
                 ),
             )
 
-        val vehicles = client.analyze(fakeVideoPath, reportId).vehicles
+        val vehicles = client.analyze(fakeVideoPath, reportId, zoomRatio = null).vehicles
 
         assertThat(vehicles).hasSize(2)
         assertThat(vehicles[0].trackId).isEqualTo(1L)
@@ -110,11 +111,36 @@ class VideoAnalysisClientTest {
     }
 
     @Test
+    fun `analyze includes zoom_ratio in the multipart request body when provided`() {
+        mockServer.expect(requestTo("http://video-analysis.test/v1/analyze"))
+            .andExpect(method(HttpMethod.POST))
+            .andExpect(content().string(org.hamcrest.Matchers.containsString("name=\"zoom_ratio\"")))
+            .andExpect(content().string(org.hamcrest.Matchers.containsString("1.50")))
+            .andRespond(withSuccess("""{"vehicles": []}""", MediaType.APPLICATION_JSON))
+
+        client.analyze(fakeVideoPath, UUID.randomUUID(), zoomRatio = java.math.BigDecimal("1.50"))
+
+        mockServer.verify()
+    }
+
+    @Test
+    fun `analyze omits zoom_ratio from the request body when null`() {
+        mockServer.expect(requestTo("http://video-analysis.test/v1/analyze"))
+            .andExpect(method(HttpMethod.POST))
+            .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("name=\"zoom_ratio\""))))
+            .andRespond(withSuccess("""{"vehicles": []}""", MediaType.APPLICATION_JSON))
+
+        client.analyze(fakeVideoPath, UUID.randomUUID(), zoomRatio = null)
+
+        mockServer.verify()
+    }
+
+    @Test
     fun `analyze returns an empty list when the service reports no vehicles`() {
         mockServer.expect(requestTo("http://video-analysis.test/v1/analyze"))
             .andRespond(withSuccess("""{"vehicles": []}""", MediaType.APPLICATION_JSON))
 
-        val vehicles = client.analyze(fakeVideoPath, UUID.randomUUID()).vehicles
+        val vehicles = client.analyze(fakeVideoPath, UUID.randomUUID(), zoomRatio = null).vehicles
 
         assertThat(vehicles).isEmpty()
     }
@@ -124,7 +150,7 @@ class VideoAnalysisClientTest {
         mockServer.expect(requestTo("http://video-analysis.test/v1/analyze"))
             .andRespond(withServerError())
 
-        assertThatThrownBy { client.analyze(fakeVideoPath, UUID.randomUUID()) }
+        assertThatThrownBy { client.analyze(fakeVideoPath, UUID.randomUUID(), zoomRatio = null) }
             .isInstanceOf(VideoAnalysisException::class.java)
     }
 }

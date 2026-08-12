@@ -127,6 +127,7 @@ class ReportServiceTest {
             durationMs = 15000L,
             deviceId = "device-123",
             compassHeadingDegrees = null,
+            zoomRatio = null,
             locationSamplesJson = null,
             rotationSamplesJson = null,
         )
@@ -168,6 +169,7 @@ class ReportServiceTest {
             durationMs = 1000L,
             deviceId = "device-x",
             compassHeadingDegrees = null,
+            zoomRatio = null,
             locationSamplesJson = null,
             rotationSamplesJson = null,
         )
@@ -217,6 +219,7 @@ class ReportServiceTest {
                 durationMs = 1000L,
                 deviceId = "device-x",
                 compassHeadingDegrees = null,
+                zoomRatio = null,
                 locationSamplesJson = null,
                 rotationSamplesJson = null,
             )
@@ -250,8 +253,9 @@ class ReportServiceTest {
             durationMs = 15000L,
             deviceId = "device-123",
             compassHeadingDegrees = null,
+            zoomRatio = null,
             locationSamplesJson = null,
-            rotationSamplesJson = """[{"heading_degrees":271.5,"captured_at":1735814400123}]""",
+            rotationSamplesJson ="""[{"heading_degrees":271.5,"captured_at":1735814400123}]""",
         )
         simulateCommit()
 
@@ -279,8 +283,9 @@ class ReportServiceTest {
             durationMs = 15000L,
             deviceId = "device-123",
             compassHeadingDegrees = null,
+            zoomRatio = null,
             locationSamplesJson = null,
-            rotationSamplesJson = "not valid json",
+            rotationSamplesJson ="not valid json",
         )
         simulateCommit()
 
@@ -307,6 +312,7 @@ class ReportServiceTest {
             durationMs = 15000L,
             deviceId = "device-123",
             compassHeadingDegrees = null,
+            zoomRatio = null,
             locationSamplesJson = "{not valid",
             rotationSamplesJson = null,
         )

@@ -48,6 +48,8 @@ class ReportController(
         // false rather than rejecting the request outright, so ReportAnalysisJob's "no
         // compass heading" rejection path handles it as an analysis outcome instead.
         @RequestParam("compass_heading_degrees", required = false) compassHeadingDegrees: BigDecimal?,
+        // Same "absent on older app versions" tolerance as compass_heading_degrees above.
+        @RequestParam("zoom_ratio", required = false) zoomRatio: BigDecimal?,
         @RequestParam("location_samples", required = false) locationSamplesJson: String?,
         @RequestParam("rotation_samples", required = false) rotationSamplesJson: String?,
     ): SubmitReportResponse =
@@ -63,6 +65,7 @@ class ReportController(
             durationMs = durationMs,
             deviceId = deviceId,
             compassHeadingDegrees = compassHeadingDegrees,
+            zoomRatio = zoomRatio,
             locationSamplesJson = locationSamplesJson,
             rotationSamplesJson = rotationSamplesJson,
         )

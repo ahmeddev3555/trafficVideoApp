@@ -92,6 +92,7 @@ class ReportAnalysisJobTest {
         createdUpdatedAt: OffsetDateTime = OffsetDateTime.parse("2026-07-25T10:00:00Z"),
         locationSamples: String? = null,
         rotationSamples: String? = null,
+        zoomRatio: BigDecimal? = null,
     ) = Report(
         userId = UUID.randomUUID(),
         videoPath = "/videos/$id.mp4",
@@ -106,6 +107,7 @@ class ReportAnalysisJobTest {
         deviceId = "device-123",
         status = ReportStatus.PENDING,
         compassHeadingDegrees = compassHeadingDegrees,
+        zoomRatio = zoomRatio,
         locationSamples = locationSamples,
         rotationSamples = rotationSamples,
         updatedAt = createdUpdatedAt,
@@ -154,7 +156,7 @@ class ReportAnalysisJobTest {
             streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
         } returns DirectionResolution.OneWay("Main Boulevard", 0.0)
         every {
-            videoAnalysisClient.analyze(fakeVideoPath, any())
+            videoAnalysisClient.analyze(fakeVideoPath, any(), any())
         } returns analysisResponse(listOf(vehicle(bearingDegrees = 180.0)))
         every { reportRepository.save(any()) } answers { firstArg() }
 
@@ -167,7 +169,7 @@ class ReportAnalysisJobTest {
         assertThat(report.licensePlate).isNull()
         assertThat(report.confidence).isNull()
         verify(exactly = 1) { streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble()) }
-        verify(exactly = 1) { videoAnalysisClient.analyze(fakeVideoPath, any()) }
+        verify(exactly = 1) { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) }
     }
 
     @Test
@@ -188,7 +190,7 @@ class ReportAnalysisJobTest {
             streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
         } returns DirectionResolution.OneWay("Main Boulevard", 0.0) // legal bearing 0, illegal 180
         every {
-            videoAnalysisClient.analyze(fakeVideoPath, any())
+            videoAnalysisClient.analyze(fakeVideoPath, any(), any())
         } returns analysisResponse(
             listOf(vehicle(bearingDegrees = 90.0, trackMidpointMs = 8000L, plateText = "LEA-1234", plateConfidence = 0.9)),
         )
@@ -219,7 +221,7 @@ class ReportAnalysisJobTest {
             streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
         } returns DirectionResolution.OneWay("Main Boulevard", 0.0)
         every {
-            videoAnalysisClient.analyze(fakeVideoPath, any())
+            videoAnalysisClient.analyze(fakeVideoPath, any(), any())
         } returns analysisResponse(listOf(vehicle(bearingDegrees = 90.0, trackMidpointMs = 8000L)))
         every { reportRepository.save(any()) } answers { firstArg() }
 
@@ -240,7 +242,7 @@ class ReportAnalysisJobTest {
             streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
         } returns DirectionResolution.OneWay("Main Boulevard", 0.0)
         every {
-            videoAnalysisClient.analyze(fakeVideoPath, any())
+            videoAnalysisClient.analyze(fakeVideoPath, any(), any())
         } returns analysisResponse(listOf(vehicle(bearingDegrees = 90.0, trackMidpointMs = 0L)))
         every { reportRepository.save(any()) } answers { firstArg() }
 
@@ -269,7 +271,7 @@ class ReportAnalysisJobTest {
             streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
         } returns DirectionResolution.OneWay("Main Boulevard", 0.0)
         every {
-            videoAnalysisClient.analyze(fakeVideoPath, any())
+            videoAnalysisClient.analyze(fakeVideoPath, any(), any())
         } returns analysisResponse(listOf(vehicle(bearingDegrees = 180.0, trackMidpointMs = null)))
         every { reportRepository.save(any()) } answers { firstArg() }
 
@@ -298,7 +300,7 @@ class ReportAnalysisJobTest {
         // Legal bearing 0, illegal bearing 180. Resolved orientation (0.0, from the timeline) +
         // frame bearing (0.0) = absolute bearing 0 - same as legal, not a wrong-way vehicle.
         every {
-            videoAnalysisClient.analyze(fakeVideoPath, any())
+            videoAnalysisClient.analyze(fakeVideoPath, any(), any())
         } returns analysisResponse(listOf(vehicle(bearingDegrees = 0.0, trackMidpointMs = 0L)))
         every { reportRepository.save(any()) } answers { firstArg() }
 
@@ -312,7 +314,7 @@ class ReportAnalysisJobTest {
     fun `applyOutcome rejects when no street can be identified at the location`() {
         val report = sampleReport()
         every { streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble()) } returns DirectionResolution.NotFound
-        every { videoAnalysisClient.analyze(fakeVideoPath, any()) } returns analysisResponse(emptyList())
+        every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(emptyList())
         every { reportRepository.save(any()) } answers { firstArg() }
 
         job.applyOutcome(report)
@@ -328,7 +330,7 @@ class ReportAnalysisJobTest {
         every {
             streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
         } returns DirectionResolution.Unknown("Side Street")
-        every { videoAnalysisClient.analyze(fakeVideoPath, any()) } returns analysisResponse(emptyList())
+        every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(emptyList())
         every { reportRepository.save(any()) } answers { firstArg() }
 
         job.applyOutcome(report)
@@ -359,7 +361,7 @@ class ReportAnalysisJobTest {
         every {
             streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
         } returns DirectionResolution.LookupFailed("Overpass timed out")
-        every { videoAnalysisClient.analyze(fakeVideoPath, any()) } returns analysisResponse(emptyList())
+        every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(emptyList())
         every { reportRepository.save(any()) } answers { firstArg() }
 
         job.applyOutcome(report)
@@ -369,7 +371,7 @@ class ReportAnalysisJobTest {
         // Unlike the old terminal-on-lookup-failure behavior, the OSM outage no longer skips
         // video analysis - clip consensus/history can still resolve the direction (see the
         // "lookup failure with mature history proceeds to evaluation" test below).
-        verify(exactly = 1) { videoAnalysisClient.analyze(fakeVideoPath, any()) }
+        verify(exactly = 1) { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) }
     }
 
     @Test
@@ -378,7 +380,7 @@ class ReportAnalysisJobTest {
         every {
             streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
         } returns DirectionResolution.OneWay("Main Boulevard", 90.0)
-        every { videoAnalysisClient.analyze(fakeVideoPath, any()) } throws VideoAnalysisException("connection refused")
+        every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } throws VideoAnalysisException("connection refused")
         every { reportRepository.save(any()) } answers { firstArg() }
 
         job.applyOutcome(report)
@@ -397,7 +399,7 @@ class ReportAnalysisJobTest {
         // Legal bearing 0, illegal bearing 180. A vehicle with an absolute bearing of 0
         // (same direction as legal) is not a wrong-way vehicle.
         every {
-            videoAnalysisClient.analyze(fakeVideoPath, any())
+            videoAnalysisClient.analyze(fakeVideoPath, any(), any())
         } returns analysisResponse(listOf(vehicle(bearingDegrees = 0.0)))
         every { reportRepository.save(any()) } answers { firstArg() }
 
@@ -417,7 +419,7 @@ class ReportAnalysisJobTest {
         // Legal bearing 0, illegal bearing 180 - a vehicle whose frame-relative bearing
         // (added to the 0-degree compass heading) lands on 180 is moving the wrong way.
         every {
-            videoAnalysisClient.analyze(fakeVideoPath, any())
+            videoAnalysisClient.analyze(fakeVideoPath, any(), any())
         } returns analysisResponse(listOf(vehicle(bearingDegrees = 180.0, plateText = "LEA-1234", plateConfidence = 0.9)))
         every { reportRepository.save(any()) } answers { firstArg() }
 
@@ -441,7 +443,7 @@ class ReportAnalysisJobTest {
         // illegal bearing (180), not plate confidence: track 2 (2 degrees off) beats track 1
         // (30 degrees off, still within the 60-degree tolerance).
         every {
-            videoAnalysisClient.analyze(fakeVideoPath, any())
+            videoAnalysisClient.analyze(fakeVideoPath, any(), any())
         } returns analysisResponse(
             listOf(
                 vehicle(trackId = 1, corridorId = 1, bearingDegrees = 150.0, plateText = "AAA-1111", plateConfidence = 0.4),
@@ -465,7 +467,7 @@ class ReportAnalysisJobTest {
             streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
         } returns DirectionResolution.OneWay("Main Boulevard", 0.0)
         every {
-            videoAnalysisClient.analyze(fakeVideoPath, any())
+            videoAnalysisClient.analyze(fakeVideoPath, any(), any())
         } returns analysisResponse(listOf(vehicle(bearingDegrees = 180.0, plateText = null, plateConfidence = null)))
         every { reportRepository.save(any()) } answers { firstArg() }
 
@@ -483,7 +485,7 @@ class ReportAnalysisJobTest {
             streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
         } returns DirectionResolution.OneWay("Main Boulevard", 0.0)
         every {
-            videoAnalysisClient.analyze(fakeVideoPath, any())
+            videoAnalysisClient.analyze(fakeVideoPath, any(), any())
         } returns analysisResponse(listOf(vehicle(bearingDegrees = null)))
         every { reportRepository.save(any()) } answers { firstArg() }
 
@@ -500,7 +502,7 @@ class ReportAnalysisJobTest {
             createdUpdatedAt = OffsetDateTime.parse("2020-01-01T00:00:00Z"),
         )
         every { streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble()) } returns DirectionResolution.NotFound
-        every { videoAnalysisClient.analyze(fakeVideoPath, any()) } returns analysisResponse(emptyList())
+        every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(emptyList())
         every { reportRepository.save(any()) } answers { firstArg() }
 
         job.applyOutcome(report)
@@ -527,7 +529,7 @@ class ReportAnalysisJobTest {
         // Illegal bearing is 180 (legal 0 + 180); a vehicle at exactly 180 has
         // angularDistance 0 -> bearingMatchScore 1.0 -> confidence == detectionConfidence (0.8).
         every {
-            videoAnalysisClient.analyze(fakeVideoPath, any())
+            videoAnalysisClient.analyze(fakeVideoPath, any(), any())
         } returns analysisResponse(listOf(vehicle(bearingDegrees = 180.0, plateConfidence = null)))
         every { reportRepository.save(any()) } answers { firstArg() }
 
@@ -546,7 +548,7 @@ class ReportAnalysisJobTest {
         // and (unlike a 30-degree offset) still scores above the 0.5 confirmation threshold,
         // so wrongWayConfidence is populated and comparable to the dead-on case.
         every {
-            videoAnalysisClient.analyze(fakeVideoPath, any())
+            videoAnalysisClient.analyze(fakeVideoPath, any(), any())
         } returns analysisResponse(listOf(vehicle(bearingDegrees = 170.0, plateConfidence = null)))
         every { reportRepository.save(any()) } answers { firstArg() }
 
@@ -566,7 +568,7 @@ class ReportAnalysisJobTest {
         val fakeJpegBytes = byteArrayOf(1, 2, 3)
         val fakeFrameBase64 = Base64.getEncoder().encodeToString(fakeJpegBytes)
         every {
-            videoAnalysisClient.analyze(fakeVideoPath, any())
+            videoAnalysisClient.analyze(fakeVideoPath, any(), any())
         } returns analysisResponse(
             listOf(vehicle(bearingDegrees = 180.0, boundingBox = boundingBox, frameJpegBase64 = fakeFrameBase64)),
         )
@@ -595,7 +597,7 @@ class ReportAnalysisJobTest {
         val boundingBox = BoundingBox(x1 = 10.0, y1 = 10.0, x2 = 50.0, y2 = 50.0)
         val fakeFrameBase64 = Base64.getEncoder().encodeToString(byteArrayOf(1, 2, 3))
         every {
-            videoAnalysisClient.analyze(fakeVideoPath, any())
+            videoAnalysisClient.analyze(fakeVideoPath, any(), any())
         } returns analysisResponse(
             listOf(vehicle(bearingDegrees = 180.0, boundingBox = boundingBox, frameJpegBase64 = fakeFrameBase64)),
         )
@@ -615,7 +617,7 @@ class ReportAnalysisJobTest {
             streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
         } returns DirectionResolution.OneWay("Main Boulevard", 0.0)
         every {
-            videoAnalysisClient.analyze(fakeVideoPath, any())
+            videoAnalysisClient.analyze(fakeVideoPath, any(), any())
         } returns analysisResponse(listOf(vehicle(bearingDegrees = 180.0, frameJpegBase64 = null)))
         every { reportRepository.save(any()) } answers { firstArg() }
 
@@ -634,7 +636,7 @@ class ReportAnalysisJobTest {
         } returns DirectionResolution.Unknown("Khayaban-e-Jinnah")
         // 3 consensus vehicles east (~90), violator west (270) in the same corridor.
         every {
-            videoAnalysisClient.analyze(fakeVideoPath, any())
+            videoAnalysisClient.analyze(fakeVideoPath, any(), any())
         } returns analysisResponse(
             listOf(
                 vehicle(trackId = 1, bearingDegrees = 88.0, detectionConfidence = 0.95),
@@ -670,7 +672,7 @@ class ReportAnalysisJobTest {
             streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
         } returns DirectionResolution.OneWay("Main Blvd", 90.0)
         every {
-            videoAnalysisClient.analyze(fakeVideoPath, any())
+            videoAnalysisClient.analyze(fakeVideoPath, any(), any())
         } returns analysisResponse(
             listOf(
                 vehicle(trackId = 1, bearingDegrees = 268.0, detectionConfidence = 0.95),
@@ -706,7 +708,7 @@ class ReportAnalysisJobTest {
         // are skipped outright; the fallback fusion (osm alone, since the full-set clip
         // consensus is also null) is Fused, giving the ordinary "no violator" message.
         every {
-            videoAnalysisClient.analyze(fakeVideoPath, any())
+            videoAnalysisClient.analyze(fakeVideoPath, any(), any())
         } returns analysisResponse(
             listOf(
                 vehicle(trackId = 1, bearingDegrees = 270.0, detectionConfidence = 0.9),
@@ -742,7 +744,7 @@ class ReportAnalysisJobTest {
         // 20 -> bearingMatchScore 0.667 -> finalScore 0.6) but scores lower and has no
         // plate, so the winner is unambiguous.
         every {
-            videoAnalysisClient.analyze(fakeVideoPath, any())
+            videoAnalysisClient.analyze(fakeVideoPath, any(), any())
         } returns analysisResponse(
             listOf(
                 vehicle(trackId = 1, bearingDegrees = 88.0, detectionConfidence = 0.9),
@@ -775,7 +777,7 @@ class ReportAnalysisJobTest {
         // no learned history (stubVideoResolution already defaults historyEvidence to null) -
         // peer support alone must never BE evidence, only a gate on whether to attempt fusion.
         every {
-            videoAnalysisClient.analyze(fakeVideoPath, any())
+            videoAnalysisClient.analyze(fakeVideoPath, any(), any())
         } returns analysisResponse(
             listOf(
                 vehicle(trackId = 1, bearingDegrees = 88.0, detectionConfidence = 0.9),
@@ -801,7 +803,7 @@ class ReportAnalysisJobTest {
         // Single consensus partner -> clipConfidence = (1/3)*1*1 = 0.33; score
         // = 0.33 * 1 * 0.9 * 1 = ~0.3 < 0.5 threshold.
         every {
-            videoAnalysisClient.analyze(fakeVideoPath, any())
+            videoAnalysisClient.analyze(fakeVideoPath, any(), any())
         } returns analysisResponse(
             listOf(
                 vehicle(trackId = 1, bearingDegrees = 90.0, detectionConfidence = 0.9),
@@ -829,7 +831,7 @@ class ReportAnalysisJobTest {
             flowObservationService.historyEvidence(any(), any())
         } returns DirectionEvidence(EvidenceKind.LEARNED_HISTORY, 90.0, 0.6)
         every {
-            videoAnalysisClient.analyze(fakeVideoPath, any())
+            videoAnalysisClient.analyze(fakeVideoPath, any(), any())
         } returns analysisResponse(listOf(vehicle(bearingDegrees = 270.0, detectionConfidence = 0.95)))
         every { reportRepository.save(any()) } answers { firstArg() }
 
@@ -846,7 +848,7 @@ class ReportAnalysisJobTest {
             streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
         } returns DirectionResolution.Unknown(null)
         every {
-            videoAnalysisClient.analyze(fakeVideoPath, any())
+            videoAnalysisClient.analyze(fakeVideoPath, any(), any())
         } returns analysisResponse(
             listOf(
                 vehicle(trackId = 1, bearingDegrees = 88.0, detectionConfidence = 0.95),

@@ -140,6 +140,7 @@ class ReportAnalysisIntegrationTest @Autowired constructor(
             durationMs = 15000L,
             deviceId = "device-123",
             compassHeadingDegrees = compassHeadingDegrees,
+            zoomRatio = null,
             locationSamplesJson = locationSamplesJson,
             rotationSamplesJson = rotationSamplesJson,
         )

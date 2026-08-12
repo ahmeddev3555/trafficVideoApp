@@ -100,6 +100,7 @@ class ReportService(
         durationMs: Long,
         deviceId: String,
         compassHeadingDegrees: BigDecimal?,
+        zoomRatio: BigDecimal?,
         locationSamplesJson: String?,
         rotationSamplesJson: String?,
     ): SubmitReportResponse {
@@ -166,6 +167,7 @@ class ReportService(
             deviceId = deviceId,
             status = ReportStatus.PENDING,
             compassHeadingDegrees = compassHeadingDegrees,
+            zoomRatio = zoomRatio,
             locationSamples = canonicalLocationSamples,
             rotationSamples = canonicalRotationSamples,
         )

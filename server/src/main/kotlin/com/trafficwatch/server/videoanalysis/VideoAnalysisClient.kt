@@ -11,6 +11,7 @@ import org.springframework.web.client.RestClient
 import org.springframework.web.client.RestClientException
 import org.springframework.web.client.RestClientResponseException
 import org.springframework.web.client.body
+import java.math.BigDecimal
 import java.nio.file.Path
 import java.util.UUID
 
@@ -30,14 +31,18 @@ class VideoAnalysisClient(
 
     /**
      * Uploads the video at [videoPath] for analysis. [reportId] is echoed/logged only by the
-     * Python side. Returns the full response (vehicles plus frame dimensions) - callers such
-     * as [com.trafficwatch.server.reports.ReportAnalysisJob] need `frameWidth`/`frameHeight`
+     * Python side. [zoomRatio] (the zoom level active when the recording started, if any) is
+     * sent only when non-null, so the Python service's own `zoom_ratio` form-field default
+     * (1.0) governs for reports from app versions predating zoom support. Returns the full
+     * response (vehicles plus frame dimensions) - callers such as
+     * [com.trafficwatch.server.reports.ReportAnalysisJob] need `frameWidth`/`frameHeight`
      * for corridor/flow analysis, not just the vehicle list.
      */
-    fun analyze(videoPath: Path, reportId: UUID): VideoAnalysisResponse {
+    fun analyze(videoPath: Path, reportId: UUID, zoomRatio: BigDecimal?): VideoAnalysisResponse {
         val body = LinkedMultiValueMap<String, Any>()
         body.add("video", FileSystemResource(videoPath))
         body.add("report_id", reportId.toString())
+        zoomRatio?.let { body.add("zoom_ratio", it.toString()) }
 
         try {
             return restClient.post()

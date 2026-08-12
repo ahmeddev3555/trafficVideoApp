@@ -73,6 +73,14 @@ class Report(
     @Column(name = "compass_heading_degrees")
     var compassHeadingDegrees: BigDecimal? = null,
 
+    // The zoom ratio active when recording started (1.0-2.0), captured once, not tracked
+    // continuously - absent on submissions from app versions predating zoom support, or
+    // when the app itself couldn't determine it. Passed through to the video-analysis
+    // service so its zoom-sensitive pixel-space thresholds scale correctly - see
+    // ReportAnalysisJob/VideoAnalysisClient.
+    @Column(name = "zoom_ratio")
+    var zoomRatio: BigDecimal? = null,
+
     // Populated from StreetDirectionResolver whenever a street name is known - even for
     // TwoWay/Unknown outcomes, not just CONFIRMED, since it's useful context regardless of
     // the violation decision.

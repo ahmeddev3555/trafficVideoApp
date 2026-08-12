@@ -171,3 +171,28 @@ def test_compute_displacement_pixels_combines_scale_when_lateral_is_under_the_fl
 
     # lateral = 0, scale ~= 113.14, combined = hypot(0, 113.14) ~= 113.14
     assert compute_displacement_pixels(centroids, bboxes) == pytest.approx(113.137, abs=0.01)
+
+
+def test_resolve_bearing_honors_a_custom_min_displacement_pixels_floor():
+    # resolve_bearing averages over a sample_size window (unlike compute_displacement_pixels,
+    # which uses raw first-vs-last-frame), so a 24px endpoint-to-endpoint track produces
+    # ~13.7px of AVERAGED displacement (24 * 4/7, given DEFAULT_SAMPLE_SIZE=4 and this
+    # 8-point track) - clears the default 8.0px floor (would resolve via "centroid"), but
+    # must be rejected as noise once the caller raises the floor to 20.0 (e.g. to represent
+    # the same 8.0px real-world sensitivity at 2x-ish zoom).
+    track = _linear_track((50.0, 100.0), (74.0, 100.0))
+    assert resolve_bearing(track) is not None
+    assert resolve_bearing(track, min_displacement_pixels=20.0) is None
+
+
+def test_compute_displacement_pixels_honors_a_custom_min_displacement_pixels_floor():
+    # Same 12px lateral motion, no bboxes: with the default floor this already clears
+    # MIN_DISPLACEMENT_PIXELS so bboxes wouldn't even be consulted; with a raised floor and
+    # a bbox-diagonal scale change supplied, the scale contribution must kick in instead -
+    # proving the floor value actually gates which code path runs, not just the label.
+    centroids = [(50.0, 100.0), (62.0, 100.0)]
+    bboxes = [(0.0, 0.0, 10.0, 10.0), (0.0, 0.0, 10.0, 34.0)]  # diagonal ~14.14 -> ~35.44
+
+    assert compute_displacement_pixels(centroids, bboxes) == pytest.approx(12.0, abs=1e-6)
+    combined = compute_displacement_pixels(centroids, bboxes, min_displacement_pixels=20.0)
+    assert combined > 12.0  # scale contribution added, since 12px alone no longer clears 20.0

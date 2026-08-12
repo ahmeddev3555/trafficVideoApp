@@ -46,6 +46,7 @@ async def analyze(
     video: UploadFile = File(...),
     # Echoed/logged only - never used to look anything up, so this service stays stateless.
     report_id: str | None = Form(default=None),
+    zoom_ratio: float = Form(default=1.0),
     settings: Settings = Depends(get_settings),
 ) -> AnalyzeResponse:
     pipeline = _get_pipeline(settings)
@@ -54,6 +55,6 @@ async def analyze(
     with tempfile.NamedTemporaryFile(suffix=suffix) as tmp_file:
         tmp_file.write(await video.read())
         tmp_file.flush()
-        response = pipeline.analyze(tmp_file.name)
+        response = pipeline.analyze(tmp_file.name, zoom_ratio=zoom_ratio)
 
     return response

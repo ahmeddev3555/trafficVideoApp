@@ -36,6 +36,7 @@ def resolve_bearing(
     centroids: Sequence[Tuple[float, float]],
     bboxes: Sequence[Tuple[float, float, float, float]] | None = None,
     sample_size: int = DEFAULT_SAMPLE_SIZE,
+    min_displacement_pixels: float = MIN_DISPLACEMENT_PIXELS,
 ) -> Tuple[float, str] | None:
     """Frame-relative bearing in degrees [0, 360) plus its source, or None - never a
     fabricated direction - when there are too few observations or no motion is significant
@@ -86,7 +87,7 @@ def resolve_bearing(
     dy = late_y - early_y
     lateral_displacement = math.hypot(dx, dy)
 
-    if lateral_displacement >= MIN_DISPLACEMENT_PIXELS:
+    if lateral_displacement >= min_displacement_pixels:
         return (math.degrees(math.atan2(dx, -dy)) % 360.0, "centroid")
 
     if bboxes is None or len(bboxes) < MIN_OBSERVATIONS:
@@ -124,6 +125,7 @@ def compute_displacement_pixels(
     centroids: Sequence[Tuple[float, float]],
     bboxes: Sequence[Tuple[float, float, float, float]] | None = None,
     sample_size: int = DEFAULT_SAMPLE_SIZE,
+    min_displacement_pixels: float = MIN_DISPLACEMENT_PIXELS,
 ) -> float:
     """Net displacement in pixels, sent to the Kotlin server as VehicleResult.displacement_pixels.
 
@@ -141,7 +143,7 @@ def compute_displacement_pixels(
     """
     lateral = math.hypot(centroids[-1][0] - centroids[0][0], centroids[-1][1] - centroids[0][1])
 
-    if lateral >= MIN_DISPLACEMENT_PIXELS or bboxes is None:
+    if lateral >= min_displacement_pixels or bboxes is None:
         return lateral
 
     n = min(sample_size, len(bboxes) // 2)

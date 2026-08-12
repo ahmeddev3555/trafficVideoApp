@@ -98,6 +98,57 @@ def test_same_lane_tracks_share_a_corridor_and_opposite_lane_does_not():
     assert 0.0 <= by_track[1].corridor_cohesion <= 1.0
 
 
+def test_same_lane_tracks_still_cluster_at_higher_zoom_where_they_would_otherwise_split():
+    # Track 3 sits at x=80, ~55px from tracks 1/2 (around x=17-25) - just OUTSIDE the
+    # zoom=1.0 threshold (5% of the 100x100 frame's ~141.42px diagonal = ~7.07px), so at
+    # zoom=1.0 it correctly forms its own corridor (mirrors the existing sibling test).
+    # But interpret this as: at 2x zoom, this same real-world separation would show up at
+    # roughly double the pixel distance it would at 1x - so a fixed (non-zoom-scaled)
+    # threshold would ALSO wrongly split same-lane tracks that are much closer together in
+    # real-world terms. This test instead proves the direct, simplest case: the SAME
+    # geometry that's borderline-separate at zoom=1.0 must cluster together once the
+    # threshold is correctly scaled up for zoom=2.0 (7.07px * 2.0 = 14.14px - still not
+    # enough to catch track 3 at 55px, so use a closer track 3 instead, tuned to fall
+    # between the zoom=1.0 and zoom=2.0 thresholds).
+    frames = []
+    for i in range(6):
+        frames.append(_make_frame(track_id=1, frame_index=i, bbox=(15.0, 10.0 * i, 25.0, 10.0 * i + 10.0)))
+        frames.append(_make_frame(track_id=2, frame_index=i, bbox=(17.0, 10.0 * i, 27.0, 10.0 * i + 10.0)))
+    # Track 3 at x=31: ~10.6px from track 1 (x=20 centerline) - beyond the zoom=1.0
+    # threshold (~7.07px) so it splits at zoom=1.0, but within the zoom=2.0 threshold
+    # (~14.14px) so it must cluster once zoom_ratio=2.0 is passed through.
+    for i in range(6):
+        frames.append(_make_frame(track_id=3, frame_index=i, bbox=(26.0, 10.0 * i, 36.0, 10.0 * i + 10.0)))
+
+    pipeline = AnalysisPipeline(
+        settings=_fake_settings(), detector=FakeDetector(frames), plate_reader=FakePlateReader()
+    )
+
+    response_at_1x = pipeline.analyze("unused.mp4", zoom_ratio=1.0)
+    by_track_1x = {v.track_id: v for v in response_at_1x.vehicles}
+    assert by_track_1x[1].corridor_id != by_track_1x[3].corridor_id
+
+    response_at_2x = pipeline.analyze("unused.mp4", zoom_ratio=2.0)
+    by_track_2x = {v.track_id: v for v in response_at_2x.vehicles}
+    assert by_track_2x[1].corridor_id == by_track_2x[3].corridor_id
+
+
+def test_zoom_ratio_at_or_below_zero_is_clamped_to_1x_behavior():
+    frames = [
+        _make_frame(track_id=1, frame_index=i, bbox=(15.0, 10.0 * i, 25.0, 10.0 * i + 10.0))
+        for i in range(6)
+    ]
+    pipeline = AnalysisPipeline(
+        settings=_fake_settings(), detector=FakeDetector(frames), plate_reader=FakePlateReader()
+    )
+
+    # Must not raise (e.g. from a degenerate/negative threshold) and must behave exactly
+    # like the 1.0 default - a single-track corridor either way.
+    response = pipeline.analyze("unused.mp4", zoom_ratio=-3.0)
+    assert len(response.vehicles) == 1
+    assert response.vehicles[0].corridor_id == 0
+
+
 def test_empty_video_returns_empty_response_with_zero_dimensions():
     pipeline = AnalysisPipeline(
         settings=_fake_settings(), detector=FakeDetector([]), plate_reader=FakePlateReader()

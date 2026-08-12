@@ -37,12 +37,22 @@ exactly what is and isn't zoom-sensitive - not assumed:
     zoom, even though the real-world distance a pixel represents does. At
     2x zoom the same real-world lane width shows up as roughly double the
     pixel distance, risking same-lane traffic being split into separate
-    corridors.
+    corridors. **The threshold must scale UP with zoom** (multiply by
+    `zoom_ratio`, not divide): a concrete check confirms the direction -
+    two same-lane tracks 3m apart showing up as 50px apart at 1x zoom show
+    up as ~100px apart at 2x zoom (zoom magnifies pixel distance for a
+    fixed real-world distance), so the threshold has to grow to keep
+    recognizing them as the same lane. Dividing would shrink the threshold
+    at higher zoom instead, making false splits *worse*, not better.
   - `tracking_bearing.py`'s `MIN_DISPLACEMENT_PIXELS` (a flat 8px floor) -
-    also zoom-sensitive, though more marginal: the code already accepts
-    this floor is imprecise across near/far vehicles even without zoom.
-    Fixed anyway for consistency, since it's a cheap, low-risk change once
-    zoom ratio is threaded through regardless.
+    also zoom-sensitive, in the same direction and for the same reason: a
+    genuine small real-world motion produces more pixels of apparent
+    displacement at higher zoom, so keeping the *same real-world*
+    sensitivity requires the pixel floor to scale UP with zoom too
+    (multiply, not divide). More marginal than the corridor fix - the code
+    already accepts this floor is imprecise across near/far vehicles even
+    without zoom - but fixed anyway for consistency, since it's a cheap,
+    low-risk change once zoom ratio is threaded through regardless.
 
 **Deliberately not addressed**: the original deferral concern (narrower
 field of view at higher zoom means fewer vehicles may be visible for
@@ -76,12 +86,14 @@ design explicitly scoped out camera pitch/tilt.
    `1.0` (no zoom) at every layer, so nothing breaks for pre-feature
    clients.
 4. **video-analysis math fixes**: `pipeline.py` clamps the incoming zoom
-   ratio to a `1.0` floor (a value `<= 0` would corrupt the division),
-   divides the corridor clustering threshold by it, and computes a
-   zoom-adjusted `min_displacement_pixels` passed down to
-   `tracking_bearing.py`'s functions via a new optional parameter
-   (defaulting to the existing module constant, so every unrelated call
-   site and existing test is unaffected unless it explicitly opts in).
+   ratio to a `1.0` floor (a value `<= 0` or `< 1.0` would be physically
+   meaningless and could shrink these thresholds below their calibrated
+   1x values), multiplies the corridor clustering threshold by it, and
+   computes a zoom-adjusted `min_displacement_pixels` (also multiplied)
+   passed down to `tracking_bearing.py`'s functions via a new optional
+   parameter (defaulting to the existing module constant, so every
+   unrelated call site and existing test is unaffected unless it
+   explicitly opts in).
 
 ## File-level plumbing
 
@@ -118,8 +130,8 @@ design explicitly scoped out camera pitch/tilt.
   passed to `pipeline.analyze(tmp_file.name, zoom_ratio=zoom_ratio)`.
 - `pipeline.py` - `analyze()` gains a `zoom_ratio: float = 1.0` parameter;
   computes `effective_zoom_ratio = max(zoom_ratio, 1.0)` once, uses it to
-  divide the corridor `threshold_px` calculation, and computes
-  `min_displacement_pixels = MIN_DISPLACEMENT_PIXELS / effective_zoom_ratio`
+  multiply the corridor `threshold_px` calculation, and computes
+  `min_displacement_pixels = MIN_DISPLACEMENT_PIXELS * effective_zoom_ratio`
   once, passed into `_summarize_track`'s calls to `resolve_bearing`/
   `compute_displacement_pixels`.
 - `tracking_bearing.py` - `resolve_bearing()` and

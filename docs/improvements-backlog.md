@@ -11,15 +11,20 @@ considered rather than forgotten.
 
 **Area:** `app/src/main/java/com/trafficwatch/app/feature/camera/`
 
-- **Allow zoom while recording.** No zoom control exists today. Explicitly
-  deferred out of scope during the 2026-08-01 motorcycle-detection fix
-  (trade-off: zoom narrows the field of view, which the corridor-consensus
-  direction-analysis logic depends on seeing multiple vehicles across a
-  wide lane to establish a reliable "normal flow" baseline — see
-  `docs/superpowers/specs/2026-08-01-motorcycle-detection-resolution-fix-design.md`).
-  Revisit alongside any future change to how corridor consensus is
-  computed, or if users specifically ask for it again.
-  *(added 2026-08-02)*
+- **Allow zoom while recording - shipped 2026-08-12.** CameraX zoom capped
+  at 2x, driven by both a pinch gesture and three quick-select pill buttons
+  (1x/1.5x/2x), locked once recording starts (enforced at
+  `CameraController.setZoomRatio` itself, not just via UI gating). The
+  captured ratio threads end-to-end (Android → server → video-analysis) and
+  scales the two pixel-space thresholds that are genuinely zoom-sensitive
+  (`corridors.py`'s clustering threshold, `tracking_bearing.py`'s minimum
+  displacement floor) — see
+  `docs/superpowers/specs/2026-08-12-zoom-while-recording-design.md`. The
+  original deferral concern (narrower field of view reduces available
+  traffic for corridor-consensus baseline-building) is a deliberate,
+  documented, unaddressed trade-off, not a bug — a hard 2x cap keeps it
+  modest.
+  *(added 2026-08-02, shipped 2026-08-12)*
 
 - **Show a small map on the recording screen with the current location and
   the direction the camera is pointing.** User-requested. Gives the person

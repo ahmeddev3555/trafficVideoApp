@@ -19,6 +19,20 @@ VEHICLE_CLASS_IDS: dict[int, str] = {
     7: "truck",
 }
 
+# COCO class id for motorcycles - tracked separately from every other vehicle type
+# (see the design spec) because small, fast, near-camera objects systematically fail
+# ByteTrack's hardcoded unconfirmed-track IoU threshold under this service's sampling.
+MOTORCYCLE_CLASS_ID = 3
+
+# Added to every motorcycle track's id before it leaves VehicleDetector. The two
+# ByteTrack instances' internal id counters are not guaranteed to be independent
+# per-instance (confirmed empirically against supervision 0.23.0 - id assignment is
+# not scoped to a single tracker instance within a process), so without this offset a
+# motorcycle track and a car track could plausibly share the same raw numeric id and
+# get conflated by pipeline.py's grouping-by-track_id. Chosen far larger than any
+# plausible single-clip track count.
+MOTORCYCLE_TRACK_ID_OFFSET = 1_000_000
+
 
 @dataclass
 class TrackedFrame:
@@ -43,6 +57,7 @@ class VehicleDetector:
         self._settings = settings
         self._model = YOLO(settings.yolo_model_path)
         self._tracker = sv.ByteTrack()
+        self._moto_tracker = sv.ByteTrack()
 
     def track_video(self, video_path: str) -> Iterator[TrackedFrame]:
         capture = cv2.VideoCapture(video_path)
@@ -91,8 +106,18 @@ class VehicleDetector:
         confidence_mask = detections.confidence >= self._settings.min_detection_confidence
         detections = detections[vehicle_mask & confidence_mask]
 
-        detections = self._tracker.update_with_detections(detections)
+        moto_mask = detections.class_id == MOTORCYCLE_CLASS_ID
+        moto_detections = self._moto_tracker.update_with_detections(detections[moto_mask])
+        other_detections = self._tracker.update_with_detections(detections[~moto_mask])
 
+        yield from self._tracked_frames_from(other_detections, frame, frame_index, id_offset=0)
+        yield from self._tracked_frames_from(
+            moto_detections, frame, frame_index, id_offset=MOTORCYCLE_TRACK_ID_OFFSET
+        )
+
+    def _tracked_frames_from(
+        self, detections: sv.Detections, frame: np.ndarray, frame_index: int, id_offset: int
+    ) -> Iterator[TrackedFrame]:
         for i in range(len(detections)):
             x1, y1, x2, y2 = detections.xyxy[i]
             class_id = int(detections.class_id[i])
@@ -101,7 +126,7 @@ class VehicleDetector:
                 continue
 
             yield TrackedFrame(
-                track_id=int(tracker_id),
+                track_id=int(tracker_id) + id_offset,
                 vehicle_type=VEHICLE_CLASS_IDS.get(class_id, "vehicle"),
                 confidence=float(detections.confidence[i]),
                 frame_index=frame_index,

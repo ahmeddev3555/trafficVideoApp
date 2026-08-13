@@ -15,8 +15,16 @@ class Settings(BaseSettings):
     yolo_model_path: str = "yolov8n.pt"
 
     # Process every Nth frame - the main knob for bounding CPU runtime on hardware with no
-    # GPU assumed. Needs empirical tuning against real sample clips.
-    frame_stride: int = 3
+    # GPU assumed. Must stay at 1 (every frame) for reliable motorcycle tracking: ByteTrack's
+    # hardcoded unconfirmed-track IoU threshold (0.7, not exposed via any constructor
+    # parameter) fails for small/fast/near-camera objects once frame_stride widens the real
+    # displacement between samples the tracker sees - confirmed empirically against a real
+    # production clip (see
+    # docs/superpowers/specs/2026-08-13-motorcycle-tracking-iou-fix-design.md). Car/bus/truck
+    # tracking tolerates a wider stride fine since their boxes are larger relative to the
+    # same absolute displacement, but this field is shared - there is no way to sample more
+    # densely for one class without sampling more densely, period.
+    frame_stride: int = 1
 
     min_detection_confidence: float = 0.4
 

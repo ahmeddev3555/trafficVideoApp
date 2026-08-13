@@ -24,6 +24,24 @@ if TYPE_CHECKING:
 # single highest-confidence result above this floor.
 OCR_CROPS_PER_TRACK = 3
 
+# corridors.py's path_distance is O(len(a) * len(b)) and was designed around "tens of
+# points" per track (see its own docstring) - true at the old frame_stride=3, no longer
+# true at frame_stride=1 (a full-length track in a long clip can have hundreds of raw
+# points). Corridor clustering only needs a path's overall shape/direction, not every
+# point, so cap what's actually passed to cluster_tracks/corridor_cohesion - this does
+# NOT affect track_frame_count, resolve_bearing, or compute_displacement_pixels, which
+# all still see the full, un-subsampled track data below.
+MAX_CORRIDOR_PATH_POINTS = 30
+
+
+def _subsample_path(points: list, max_points: int) -> list:
+    """Evenly subsamples a path down to at most max_points, preserving its overall
+    shape - see MAX_CORRIDOR_PATH_POINTS for why this exists."""
+    if len(points) <= max_points:
+        return points
+    step = len(points) / max_points
+    return [points[int(i * step)] for i in range(max_points)]
+
 
 def _bbox_area(frame: "TrackedFrame") -> float:
     x1, y1, x2, y2 = frame.bbox
@@ -59,7 +77,10 @@ class AnalysisPipeline:
         frame_height, frame_width = any_frame.shape[:2]
 
         paths = {
-            track_id: [f.centroid for f in sorted(frames, key=lambda f: f.frame_index)]
+            track_id: _subsample_path(
+                [f.centroid for f in sorted(frames, key=lambda f: f.frame_index)],
+                MAX_CORRIDOR_PATH_POINTS,
+            )
             for track_id, frames in tracks.items()
         }
         # Scales UP with zoom: the same real-world lane separation shows up as MORE pixels

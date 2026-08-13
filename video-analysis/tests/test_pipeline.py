@@ -214,12 +214,13 @@ def test_head_on_approaching_track_gets_a_real_bearing_and_a_scale_dominated_dis
     # a vehicle driving straight at the camera. Before this fix, bearing_degrees would be
     # None and displacement_pixels would be 0.0 (lateral-only), silently dropping the vehicle
     # from all downstream flow analysis regardless of how obvious the approach was visually.
+    # Scaled from 8 frames to 24 frames to satisfy MIN_OBSERVATIONS=12 (was 4).
     frames = [
         _make_frame(track_id=1, frame_index=i, bbox=(40.0, 40.0, 60.0, 60.0))
-        for i in range(4)
+        for i in range(12)
     ] + [
         _make_frame(track_id=1, frame_index=i, bbox=(0.0, 0.0, 100.0, 100.0))
-        for i in range(4, 8)
+        for i in range(12, 24)
     ]
     pipeline = AnalysisPipeline(
         settings=_fake_settings(), detector=FakeDetector(frames), plate_reader=FakePlateReader()
@@ -244,15 +245,13 @@ def test_ordinary_lateral_track_displacement_is_unaffected_by_bbox_size_change()
     # size substantially (as a real vehicle's box naturally does while crossing the frame) -
     # displacement_pixels must reflect lateral motion ONLY, not be inflated by the
     # unrelated bbox size change, restoring this plan's own invariant.
+    # Scaled from 8 frames to 24 frames to satisfy MIN_OBSERVATIONS=12 (was 4).
     frames = [
-        _make_frame(track_id=1, frame_index=0, bbox=(0.0, 0.0, 20.0, 20.0)),
-        _make_frame(track_id=1, frame_index=1, bbox=(0.0, 0.0, 20.0, 20.0)),
-        _make_frame(track_id=1, frame_index=2, bbox=(0.0, 0.0, 20.0, 20.0)),
-        _make_frame(track_id=1, frame_index=3, bbox=(0.0, 0.0, 20.0, 20.0)),
-        _make_frame(track_id=1, frame_index=4, bbox=(50.0, 0.0, 250.0, 200.0)),
-        _make_frame(track_id=1, frame_index=5, bbox=(50.0, 0.0, 250.0, 200.0)),
-        _make_frame(track_id=1, frame_index=6, bbox=(50.0, 0.0, 250.0, 200.0)),
-        _make_frame(track_id=1, frame_index=7, bbox=(50.0, 0.0, 250.0, 200.0)),
+        _make_frame(track_id=1, frame_index=i, bbox=(0.0, 0.0, 20.0, 20.0))
+        for i in range(12)
+    ] + [
+        _make_frame(track_id=1, frame_index=i, bbox=(50.0, 0.0, 250.0, 200.0))
+        for i in range(12, 24)
     ]
     pipeline = AnalysisPipeline(
         settings=_fake_settings(), detector=FakeDetector(frames), plate_reader=FakePlateReader()
@@ -265,3 +264,29 @@ def test_ordinary_lateral_track_displacement_is_unaffected_by_bbox_size_change()
     # the 8px floor, even though the bbox diagonal also grew dramatically (28.28 -> 269.26).
     assert vehicle.displacement_pixels == pytest.approx(166.5, abs=0.5)
     assert vehicle.bearing_source == "centroid"
+
+
+def test_corridor_path_capping_preserves_full_track_frame_count():
+    """Corridor path subsampling (Fix D) caps points for cluster_tracks/corridor_cohesion
+    to avoid O(n²) explosion, but must NOT affect track_frame_count sent to Kotlin - a
+    50-frame track should still report 50 frames, not 30 (the cap)."""
+    # Create a 50-frame track with consistent lateral motion (to get 12+ observations and
+    # clear both bearing and displacement thresholds) and clear corridor clustering.
+    frames = [
+        _make_frame(track_id=1, frame_index=i, bbox=(float(i), float(i), float(i + 20), float(i + 20)))
+        for i in range(50)
+    ]
+    pipeline = AnalysisPipeline(
+        settings=_fake_settings(), detector=FakeDetector(frames), plate_reader=FakePlateReader()
+    )
+
+    response = pipeline.analyze("unused.mp4")
+
+    assert len(response.vehicles) == 1
+    vehicle = response.vehicles[0]
+    # The track has 50 raw frames - the capped corridor path (30 points) is only used for
+    # clustering, not for frame counting or displacement calculation.
+    assert vehicle.track_frame_count == 50, "track_frame_count must reflect full uncapped frame count"
+    # Verify the vehicle still has valid bearing/displacement (not broken by path capping)
+    assert vehicle.bearing_degrees is not None
+    assert vehicle.displacement_pixels is not None

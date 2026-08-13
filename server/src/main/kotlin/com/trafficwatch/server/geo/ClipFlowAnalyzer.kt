@@ -6,11 +6,13 @@ import org.springframework.stereotype.Component
 import kotlin.math.hypot
 import kotlin.math.min
 
-/** Minimum observed frames for a track to vote in a consensus. */
-private const val MIN_TRACK_FRAMES = 3
+/** Minimum observed frames for a track to vote in a consensus. Scaled 3x from 3 to 9 after
+ * frame_stride changed from 3 to 1: the same ~0.3s of real time now produces ~9 observations. */
+private const val MIN_TRACK_FRAMES = 9
 
-/** Frame count at which trackQuality's frame factor saturates to 1.0. */
-private const val TRACK_FRAMES_SATURATION = 5.0
+/** Frame count at which trackQuality's frame factor saturates to 1.0. Scaled 3x from 5.0 to 15.0
+ * after frame_stride changed from 3 to 1: the same real-time span now produces 3x more frames. */
+private const val TRACK_FRAMES_SATURATION = 15.0
 
 /**
  * Recording vehicle's own GPS speed threshold (m/s) below which a bbox-scale-derived

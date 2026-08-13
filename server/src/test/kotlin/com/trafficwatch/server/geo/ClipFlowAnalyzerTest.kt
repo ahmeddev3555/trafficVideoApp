@@ -83,10 +83,10 @@ class ClipFlowAnalyzerTest {
 
     @Test
     fun `trackQuality saturates at one and scales below the saturation points`() {
-        val full = analyzer.qualifyVehicles(listOf(vehicle(1, 90.0, frames = 10, displacement = 500.0)), 0.0, 1920, 1080)
+        val full = analyzer.qualifyVehicles(listOf(vehicle(1, 90.0, frames = 30, displacement = 500.0)), 0.0, 1920, 1080)
         assertEquals(1.0, full[0].trackQuality, 1e-9)
 
-        val partial = analyzer.qualifyVehicles(listOf(vehicle(1, 90.0, frames = 4, displacement = 500.0)), 0.0, 1920, 1080)
+        val partial = analyzer.qualifyVehicles(listOf(vehicle(1, 90.0, frames = 12, displacement = 500.0)), 0.0, 1920, 1080)
         assertEquals(0.8, partial[0].trackQuality, 1e-9) // min(4/5, 1) * 1
     }
 

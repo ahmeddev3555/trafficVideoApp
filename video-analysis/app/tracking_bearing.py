@@ -4,7 +4,10 @@ import math
 from typing import Sequence, Tuple
 
 # Below this many observed frames, a track is too brief to trust a direction estimate.
-MIN_OBSERVATIONS = 4
+# Scaled by 3x after frame_stride changed from 3 to 1: old value was 4 (representing ~0.4
+# real seconds at 30fps with frame_stride=3 cadence). At the new frame_stride=1 cadence,
+# the same ~0.4s of real time now produces ~12 observations.
+MIN_OBSERVATIONS = 12
 
 # Below this many pixels of net LATERAL displacement, motion is treated as noise (a
 # stationary or barely-moving vehicle), not a fabricated direction. Applies only to lateral
@@ -23,7 +26,9 @@ MIN_DISPLACEMENT_PIXELS = 8.0
 MIN_SCALE_CHANGE_FRACTION = 0.15
 
 # How many frames at the start/end of a track to average when estimating displacement.
-DEFAULT_SAMPLE_SIZE = 4
+# Scaled by 3x after frame_stride changed from 3 to 1: old value was 4. At the new
+# frame_stride=1 cadence, reaching the same real-time window requires 12 samples.
+DEFAULT_SAMPLE_SIZE = 12
 
 
 def bbox_diagonal(bbox: Tuple[float, float, float, float]) -> float:

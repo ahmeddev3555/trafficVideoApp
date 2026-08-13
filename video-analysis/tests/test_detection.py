@@ -220,3 +220,57 @@ def test_car_and_motorcycle_track_ids_never_collide(mock_video_capture, mock_yol
     assert by_type["car"] < 1_000_000, "car track_id should never carry the motorcycle offset"
     assert by_type["motorcycle"] >= 1_000_000, "motorcycle track_id must carry the offset"
     assert by_type["car"] != by_type["motorcycle"]
+
+
+@patch("app.detection.YOLO")
+@patch("app.detection.cv2.VideoCapture")
+def test_car_tracker_has_occlusion_tolerance_buffer_of_90(mock_video_capture, mock_yolo):
+    """Car/bus/truck tracker's lost_track_buffer=90 restores occlusion tolerance after
+    frame_stride changed from 3 to 1. ByteTrack.max_time_lost is derived from
+    lost_track_buffer and frame cadence - at frame_stride=1, buffer=90 gives ~3.0 real
+    seconds of occlusion tolerance (same as buffer=30 did at the old frame_stride=3)."""
+    mock_capture = MagicMock()
+    mock_capture.read.return_value = (False, None)
+    mock_video_capture.return_value = mock_capture
+
+    from app.detection import VehicleDetector
+
+    detector = VehicleDetector(_fake_settings())
+    assert detector._tracker.max_time_lost == 90
+
+
+@patch("app.detection.sv.Detections.from_ultralytics")
+@patch("app.detection.YOLO")
+@patch("app.detection.cv2.VideoCapture")
+def test_both_trackers_reset_at_start_of_each_video(mock_video_capture, mock_yolo, mock_from_ultralytics):
+    """Both ByteTrack instances must call reset() at the start of each track_video() call.
+    Without this, a long-running VehicleDetector instance reuses tracking state and ID
+    numbering between separate videos, causing cross-video bleed."""
+    dummy_frame = np.zeros((10, 10, 3), dtype=np.uint8)
+    mock_capture = MagicMock()
+    # Two separate video reads - each should trigger tracker resets
+    mock_capture.read.side_effect = [
+        (True, dummy_frame), (False, None),  # first video
+        (True, dummy_frame), (False, None),  # second video
+    ]
+    mock_video_capture.return_value = mock_capture
+
+    # Empty detections (no vehicles) to simplify the test
+    mock_from_ultralytics.return_value = sv.Detections(
+        xyxy=np.empty((0, 4), dtype=np.float32),
+        confidence=np.empty(0, dtype=np.float32),
+        class_id=np.empty(0, dtype=int),
+    )
+
+    from app.detection import VehicleDetector
+
+    detector = VehicleDetector(_fake_settings())
+
+    # Track two separate videos
+    list(detector.track_video("first.mp4"))
+    list(detector.track_video("second.mp4"))
+
+    # Verify reset() was called on both trackers for each track_video() call
+    # The trackers' internal state should be clean (lost_tracks should be empty after reset).
+    assert len(detector._tracker.lost_tracks) == 0, "car tracker should have no lost tracks after reset"
+    assert len(detector._moto_tracker.lost_tracks) == 0, "moto tracker should have no lost tracks after reset"

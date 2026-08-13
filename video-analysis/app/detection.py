@@ -56,7 +56,14 @@ class VehicleDetector:
     def __init__(self, settings: Settings):
         self._settings = settings
         self._model = YOLO(settings.yolo_model_path)
-        self._tracker = sv.ByteTrack()
+        # Car/bus/truck tracker: lost_track_buffer=90 restores occlusion tolerance after
+        # frame_stride changed from 3 to 1. ByteTrack measures occlusion in ticks (calls to
+        # update_with_detections), not seconds. At the old frame_stride=3 cadence,
+        # lost_track_buffer=30 gave ~3.0 real seconds of tolerance (30 ticks ÷ 10
+        # analyzed-ticks/real-second). At the new frame_stride=1 cadence (30 analyzed-ticks/
+        # real-second now), reaching that same ~3.0s real tolerance requires lost_track_buffer=90
+        # (90 ticks ÷ 30 ticks/sec = 3.0s). See ByteTrack.max_time_lost derivation for details.
+        self._tracker = sv.ByteTrack(lost_track_buffer=90)
         self._moto_tracker = sv.ByteTrack()
 
     def track_video(self, video_path: str) -> Iterator[TrackedFrame]:
@@ -67,6 +74,13 @@ class VehicleDetector:
         # confidence for everything in it (confirmed: a real motorcycle went from a
         # spurious 0.08 to a solid 0.73+ once this was enabled on the same clip).
         capture.set(cv2.CAP_PROP_ORIENTATION_AUTO, 1)
+        # Reset both trackers at the start of each video. This clears tracked/lost/removed
+        # track lists, resets the per-tracker frame counter, and resets the process-global
+        # external-id counter. Without this, a long-running VehicleDetector instance
+        # (see main.py - one is constructed at startup and reused for every report) would
+        # leak tracking state and ID numbering between separate videos.
+        self._tracker.reset()
+        self._moto_tracker.reset()
         frame_index = 0
         try:
             while True:

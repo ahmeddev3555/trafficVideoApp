@@ -207,7 +207,7 @@ class ReportAnalysisIntegrationTest @Autowired constructor(
                           },
                           "corridor_id": 1,
                           "corridor_cohesion": 1.0,
-                          "track_frame_count": 10,
+                          "track_frame_count": 30,
                           "displacement_pixels": 310.0
                         }
                       ],
@@ -408,19 +408,19 @@ class ReportAnalysisIntegrationTest @Autowired constructor(
                 {"track_id": 1, "vehicle_type": "car", "detection_confidence": 0.95, "bearing_degrees": 88.0,
                  "plate_text": null, "plate_confidence": null, "bounding_box": {"x1": 0.0, "y1": 0.0, "x2": 1414.0, "y2": 1414.0},
                  "corridor_id": 0, "corridor_cohesion": 1.0,
-                 "track_frame_count": 10, "displacement_pixels": 310.0},
+                 "track_frame_count": 30, "displacement_pixels": 310.0},
                 {"track_id": 2, "vehicle_type": "car", "detection_confidence": 0.95, "bearing_degrees": 90.0,
                  "plate_text": null, "plate_confidence": null, "bounding_box": {"x1": 0.0, "y1": 0.0, "x2": 1414.0, "y2": 1414.0},
                  "corridor_id": 0, "corridor_cohesion": 1.0,
-                 "track_frame_count": 10, "displacement_pixels": 310.0},
+                 "track_frame_count": 30, "displacement_pixels": 310.0},
                 {"track_id": 3, "vehicle_type": "car", "detection_confidence": 0.95, "bearing_degrees": 92.0,
                  "plate_text": null, "plate_confidence": null, "bounding_box": {"x1": 0.0, "y1": 0.0, "x2": 1414.0, "y2": 1414.0},
                  "corridor_id": 0, "corridor_cohesion": 1.0,
-                 "track_frame_count": 10, "displacement_pixels": 310.0},
+                 "track_frame_count": 30, "displacement_pixels": 310.0},
                 {"track_id": 4, "vehicle_type": "car", "detection_confidence": 0.95, "bearing_degrees": 270.0,
                  "plate_text": "LEB-5678", "plate_confidence": 0.8, "bounding_box": {"x1": 0.0, "y1": 0.0, "x2": 1414.0, "y2": 1414.0},
                  "corridor_id": 0, "corridor_cohesion": 1.0,
-                 "track_frame_count": 10, "displacement_pixels": 310.0}
+                 "track_frame_count": 30, "displacement_pixels": 310.0}
               ],
               "frame_width": 1920,
               "frame_height": 1080
@@ -468,7 +468,7 @@ class ReportAnalysisIntegrationTest @Autowired constructor(
                   "bearing_degrees": 90.0, "plate_text": "LEA-1234", "plate_confidence": 0.9,
                   "bounding_box": {"x1": 0.0, "y1": 0.0, "x2": 1414.0, "y2": 1414.0},
                   "corridor_id": 1, "corridor_cohesion": 1.0,
-                  "track_frame_count": 10, "displacement_pixels": 310.0,
+                  "track_frame_count": 30, "displacement_pixels": 310.0,
                   "track_midpoint_ms": 8000
                 }
               ],

@@ -123,7 +123,7 @@ class ReportAnalysisJobTest {
         frameJpegBase64: String? = null,
         corridorId: Long? = 0L,
         corridorCohesion: Double? = 1.0,
-        trackFrameCount: Int? = 10,
+        trackFrameCount: Int? = 30,
         displacementPixels: Double? = 310.0,
         trackMidpointMs: Long? = null,
     ) = VehicleAnalysisResult(

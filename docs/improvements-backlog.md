@@ -168,6 +168,71 @@ considered rather than forgotten.
   than triggering a second fix wave - not load-bearing, message-accuracy
   only)*
 
+- **No correction for camera translation (recording from a moving
+  vehicle) - only rotation is compensated for.** Confirmed by a full trace
+  of the pipeline (2026-08-13): sub-projects 1-3 of the "fix camera motion
+  tracking" effort (`docs/superpowers/specs/2026-08-03-...`,
+  `2026-08-04-...`, `2026-08-05-...`) give `OrientationTimeline` a
+  continuous, per-vehicle-timestamp camera *heading* (from fused
+  gyroscope/rotation-vector samples, or GPS bearing as a fallback), so
+  panning/turning the phone mid-recording is handled correctly. But nothing
+  corrects for the camera's own *position* changing over time - if the
+  recording device itself is moving through space (dashboard-mounted,
+  held out a car window), nearby objects sweep across the frame faster
+  than distant ones from motion parallax alone, independent of their real
+  direction of travel, and this is indistinguishable from genuine lateral
+  vehicle motion in `tracking_bearing.py`'s pixel-space bearing math. The
+  one related case that *is* handled -
+  `ClipFlowAnalyzer.qualifyVehicles`'s recording-speed gate on
+  `bearingSource == "scale"` (see the entry above) - only protects the
+  head-on approach/recession fallback, not ordinary lateral bearing
+  computation. True correction would need visual odometry (estimating the
+  camera's own motion from the video background), which was explicitly
+  scoped as the broad version of sub-project 4 and deliberately deferred:
+  see "Non-goals" in
+  `docs/superpowers/specs/2026-08-06-approach-recession-bearing-fix-design.md`.
+  Net effect: recording from a moving vehicle degrades gracefully (the
+  system's gates suppress unreliable signals rather than fabricate a wrong
+  verdict) but is not fully corrected - stationary or in-place-panning
+  camera use remains the reliable case the system was designed around.
+  *(added 2026-08-13)*
+
+## Vehicle detection / tracking
+
+**Area:** `video-analysis/app/detection.py`, `video-analysis/app/pipeline.py`,
+`video-analysis/app/tracking_bearing.py`,
+`server/src/main/kotlin/com/trafficwatch/server/geo/ClipFlowAnalyzer.kt`
+
+- **Motorcycles near the recording camera were silently dropped by
+  tracking entirely - shipped 2026-08-13.** Found while auditing a
+  confirmed wrong-way report: two real motorcycles, detected by YOLO
+  repeatedly and confidently (0.48-0.81) across many sampled frames, never
+  appeared anywhere in the tracked-vehicle output. Root-caused to a
+  hardcoded, non-configurable 0.7 IoU threshold deep inside the
+  `supervision` library's `ByteTrack` for confirming a brand-new track -
+  a small, fast-moving object's frame-to-frame box overlap collapses below
+  it under this service's sampling far more easily than a larger, farther
+  car's does for the same absolute pixel displacement (measured real IoU:
+  0.0-0.432 on the production clip that surfaced this). No public
+  `ByteTrack` parameter touches that gate; the only lever that reliably
+  fixed it (confirmed empirically) was raising `frame_stride` from 3 to 1.
+  Shipped as: a dedicated `ByteTrack` instance for motorcycle-class
+  detections fed at the new denser cadence, with car/bus/truck tracking's
+  own parameters left untouched; plus five follow-on calibration fixes a
+  final review caught as second-order effects of the denser sampling
+  (`ByteTrack`'s occlusion-tolerance buffer is measured in ticks, not
+  seconds, and silently lost ~2/3 of its real tolerance for cars;
+  frame-count-based quality gates - `MIN_OBSERVATIONS`/`DEFAULT_SAMPLE_SIZE`
+  in Python, `MIN_TRACK_FRAMES`/`TRACK_FRAMES_SATURATION` in Kotlin - are
+  also tick-based and needed the same 3x rescaling to keep meaning the same
+  real-world duration; `corridors.py`'s O(n²) clustering cost needed
+  bounding via path-point capping, since tracks now have ~3x more points).
+  Also fixed in the same pass, found during review: a pre-existing,
+  unrelated bug where the long-lived tracker singleton never reset between
+  videos, letting one report's tracking state leak into the next.
+  See `docs/superpowers/specs/2026-08-13-motorcycle-tracking-iou-fix-design.md`.
+  *(added and shipped 2026-08-13)*
+
 ## Upload reliability / data integrity
 
 **Area:** `app/src/main/java/com/trafficwatch/app/feature/upload/UploadWorker.kt`,

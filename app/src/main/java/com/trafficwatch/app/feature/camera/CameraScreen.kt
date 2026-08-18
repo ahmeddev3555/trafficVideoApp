@@ -70,6 +70,12 @@ fun CameraScreen(
     val outputFile = remember { viewModel.newRawFile() }
     val isRecording = recordingState is RecordingState.Recording
 
+    android.util.Log.d("MapSizeDebug", "CameraScreen recomposing - recordingState=$recordingState")
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        android.util.Log.d("MapSizeDebug", "CameraScreen ENTERED composition")
+        onDispose { android.util.Log.d("MapSizeDebug", "CameraScreen LEFT composition (disposed)") }
+    }
+
     // Prevent the screen from dimming/sleeping mid-recording - a phone locking or the
     // display dimming would interrupt the clip. Scoped to the recording window only, not
     // the whole camera screen (e.g. while idle waiting for a GPS fix).

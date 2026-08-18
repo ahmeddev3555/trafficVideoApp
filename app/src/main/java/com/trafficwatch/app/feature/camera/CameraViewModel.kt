@@ -62,20 +62,42 @@ class CameraViewModel @Inject constructor(
 
     init {
         observeLocation()
+        observeHeadingForDisplay()
+    }
+
+    /**
+     * Continuous compass heading for the recording screen's minimap arrow - runs for the
+     * whole lifetime of this screen (not gated behind recording) so the arrow reflects the
+     * phone's actual orientation before the user ever presses record, not just during a
+     * capture. Deliberately separate from [onStartRecording]'s rotationSamplingJob, which
+     * captures rotationSamples for upload using a precise, location-derived declination
+     * reference - this one only drives on-screen display, so the small declination error
+     * from the magnetic-north-only fallback (no GPS fix needed) is an acceptable trade-off
+     * for not having to restart the sensor listener the moment a fix arrives.
+     */
+    private fun observeHeadingForDisplay() {
+        viewModelScope.launch {
+            compassProvider.observeHeadings(
+                latitude = 0.0, longitude = 0.0, altitude = 0.0,
+                intervalMs = ROTATION_SAMPLE_INTERVAL_MS,
+                currentRotation = cameraController.currentRotation,
+            ).collect { heading -> _uiState.update { it.copy(currentHeadingDegrees = heading) } }
+        }
     }
 
     private fun observeLocation() {
         viewModelScope.launch {
             locationUtil.observeLocation().collect { loc ->
-                _uiState.update {
-                    it.copy(
-                        locationState = when {
-                            loc == null -> LocationState.Unavailable
-                            loc.accuracy > MAX_ACCEPTABLE_ACCURACY_METERS -> LocationState.Acquiring
-                            else -> LocationState.Fixed(loc)
-                        }
-                    )
+                val newState = when {
+                    loc == null -> LocationState.Unavailable
+                    loc.accuracy > MAX_ACCEPTABLE_ACCURACY_METERS -> LocationState.Acquiring
+                    else -> LocationState.Fixed(loc)
                 }
+                android.util.Log.d(
+                    "MapSizeDebug",
+                    "locationState -> ${newState::class.simpleName} (accuracy=${loc?.accuracy}, threshold=$MAX_ACCEPTABLE_ACCURACY_METERS)"
+                )
+                _uiState.update { it.copy(locationState = newState) }
             }
         }
     }
@@ -145,9 +167,12 @@ class CameraViewModel @Inject constructor(
                     currentRotation = cameraController.currentRotation,
                 )
             }
+            // Only persists samples for upload - observeHeadingForDisplay() (running for the
+            // whole screen lifetime, started in init) already drives the on-screen arrow, so
+            // this must not also write currentHeadingDegrees: two independent sensor listeners
+            // emitting at their own cadence would otherwise fight over the same UI state.
             headings.filterNotNull().collect { heading ->
                 rotationSamples.add(RotationSample(capturedAt = System.currentTimeMillis(), headingDegrees = heading))
-                _uiState.update { it.copy(currentHeadingDegrees = heading) }
             }
         }
 
@@ -176,7 +201,7 @@ class CameraViewModel @Inject constructor(
             samplingJob?.cancel()
             rotationSamplingJob?.cancel()
             maxDurationJob?.cancel()
-            _uiState.update { it.copy(cameraError = error, currentHeadingDegrees = null) }
+            _uiState.update { it.copy(cameraError = error) }
         }
         maxDurationJob = viewModelScope.launch {
             delay(MAX_RECORDING_MS)
@@ -189,7 +214,6 @@ class CameraViewModel @Inject constructor(
         samplingJob?.cancel()
         rotationSamplingJob?.cancel()
         cameraController.stopRecording()
-        _uiState.update { it.copy(currentHeadingDegrees = null) }
     }
 
     fun getSnapshotLocation(): LocationData? =

@@ -137,6 +137,36 @@ considered rather than forgotten.
   carriageway as a wrong-way violator.
   *(added 2026-08-02 and 2026-08-04, both shipped 2026-08-08)*
 
+- **The divided-carriageway guard above did NOT catch a real recurrence:
+  report `a6877462-0675-482e-a2a8-a8d096649b9a` was confidently CONFIRMED
+  (`wrong_way_confidence` 0.5711, just above the 0.5 threshold) against a
+  vehicle that the stored evidence frame shows is plainly rear-facing -
+  travelling the same direction as the recording car and every other
+  vehicle in shot, not oncoming. Root-caused as far as reproducible: this
+  is real, still-current OSM geometry (خیبان جناح / Khayaban-e-Jinnah has
+  two independently-tagged `oneway=yes` ways only ~9-12m apart, opposite
+  bearings - textbook divided-carriageway data). A new regression test,
+  `StreetDirectionResolverTest`'s
+  `downgrades to Unknown for the real Khayaban-e-Jinnah divided carriageway
+  behind report 649b9a` (fixture:
+  `server/src/test/resources/fixtures/overpass-khayaban-e-jinnah-report-649b9a.json`,
+  captured live from Overpass), feeds this exact real geometry through the
+  real resolver code and correctly gets `Unknown` - proving the guard logic
+  itself is sound against this data. Also ruled out: cache staleness (the
+  report's stored bearing has full double precision, provably from a fresh
+  `resolveFresh()` call, not a rounded cache hit), a search-radius bug
+  (`computeSearchRadius` is correct; 50m radius comfortably covers both
+  ways), and stale OSM tagging (way 726823670 has been `oneway=yes` since
+  2019, unchanged). Leading remaining hypothesis, unconfirmed: the live
+  Overpass API's response to the production server's actual request, at
+  the moment `ReportAnalysisJob` ran, only contained one of the two ways -
+  plausibly the public overpass-api.de service's multi-replica/eventual-
+  consistency behavior, not a bug in this codebase. Nothing logs the raw
+  Overpass response at request time, so this can't be proven after the
+  fact; would need response logging added before the next occurrence to
+  confirm.
+  *(added 2026-08-17, found investigating report 649b9a)*
+
 ## Direction analysis (compass + moving camera)
 
 **Area:** `server/src/main/kotlin/com/trafficwatch/server/geo/ClipFlowAnalyzer.kt`
@@ -232,6 +262,38 @@ considered rather than forgotten.
   videos, letting one report's tracking state leak into the next.
   See `docs/superpowers/specs/2026-08-13-motorcycle-tracking-iou-fix-design.md`.
   *(added and shipped 2026-08-13)*
+
+- **Explored (not implemented): a vehicle-orientation (front vs rear)
+  cross-check as an additional guard against false-positive wrong-way
+  confirmations** - prompted by the report 649b9a false positive above,
+  since the flagged vehicle's own evidence frame makes a rear-facing view
+  visually obvious to a human. Feasibility test: a naive color heuristic
+  (detect red taillight glow in the lower portion of a vehicle's bbox)
+  scored 0% on every real vehicle crop tested, including large, clean,
+  correctly-cropped rear views - because these are daytime clips and
+  unlit taillights are just dark plastic housings, not distinguishable by
+  color from the rest of the bumper. Daylight is the dominant real-world
+  case for this app, so this specific approach is a dead end. The crops
+  do show structurally obvious human-visible cues instead (tailgate/hatch
+  shape, rear plate mounting height, passenger silhouettes through rear
+  glass, motorcycle exhaust position) - plausible for a small trained
+  front/rear image classifier, not a hand-rolled pixel heuristic. Not yet
+  validated either way: every crop tested came from vehicles travelling
+  the same direction as the recording car, so there's no genuine oncoming
+  (front-facing) example yet to confirm discriminative power against.
+  *(added 2026-08-17, feasibility only - no implementation)*
+
+- **YOLO detects the recording car's own dashboard/windshield trim as a
+  "vehicle"**, found incidentally while picking each track's largest bbox
+  for the orientation-guard feasibility test above (not investigated
+  further). Produced large, high-area, spurious tracks (up to 815k px²) in
+  a real clip (`app/src/main/java/com/trafficwatch/app/feature/camera` test
+  recording, "latest.mp4") that would win any "largest crop" or
+  bbox-area-based selection over genuine, smaller, farther real vehicles.
+  Untriaged: no repro isolated beyond the one clip it was noticed in, no
+  root cause (camera framing catching too much of the dash/window trim
+  under the vehicle bbox, YOLO class confusion, or something else).
+  *(added 2026-08-17, found incidentally - not yet investigated)*
 
 ## Upload reliability / data integrity
 

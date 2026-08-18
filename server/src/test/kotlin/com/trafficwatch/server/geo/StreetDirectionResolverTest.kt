@@ -366,6 +366,43 @@ class StreetDirectionResolverTest @Autowired constructor(
         wireMockServer.verify(1, postRequestedFor(urlMatching(".*")))
     }
 
+    /**
+     * Reproduces a real false-positive CONFIRMED report (id ending `649b9a`): the fixture is
+     * an UNMODIFIED Overpass response captured live for these exact coordinates
+     * (31.486191240932015, 74.38313319364715 - on خیبان جناح / Khayaban-e-Jinnah, Lahore),
+     * filtered to the two ways within the 50m radius this accuracy (5.0m) would search. Both
+     * are real, long (16-30 node), curving `oneway=yes` ways for the same named street,
+     * ~9-12m apart and bearing ~180 degrees apart - textbook divided-carriageway geometry,
+     * well inside hasAntiParallelOneWayNeighbor's 30m proximity cap. The synthetic
+     * two-way-fixture tests above (`downgrades to Unknown when a nearby anti-parallel...`)
+     * cover this same scenario but only with 2-node (single-segment) synthetic ways; this
+     * uses the real multi-segment geometry to check whether the guard still fires once a
+     * `segmentIndex` has to be resolved on a curving, many-node way instead of a straight
+     * 2-point line.
+     *
+     * The production report resolved to OneWay (legal bearing 129.85 degrees, confidence 1.0)
+     * and, combined with a marginal downstream score, CONFIRMED a vehicle that was - per the
+     * evidence frame - clearly travelling the same direction as every other vehicle in shot.
+     * This test asserts the behavior the guard is supposed to guarantee (Unknown, not a
+     * confident OneWay) so it fails loudly if the resolver reproduces the same false positive
+     * against real OSM geometry.
+     */
+    @Test
+    fun `downgrades to Unknown for the real Khayaban-e-Jinnah divided carriageway behind report 649b9a`() {
+        val fixtureJson = javaClass.getResourceAsStream("/fixtures/overpass-khayaban-e-jinnah-report-649b9a.json")
+            ?.bufferedReader(Charsets.UTF_8)?.readText()
+            ?: error("Missing test fixture: fixtures/overpass-khayaban-e-jinnah-report-649b9a.json")
+        wireMockServer.stubFor(post(urlMatching(".*")).willReturn(okJson(fixtureJson)))
+
+        val result = streetDirectionResolver.resolve(
+            BigDecimal("31.486191240932015"),
+            BigDecimal("74.38313319364715"),
+            accuracyMeters = 5.0,
+        )
+
+        assertThat(result).isInstanceOf(DirectionResolution.Unknown::class.java)
+    }
+
     private fun overpassResponseJson(oneway: String?, name: String): String {
         val tagsJson = buildString {
             append(""""name": "$name"""")

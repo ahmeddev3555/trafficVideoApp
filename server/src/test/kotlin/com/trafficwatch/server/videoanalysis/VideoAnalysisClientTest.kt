@@ -111,6 +111,52 @@ class VideoAnalysisClientTest {
     }
 
     @Test
+    fun `analyze parses scale_trend and defaults it when absent`() {
+        val reportId = UUID.randomUUID()
+        mockServer.expect(ExpectedCount.once(), requestTo("http://video-analysis.test/v1/analyze"))
+            .andExpect(method(HttpMethod.POST))
+            .andRespond(
+                withSuccess(
+                    """
+                    {
+                      "vehicles": [
+                        {
+                          "track_id": 1,
+                          "vehicle_type": "car",
+                          "detection_confidence": 0.91,
+                          "bearing_degrees": 182.5,
+                          "plate_text": "LEA-1234",
+                          "plate_confidence": 0.87,
+                          "scale_trend": "growing",
+                          "scale_growth_fraction": 1.4
+                        },
+                        {
+                          "track_id": 2,
+                          "vehicle_type": "truck",
+                          "detection_confidence": 0.6,
+                          "bearing_degrees": null,
+                          "plate_text": null,
+                          "plate_confidence": null
+                        }
+                      ]
+                    }
+                    """.trimIndent(),
+                    MediaType.APPLICATION_JSON,
+                ),
+            )
+
+        val vehicles = client.analyze(fakeVideoPath, reportId, zoomRatio = null).vehicles
+
+        assertThat(vehicles).hasSize(2)
+        assertThat(vehicles[0].scaleTrend).isEqualTo("growing")
+        assertThat(vehicles[0].scaleGrowthFraction).isEqualTo(1.4)
+        assertThat(vehicles[1].scaleTrend).isEqualTo("flat")
+        assertThat(vehicles[1].scaleGrowthFraction).isEqualTo(0.0)
+
+        mockServer.verify()
+    }
+
+    @Test
     fun `analyze includes zoom_ratio in the multipart request body when provided`() {
         mockServer.expect(requestTo("http://video-analysis.test/v1/analyze"))
             .andExpect(method(HttpMethod.POST))

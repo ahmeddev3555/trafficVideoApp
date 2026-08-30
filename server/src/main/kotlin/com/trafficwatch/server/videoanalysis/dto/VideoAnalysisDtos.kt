@@ -49,4 +49,10 @@ data class VehicleAnalysisResult(
     // orientation from OrientationTimeline instead of applying one static reading to
     // every vehicle in the clip. Snake_case wire key: track_midpoint_ms.
     val trackMidpointMs: Long? = null,
+    // Apparent-size trend of the track from the video-analysis service (app/schemas.py):
+    // "growing" (approached the camera), "shrinking" (receded), "flat" (neither / too
+    // brief). Default "flat" / 0.0 for a response from a service version predating this
+    // field. Consumed only by ReportAnalysisJob's stationary-approach detection path.
+    val scaleTrend: String = "flat",
+    val scaleGrowthFraction: Double = 0.0,
 )

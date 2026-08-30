@@ -130,6 +130,11 @@ def resolve_bearing(
     lateral_displacement = math.hypot(dx, dy)
 
     if lateral_displacement >= min_displacement_pixels:
+        if scale_trend(bboxes if bboxes is not None else [])[0] == "growing":
+            # A vehicle that both sweeps laterally AND grows steadily is passing
+            # close to the camera on its way toward it - an approach, not motion
+            # along the flow. See the 2026-08-30 stationary-approach-detection spec.
+            return (180.0, "scale")
         return (math.degrees(math.atan2(dx, -dy)) % 360.0, "centroid")
 
     if bboxes is None or len(bboxes) < MIN_OBSERVATIONS:

@@ -31,4 +31,12 @@ data class AnalysisProperties(
     var historyMinObservations: Int = 5,
     var historyMinDistinctReporters: Int = 3,
     var historyMinResultantLength: Double = 0.8,
+    // Stationary-approach detection (ReportAnalysisJob.tryStationaryApproachDetection):
+    // a "strong grower" - a wrong-way candidate - must have grown its bbox by at least
+    // this fraction, over at least this many tracked frames, with at least this detection
+    // confidence. Calibrated 2026-08-30 against five real reports (see the design spec's
+    // Appendix): real violators grew 0.93-2.24; every non-violator grower topped out at 0.44.
+    var approachGrowthMin: Double = 0.8,
+    var approachMinFrames: Int = 30,
+    var approachMinDetection: Double = 0.5,
 )

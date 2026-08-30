@@ -53,3 +53,6 @@ app:
     history-min-observations: 5
     history-min-distinct-reporters: 3
     history-min-resultant-length: 0.8
+    approach-growth-min: 0.8
+    approach-min-frames: 30
+    approach-min-detection: 0.5

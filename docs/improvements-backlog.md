@@ -309,7 +309,26 @@ considered rather than forgotten.
   (the fragments are genuinely too short). Related: the cohesion
   under-confirmation item below, and "No correction for camera
   translation" under Direction analysis.
-  *(added 2026-08-30 while building per-report vehicle readouts)*
+
+  **Partly addressed by
+  `docs/superpowers/plans/2026-08-30-stationary-approach-detection.md`**
+  (implemented on `main`). A stationary-camera bounding-box scale-trend
+  fallback (`ReportAnalysisJob.tryStationaryApproachDetection`) now CONFIRMS
+  `759cd`, `24908`, and `a5275` with no world bearing at all: on a
+  verified-stationary camera (`location_samples` all &le; 1.0 m/s) pointed
+  down a non-two-way street, a vehicle whose bbox grew sustainedly
+  (`scale_trend == "growing"`, growth &ge; 0.8 over &ge; 30 frames) while
+  &ge; 3 others receded is the wrong-way rider. A 2026-08-30 production
+  replay of the real pipeline confirmed the classifier output: `759cd`
+  grower growth 1.52 / 72 fr / det 0.89 with 3 shrinking; `24908` 2.24 / 80
+  / 0.89 with 10 shrinking; `a5275` 0.93 / 34 / 0.78 with 3 shrinking - all
+  three pass every gate and CONFIRM (`wrong_way_confidence` = the grower's
+  detection confidence: 0.89 / 0.89 / 0.78). `50bcc6` (the violator drives
+  *past* the camera, so its track grows-then-shrinks -> `flat`, no strong
+  grower) and `71f78` (moving camera, GPS speed 1.19 m/s ->
+  `wasStationaryThroughout()` false) remain open, deferred to the future
+  "B" (clip-flow-relative bearing) design in section 6 of that spec.
+  *(added 2026-08-30 while building per-report vehicle readouts; approach-detection note added 2026-08-30)*
 
 - **[PRIORITY RAISED 2026-08-30 - recurred] A long, cleanly-detected
   wrong-way vehicle can be denied confirmation purely by low
@@ -381,6 +400,19 @@ considered rather than forgotten.
   root cause (camera framing catching too much of the dash/window trim
   under the vehicle bbox, YOLO class confusion, or something else).
   *(added 2026-08-17, found incidentally - not yet investigated)*
+
+- **Track fragmentation still splits a very-close, laterally-crossing
+  motorcycle into two short tracks.** `a5275`'s wrong-way rider was tracked
+  as an 8-frame fragment (below `MIN_TRACK_FRAMES` = 9, never analysed) then
+  a separate 34-frame fragment - the 2026-08-13 IoU fix mitigated the
+  merely-small case, not the very-close + crossing case. The
+  stationary-approach path
+  (`docs/superpowers/plans/2026-08-30-stationary-approach-detection.md`) now
+  CONFIRMS the report from the surviving 34-frame fragment, so fragmentation
+  no longer blocks `a5275`, but a cleanly-held single track would still
+  score better everywhere else in the pipeline (bearing, corridor cohesion,
+  displacement) - the ByteTrack-continuity gap is its own item.
+  *(added 2026-08-30 during stationary-approach detection production replay)*
 
 ## Upload reliability / data integrity
 

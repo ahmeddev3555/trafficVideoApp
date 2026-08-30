@@ -37,6 +37,44 @@ def bbox_diagonal(bbox: Tuple[float, float, float, float]) -> float:
     return math.hypot(x2 - x1, y2 - y1)
 
 
+def scale_trend(
+    bboxes: Sequence[Tuple[float, float, float, float]],
+) -> Tuple[str, float]:
+    """Classifies a track's apparent-size change over time.
+
+    Computes bbox diagonal sizes across the track and checks for monotonic growth
+    or shrinkage using three equal time-ordered segments. Returns the end-to-end
+    size change fraction for growing tracks, or:
+    - ("growing", (last - first) / first) when the monotonic check passes and growth
+      clears MIN_SCALE_CHANGE_FRACTION - the vehicle is approaching the camera.
+    - ("shrinking", 0.0) when the monotonic check passes and shrink clears
+      MIN_SCALE_CHANGE_FRACTION - the vehicle is receding.
+    - ("flat", 0.0) otherwise: stable, jittering, changing by less than the
+      threshold, non-monotonic (a one-frame size spike), or grows-then-shrinks
+      (a vehicle that passes the camera). Also "flat" for a track with fewer
+      than MIN_OBSERVATIONS frames - too brief to trust a trend.
+
+    The monotonic-across-thirds test (rather than just first-vs-last) is what
+    rejects a single blown-up detection box and a pass-the-camera track.
+    """
+    if len(bboxes) < MIN_OBSERVATIONS:
+        return "flat", 0.0
+    diagonals = [bbox_diagonal(b) for b in bboxes]
+    k = len(diagonals) // 3
+    if k == 0:
+        return "flat", 0.0
+    s1 = diagonals[0]
+    s2 = sum(diagonals[k : 2 * k]) / k
+    s3 = diagonals[-1]
+    if s1 <= 0:
+        return "flat", 0.0
+    if s1 < s2 < s3 and (s3 - s1) / s1 >= MIN_SCALE_CHANGE_FRACTION:
+        return "growing", (s3 - s1) / s1
+    if s1 > s2 > s3 and (s1 - s3) / s1 >= MIN_SCALE_CHANGE_FRACTION:
+        return "shrinking", 0.0
+    return "flat", 0.0
+
+
 def resolve_bearing(
     centroids: Sequence[Tuple[float, float]],
     bboxes: Sequence[Tuple[float, float, float, float]] | None = None,

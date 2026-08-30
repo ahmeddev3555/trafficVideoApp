@@ -6,6 +6,7 @@ from app.tracking_bearing import (
     compute_displacement_pixels,
     compute_track_midpoint_ms,
     resolve_bearing,
+    scale_trend,
 )
 
 
@@ -196,3 +197,51 @@ def test_compute_displacement_pixels_honors_a_custom_min_displacement_pixels_flo
     assert compute_displacement_pixels(centroids, bboxes) == pytest.approx(12.0, abs=1e-6)
     combined = compute_displacement_pixels(centroids, bboxes, min_displacement_pixels=20.0)
     assert combined > 12.0  # scale contribution added, since 12px alone no longer clears 20.0
+
+
+def _growing_bboxes(n=24, start=30.0, end=120.0):
+    # square bboxes whose side grows linearly start -> end
+    return [
+        (0.0, 0.0, s, s)
+        for s in (start + (end - start) * i / (n - 1) for i in range(n))
+    ]
+
+
+def test_scale_trend_growing_monotonic_over_threshold():
+    trend, frac = scale_trend(_growing_bboxes(24, 30.0, 120.0))
+    assert trend == "growing"
+    assert frac == pytest.approx((120.0 - 30.0) / 30.0, rel=1e-6)
+
+
+def test_scale_trend_shrinking_monotonic_over_threshold():
+    trend, frac = scale_trend(_growing_bboxes(24, 120.0, 30.0))
+    assert trend == "shrinking"
+    assert frac == 0.0
+
+
+def test_scale_trend_flat_when_growth_below_threshold():
+    # grows only ~10% end-to-end, under MIN_SCALE_CHANGE_FRACTION (0.15)
+    trend, frac = scale_trend(_growing_bboxes(24, 100.0, 110.0))
+    assert trend == "flat"
+    assert frac == 0.0
+
+
+def test_scale_trend_flat_when_not_monotonic_across_thirds():
+    # stable, stable, then one-frame spike -> middle third mean not > first third mean
+    stable = [(0.0, 0.0, 40.0, 40.0)] * 22
+    spike = [(0.0, 0.0, 400.0, 400.0)] * 2
+    trend, frac = scale_trend(stable + spike)
+    assert trend == "flat"
+
+
+def test_scale_trend_flat_when_vehicle_passes_the_camera():
+    # grows for the first half, then recedes -> grows-then-shrinks -> flat
+    grow = _growing_bboxes(12, 30.0, 120.0)
+    shrink = _growing_bboxes(12, 120.0, 30.0)
+    trend, frac = scale_trend(grow + shrink)
+    assert trend == "flat"
+
+
+def test_scale_trend_flat_for_short_track():
+    trend, frac = scale_trend(_growing_bboxes(8, 30.0, 200.0))
+    assert trend == "flat"

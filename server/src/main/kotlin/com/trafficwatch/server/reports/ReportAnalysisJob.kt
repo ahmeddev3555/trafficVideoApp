@@ -181,7 +181,76 @@ class ReportAnalysisJob(
 
         ingestObservations(report, flowVehicles, evaluation.best?.flowVehicle)
 
+        if (outcome.status == ReportStatus.REJECTED && resolution !is DirectionResolution.TwoWay) {
+            tryStationaryApproachDetection(report, analysis.vehicles, orientationTimeline, streetName)
+                ?.let { return it }
+        }
+
         return outcome
+    }
+
+    /**
+     * Additive fallback (see the 2026-08-30 stationary-approach-detection spec): on a
+     * verified-stationary camera pointed down a one-way (or unknown, non-two-way) street,
+     * a vehicle whose bounding box grew sustainedly while at least three others receded is
+     * driving the wrong way - a signal that needs no compass or OSM legal bearing. Only
+     * ever upgrades an already-REJECTED outcome to CONFIRMED; returns null to leave the
+     * REJECTED outcome untouched.
+     */
+    private fun tryStationaryApproachDetection(
+        report: Report,
+        vehicles: List<VehicleAnalysisResult>,
+        orientationTimeline: OrientationTimeline,
+        streetName: String?,
+    ): AnalysisOutcome? {
+        if (!orientationTimeline.wasStationaryThroughout()) return null
+
+        val minTrackFrames = 9 // == ClipFlowAnalyzer.MIN_TRACK_FRAMES
+        val shrinking = vehicles.count {
+            it.scaleTrend == "shrinking" && (it.trackFrameCount ?: 0) >= minTrackFrames
+        }
+        if (shrinking < 3) return null
+
+        val strongGrowers = vehicles.filter {
+            it.scaleTrend == "growing" &&
+                it.scaleGrowthFraction >= analysisProperties.approachGrowthMin &&
+                (it.trackFrameCount ?: 0) >= analysisProperties.approachMinFrames &&
+                it.detectionConfidence >= analysisProperties.approachMinDetection
+        }
+        if (strongGrowers.isEmpty()) return null
+        if (shrinking < 3 * strongGrowers.size) return null
+
+        val best = strongGrowers.maxByOrNull { it.detectionConfidence } ?: return null
+        if (best.detectionConfidence < analysisProperties.confirmationThreshold) return null
+
+        return AnalysisOutcome(
+            status = ReportStatus.CONFIRMED,
+            licensePlate = best.plateText,
+            confidence = best.plateConfidence?.let { BigDecimal.valueOf(it) },
+            message = "Wrong-way vehicle approaching a stationary camera on ${streetName ?: "this street"}",
+            streetName = streetName,
+            wrongWayConfidence = BigDecimal.valueOf(best.detectionConfidence),
+            wrongWayFramePath = annotateAndStoreFrame(
+                best, requireNotNull(report.id) { "Report must have a generated id before analysis" },
+            ),
+            directionEvidenceJson = approachBreakdownJson(best, shrinking, strongGrowers.size),
+        )
+    }
+
+    private fun approachBreakdownJson(best: VehicleAnalysisResult, recedingCount: Int, strongGrowerCount: Int): String? = try {
+        objectMapper.writeValueAsString(
+            ApproachEvidenceBreakdown(
+                recedingCount = recedingCount,
+                strongGrowerCount = strongGrowerCount,
+                growthFraction = best.scaleGrowthFraction,
+                trackFrames = best.trackFrameCount ?: 0,
+                detectionConfidence = best.detectionConfidence,
+                confirmationThreshold = analysisProperties.confirmationThreshold,
+            ),
+        )
+    } catch (ex: Exception) {
+        logger.warn("ReportAnalysisJob: failed to serialize approach evidence breakdown", ex)
+        null
     }
 
     private data class CandidateEvaluation(
@@ -421,6 +490,21 @@ internal data class EvidenceBreakdown(
     val finalScore: Double?,
     val confirmationThreshold: Double,
     val candidateOrientationSource: String?,
+)
+
+/**
+ * Serialized (snake_case) into reports.direction_evidence when a report is confirmed by
+ * the stationary-approach path instead of the bearing path. The `method` field is the
+ * discriminator that tells a reader which shape this is.
+ */
+internal data class ApproachEvidenceBreakdown(
+    val method: String = "stationary_approach",
+    val recedingCount: Int,
+    val strongGrowerCount: Int,
+    val growthFraction: Double,
+    val trackFrames: Int,
+    val detectionConfidence: Double,
+    val confirmationThreshold: Double,
 )
 
 /** One fully-evaluated violation candidate. */

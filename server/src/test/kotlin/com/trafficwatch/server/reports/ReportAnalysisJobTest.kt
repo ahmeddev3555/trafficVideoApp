@@ -126,6 +126,8 @@ class ReportAnalysisJobTest {
         trackFrameCount: Int? = 30,
         displacementPixels: Double? = 310.0,
         trackMidpointMs: Long? = null,
+        scaleTrend: String = "flat",
+        scaleGrowthFraction: Double = 0.0,
     ) = VehicleAnalysisResult(
         trackId = trackId,
         vehicleType = "car",
@@ -140,6 +142,8 @@ class ReportAnalysisJobTest {
         trackFrameCount = trackFrameCount,
         displacementPixels = displacementPixels,
         trackMidpointMs = trackMidpointMs,
+        scaleTrend = scaleTrend,
+        scaleGrowthFraction = scaleGrowthFraction,
     )
 
     /** Wraps [vehicles] into a full video-analysis response with usable frame dimensions. */
@@ -861,6 +865,172 @@ class ReportAnalysisJobTest {
 
         assertThat(report.status).isEqualTo(ReportStatus.REJECTED) // nobody moves against the flow
         verify { flowObservationService.ingest(report, match { it.isNotEmpty() }) }
+    }
+
+    private fun stationaryLocationSamplesJson(count: Int = 4): String =
+        (0 until count).joinToString(prefix = "[", postfix = "]") { i ->
+            """{"latitude":31.52,"longitude":74.35,"accuracy":5.0,"altitude":210.0,"bearing":0.0,"speed":0.0,"captured_at":${i * 1000}}"""
+        }
+
+    @Test
+    fun `stationary clip with a receding majority and a strong approaching vehicle is CONFIRMED via the approach path`() {
+        val report = sampleReport(locationSamples = stationaryLocationSamplesJson())
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
+        } returns DirectionResolution.OneWay("Khayaban-e-Jinnah", 190.0)
+        // No vehicle opposes the OSM legal bearing on the bearing path -> that path REJECTS,
+        // then the approach path runs. 4 receding + 1 strong grower.
+        every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
+            listOf(
+                vehicle(trackId = 1, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 2, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 3, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 4, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(
+                    trackId = 5, bearingDegrees = 185.0, detectionConfidence = 0.9,
+                    plateText = "LEA-9999", plateConfidence = 0.7,
+                    scaleTrend = "growing", scaleGrowthFraction = 1.4, trackFrameCount = 60,
+                ),
+            ),
+        )
+        every { wrongWayFrameStorageService.store(any(), any()) } returns "frames/x.jpg"
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.CONFIRMED)
+        assertThat(report.licensePlate).isEqualTo("LEA-9999")
+        assertThat(report.wrongWayConfidence!!.toDouble()).isEqualTo(0.9)
+        assertThat(report.analysisMessage).contains("approaching a stationary camera")
+        assertThat(report.directionEvidence).contains("stationary_approach")
+    }
+
+    @Test
+    fun `approach path does not run on a two-way street`() {
+        val report = sampleReport(locationSamples = stationaryLocationSamplesJson())
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
+        } returns DirectionResolution.TwoWay("Khayaban-e-Jinnah")
+        every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
+            listOf(
+                vehicle(trackId = 1, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 2, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 3, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 5, scaleTrend = "growing", scaleGrowthFraction = 1.4, trackFrameCount = 60),
+            ),
+        )
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
+    }
+
+    @Test
+    fun `approach path does not run when the camera was moving`() {
+        val movingSamples = """[{"latitude":31.52,"longitude":74.35,"accuracy":5.0,"altitude":210.0,"bearing":0.0,"speed":3.0,"captured_at":0}]"""
+        val report = sampleReport(locationSamples = movingSamples)
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
+        } returns DirectionResolution.OneWay("Khayaban-e-Jinnah", 190.0)
+        every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
+            listOf(
+                vehicle(trackId = 1, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 2, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 3, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 5, bearingDegrees = 185.0, scaleTrend = "growing", scaleGrowthFraction = 1.4, trackFrameCount = 60),
+            ),
+        )
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
+    }
+
+    @Test
+    fun `approach path needs at least three receding vehicles`() {
+        val report = sampleReport(locationSamples = stationaryLocationSamplesJson())
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
+        } returns DirectionResolution.OneWay("Khayaban-e-Jinnah", 190.0)
+        every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
+            listOf(
+                vehicle(trackId = 1, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 2, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 5, bearingDegrees = 185.0, scaleTrend = "growing", scaleGrowthFraction = 1.4, trackFrameCount = 60),
+            ),
+        )
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
+    }
+
+    @Test
+    fun `approach path needs receding to outnumber strong growers three to one`() {
+        val report = sampleReport(locationSamples = stationaryLocationSamplesJson())
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
+        } returns DirectionResolution.OneWay("Khayaban-e-Jinnah", 190.0)
+        every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
+            listOf(
+                vehicle(trackId = 1, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 2, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 3, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 5, bearingDegrees = 185.0, scaleTrend = "growing", scaleGrowthFraction = 1.4, trackFrameCount = 60),
+                vehicle(trackId = 6, bearingDegrees = 185.0, scaleTrend = "growing", scaleGrowthFraction = 1.4, trackFrameCount = 60),
+            ),
+        )
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.REJECTED) // 3 !>= 3 * 2
+    }
+
+    @Test
+    fun `approach path ignores a grower below the growth or frame thresholds`() {
+        val report = sampleReport(locationSamples = stationaryLocationSamplesJson())
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
+        } returns DirectionResolution.OneWay("Khayaban-e-Jinnah", 190.0)
+        every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
+            listOf(
+                vehicle(trackId = 1, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 2, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 3, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 5, bearingDegrees = 185.0, scaleTrend = "growing", scaleGrowthFraction = 0.5, trackFrameCount = 60),
+                vehicle(trackId = 6, bearingDegrees = 185.0, scaleTrend = "growing", scaleGrowthFraction = 1.4, trackFrameCount = 20),
+            ),
+        )
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
+    }
+
+    @Test
+    fun `approach path rejects when the strong grower's detection confidence is below the confirmation threshold`() {
+        val report = sampleReport(locationSamples = stationaryLocationSamplesJson())
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
+        } returns DirectionResolution.OneWay("Khayaban-e-Jinnah", 190.0)
+        every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
+            listOf(
+                vehicle(trackId = 1, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 2, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 3, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 5, bearingDegrees = 185.0, detectionConfidence = 0.45, scaleTrend = "growing", scaleGrowthFraction = 1.4, trackFrameCount = 60),
+            ),
+        )
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
     }
 }
 

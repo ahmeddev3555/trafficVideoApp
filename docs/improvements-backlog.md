@@ -263,6 +263,91 @@ considered rather than forgotten.
   See `docs/superpowers/specs/2026-08-13-motorcycle-tracking-iou-fix-design.md`.
   *(added and shipped 2026-08-13)*
 
+- **[HIGH - found 2026-08-30] A motorcycle riding straight at a
+  stationary camera, against traffic, is not recognised as wrong-way at
+  all: its frame bearing is pulled toward the traffic flow and its track
+  fragments.** Two reports on the same خیبان جناح (Jinnah Ave) stretch,
+  both REJECTED as "Conflicting direction evidence", each with a
+  user-confirmed wrong-way rider coming toward the (stationary, GPS
+  speed 0) camera along the median while all other traffic recedes:
+  - `9e44e167-0d3c-4e27-9480-30ae55024908` — rider tracked as one 80-frame
+    motorcycle, `bearing_degrees` 225&deg;, only ~60&deg; off the ~285&deg;
+    flow instead of ~180&deg; opposite. Never flagged; folded into the
+    flow-consensus blob.
+  - `7d578a63-874b-4af9-8cb8-263771aa5275` — SAME rider split across two
+    tracker IDs: an 8-frame fragment (below `MIN_TRACK_FRAMES` = 9, never
+    analysed) then a 34-frame fragment with `bearing_degrees` 254&deg;,
+    ~20&deg; off flow.
+
+  Two mechanisms, both in the video-analysis service:
+  1. **Perspective-unaware bearing.** `tracking_bearing.py` derives
+     direction from raw pixel-space centroid motion. For a vehicle close
+     to the camera and near the frame edge, apparent motion is dominated
+     by lateral parallax sweep, not along-road translation, and
+     "toward camera" vs "away" both project onto roughly the same
+     road-axis line in the frame — the sign is lost, so an oncoming rider
+     lands only 20-60&deg; off the receding-traffic bearing.
+  2. **Track fragmentation.** A fast near-camera motorcycle still gets
+     dropped and re-acquired under a new ID (the 2026-08-13 IoU fix
+     mitigated this for the merely-small case, not the very-close +
+     crossing case), so no single track is long enough to score well.
+
+  Downstream effect: the oncoming rider's opposing motion is absorbed
+  into the clip's flow consensus, which then disagrees with the OSM legal
+  bearing (11&deg; vs observed ~37-67&deg;) and the whole report is vetoed
+  as "conflicting evidence" before any vehicle is scored. (The compass
+  heading — 157-162&deg;, measured inside a car — may also be
+  magnetically off, compounding the OSM disagreement; worth checking
+  independently.) Possible directions, none evaluated: a vanishing-point /
+  road-axis model so bearing sign survives perspective; a
+  size-growth ("is it getting bigger?") approach/recession signal for
+  near-camera tracks, reusing the `bearingSource == "scale"` path that
+  already exists for head-on motion; better tracker continuity for
+  very-close motorcycles; and lowering `MIN_TRACK_FRAMES` is NOT a fix
+  (the fragments are genuinely too short). Related: the cohesion
+  under-confirmation item below, and "No correction for camera
+  translation" under Direction analysis.
+  *(added 2026-08-30 while building per-report vehicle readouts)*
+
+- **[PRIORITY RAISED 2026-08-30 - recurred] A long, cleanly-detected
+  wrong-way vehicle can be denied confirmation purely by low
+  `corridor_cohesion`, especially on a single-corridor road.** The score is
+  `candidateQuality = trackQuality × corridorCohesion`
+  (`ClipFlowAnalyzer.FlowVehicle`); on a busy straight road `cluster_tracks`
+  puts every vehicle in one corridor, and a near-camera weaving motorcycle
+  (jittery centroid, bbox clipped at the frame edge) reads as a spatial
+  outlier, so `corridor_cohesion = 1 − mean-distance-to-direct-corridor-
+  mates / threshold` lands low and drags `candidate_quality` — and the
+  final score — under the 0.50 confirm bar even when direction confidence,
+  detection confidence, and bearing match are all near 1.0. The pipeline
+  correctly identifies the direction violation but discounts its own
+  tracking of the vehicle. Distinct from the 2026-08-13 fix (motorcycles
+  dropped from tracking *entirely*); here the track is fine.
+
+  Two user-confirmed true-positive reports, same wrong-way motorcycle on
+  خیبان جناح (Jinnah Ave), ~48 s apart, both REJECTED:
+  - `e4d53e59-3a7e-4fa8-b48b-f9bb02e71f78` — `final_score` 0.39 vs 0.50;
+    `direction_confidence` 1.0, `bearing_match_score` 0.98,
+    `detection_confidence` 0.90, `candidate_quality` 0.44 (the drag).
+    Re-run: motorcycle track, 62 frames, `corridor_cohesion` 0.28.
+  - `91ce999b-f391-4ffb-9790-9ef13d50bcc6` — `final_score` 0.33 vs 0.50;
+    `direction_confidence` 1.0, `bearing_match_score` 0.96,
+    `detection_confidence` 0.81, `candidate_quality` 0.42. Re-run:
+    motorcycle track, 179 frames, 475 px travel (`trackQuality` saturates
+    at 1.0), `corridor_cohesion` ≈ 0.19.
+
+  Leading fix (brainstormed 2026-08-30, server-only "option B"): stop
+  `corridor_cohesion` feeding per-candidate scoring — keep it only in
+  consensus strength (`clipConfidence`) — and replace it in
+  `candidateQuality` with a real track-trustworthiness signal from data
+  already on the wire (frame count, displacement ratio, `bearing_source`).
+  Alternatives considered: a minimal cohesion floor/cap (band-aid); making
+  cohesion direction-aware (score the candidate against same-direction
+  peers only); or a new per-track bearing-stability signal from
+  `video-analysis` (correct but a cross-service wire change). Not started —
+  needs a fresh go-ahead and its own spec.
+  *(added 2026-08-30, priority raised same day after the second occurrence)*
+
 - **Explored (not implemented): a vehicle-orientation (front vs rear)
   cross-check as an additional guard against false-positive wrong-way
   confirmations** - prompted by the report 649b9a false positive above,

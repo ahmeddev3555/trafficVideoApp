@@ -172,6 +172,8 @@ fun ReportDetailScreen(
                 // report's outcome, for threshold tuning. Release builds never
                 // render this (and the data is harmless if present - it is the
                 // user's own report's analysis detail).
+                // evidence_breakdown may also carry the {"method":"stationary_approach", ...} shape
+                // (server: ApproachEvidenceBreakdown) - rendered generically by prettyJson below.
                 if (BuildConfig.DEBUG && r.evidenceBreakdownJson != null) {
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Column(modifier = Modifier.padding(16.dp)) {

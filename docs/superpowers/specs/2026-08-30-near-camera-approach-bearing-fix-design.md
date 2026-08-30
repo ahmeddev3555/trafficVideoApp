@@ -1,5 +1,12 @@
 # Near-Camera Approach Bearing Fix Design
 
+> **SUPERSEDED (2026-08-30) by
+> `2026-08-30-stationary-approach-detection-design.md`.** Its mechanism -
+> sustained-growth detection and the `resolve_bearing` override to
+> `(180.0, "scale")` for a near-camera approacher - is folded into that
+> design's `scale_trend` classifier. Do not implement this spec
+> separately; kept for context.
+
 ## Context
 
 `video-analysis/app/tracking_bearing.py`'s `resolve_bearing()` derives a

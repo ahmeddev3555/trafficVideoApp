@@ -2,6 +2,7 @@ package com.trafficwatch.server.geo
 
 import com.trafficwatch.server.reports.dto.LocationSampleDto
 import com.trafficwatch.server.reports.dto.RotationSampleDto
+import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
@@ -15,6 +16,12 @@ class OrientationTimelineTest {
         latitude = 0.0, longitude = 0.0, accuracy = 5.0, altitude = 0.0,
         bearing = bearing, speed = speed, capturedAt = capturedAt,
     )
+
+    private fun locationSample(capturedAt: Long, speed: Double, bearing: Double = 0.0) =
+        LocationSampleDto(
+            latitude = 31.52, longitude = 74.35, accuracy = 5.0, altitude = 210.0,
+            bearing = bearing, speed = speed, capturedAt = capturedAt,
+        )
 
     @Test
     fun `interpolates between two bracketing rotation samples weighted by time distance`() {
@@ -209,5 +216,36 @@ class OrientationTimelineTest {
         val timeline = OrientationTimeline(locationSamples = emptyList(), rotationSamples = emptyList())
 
         assertNull(timeline.recordingSpeedMetersPerSecondAt(500L))
+    }
+
+    @Test
+    fun `wasStationaryThroughout is true when every location sample is at or below walking pace`() {
+        val timeline = OrientationTimeline(
+            locationSamples = listOf(
+                locationSample(capturedAt = 0, speed = 0.0),
+                locationSample(capturedAt = 1000, speed = 0.4),
+                locationSample(capturedAt = 2000, speed = 0.9),
+            ),
+            rotationSamples = emptyList(),
+        )
+        assertThat(timeline.wasStationaryThroughout()).isTrue()
+    }
+
+    @Test
+    fun `wasStationaryThroughout is false when any location sample shows real motion`() {
+        val timeline = OrientationTimeline(
+            locationSamples = listOf(
+                locationSample(capturedAt = 0, speed = 0.0),
+                locationSample(capturedAt = 1000, speed = 3.0),
+            ),
+            rotationSamples = emptyList(),
+        )
+        assertThat(timeline.wasStationaryThroughout()).isFalse()
+    }
+
+    @Test
+    fun `wasStationaryThroughout is false when there are no location samples`() {
+        val timeline = OrientationTimeline(locationSamples = emptyList(), rotationSamples = emptyList())
+        assertThat(timeline.wasStationaryThroughout()).isFalse()
     }
 }

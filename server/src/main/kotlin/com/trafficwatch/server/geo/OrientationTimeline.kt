@@ -85,6 +85,17 @@ class OrientationTimeline(
     }
 
     /**
+     * True only when location_samples exist AND every one reports a GPS speed at or below
+     * [MIN_SPEED_FOR_RELIABLE_BEARING_MPS] (1.0 m/s, ~walking pace). Gates the
+     * stationary-approach detection path in ReportAnalysisJob: a growing bounding box is
+     * only safely attributable to the OTHER vehicle's motion when the recording vehicle
+     * itself did not move for the whole clip. No location_samples -> cannot verify -> false.
+     */
+    fun wasStationaryThroughout(): Boolean =
+        locationSamples.isNotEmpty() &&
+            locationSamples.all { it.speed <= MIN_SPEED_FOR_RELIABLE_BEARING_MPS }
+
+    /**
      * Circular-weighted interpolation between the two samples in [points]
      * (epochMs, bearingDegrees) bracketing [targetEpochMs], weighted by inverse
      * time-distance. At the edges (target before the first or after the last point),

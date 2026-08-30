@@ -290,3 +290,30 @@ def test_corridor_path_capping_preserves_full_track_frame_count():
     # Verify the vehicle still has valid bearing/displacement (not broken by path capping)
     assert vehicle.bearing_degrees is not None
     assert vehicle.displacement_pixels is not None
+
+
+def test_summarize_track_emits_scale_trend_growing_for_an_approaching_vehicle():
+    frames = [
+        _make_frame(track_id=1, frame_index=i, bbox=(0.0, 0.0, s, s))
+        for i, s in enumerate(30.0 + 5.0 * i for i in range(24))
+    ]
+    pipeline = AnalysisPipeline(
+        settings=_fake_settings(), detector=FakeDetector(frames), plate_reader=FakePlateReader()
+    )
+    result = pipeline.analyze("unused.mp4")
+    v = result.vehicles[0]
+    assert v.scale_trend == "growing"
+    assert v.scale_growth_fraction > 0.15
+
+
+def test_summarize_track_emits_flat_for_a_stable_size_vehicle():
+    frames = [
+        _make_frame(track_id=1, frame_index=i, bbox=(0.0, 0.0, 40.0, 40.0))
+        for i in range(24)
+    ]
+    pipeline = AnalysisPipeline(
+        settings=_fake_settings(), detector=FakeDetector(frames), plate_reader=FakePlateReader()
+    )
+    v = pipeline.analyze("unused.mp4").vehicles[0]
+    assert v.scale_trend == "flat"
+    assert v.scale_growth_fraction == 0.0

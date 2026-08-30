@@ -14,6 +14,7 @@ from app.tracking_bearing import (
     compute_displacement_pixels,
     compute_track_midpoint_ms,
     resolve_bearing,
+    scale_trend,
 )
 
 if TYPE_CHECKING:
@@ -131,6 +132,8 @@ class AnalysisPipeline:
 
         displacement = compute_displacement_pixels(centroids, bboxes, min_displacement_pixels=min_displacement_pixels)
 
+        trend, growth_fraction = scale_trend(bboxes)
+
         vehicle_type = frames_sorted[0].vehicle_type
         detection_confidence = max(f.confidence for f in frames_sorted)
 
@@ -156,6 +159,8 @@ class AnalysisPipeline:
             track_frame_count=len(frames_sorted),
             displacement_pixels=displacement,
             track_midpoint_ms=track_midpoint_ms,
+            scale_trend=trend,
+            scale_growth_fraction=growth_fraction,
         )
 
     def _read_best_plate(self, frames_sorted: list["TrackedFrame"]) -> tuple[str | None, float | None]:

@@ -46,6 +46,13 @@ class VehicleResult(BaseModel):
     # look up the camera's orientation at roughly this vehicle's own moment in the clip,
     # instead of one static reading for the whole video.
     track_midpoint_ms: int | None = None
+    # Apparent-size trend over the track (see tracking_bearing.scale_trend). "growing" =
+    # the vehicle approached the camera, "shrinking" = it receded, "flat" = neither /
+    # too brief. scale_growth_fraction is the fractional bbox-diagonal growth when
+    # "growing", else 0.0. The Kotlin server's stationary-approach detection path
+    # (ReportAnalysisJob) uses these; harmless to ignore otherwise.
+    scale_trend: str = "flat"
+    scale_growth_fraction: float = 0.0
 
 
 class AnalyzeResponse(BaseModel):

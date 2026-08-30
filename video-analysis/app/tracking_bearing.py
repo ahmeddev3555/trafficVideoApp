@@ -42,12 +42,11 @@ def scale_trend(
 ) -> Tuple[str, float]:
     """Classifies a track's apparent-size change over time.
 
-    Computes bbox diagonal sizes across the track and checks for monotonic growth
-    or shrinkage using three equal time-ordered segments. Returns the end-to-end
-    size change fraction for growing tracks, or:
-    - ("growing", (last - first) / first) when the monotonic check passes and growth
+    Splits the track's bounding-box diagonals into three equal time-ordered
+    segments (means s1, s2, s3) and returns:
+    - ("growing", (s3 - s1) / s1) when s1 < s2 < s3 and the total growth
       clears MIN_SCALE_CHANGE_FRACTION - the vehicle is approaching the camera.
-    - ("shrinking", 0.0) when the monotonic check passes and shrink clears
+    - ("shrinking", 0.0) when s1 > s2 > s3 and the total shrink clears
       MIN_SCALE_CHANGE_FRACTION - the vehicle is receding.
     - ("flat", 0.0) otherwise: stable, jittering, changing by less than the
       threshold, non-monotonic (a one-frame size spike), or grows-then-shrinks
@@ -63,9 +62,9 @@ def scale_trend(
     k = len(diagonals) // 3
     if k == 0:
         return "flat", 0.0
-    s1 = diagonals[0]
+    s1 = sum(diagonals[:k]) / k
     s2 = sum(diagonals[k : 2 * k]) / k
-    s3 = diagonals[-1]
+    s3 = sum(diagonals[2 * k :]) / (len(diagonals) - 2 * k)
     if s1 <= 0:
         return "flat", 0.0
     if s1 < s2 < s3 and (s3 - s1) / s1 >= MIN_SCALE_CHANGE_FRACTION:

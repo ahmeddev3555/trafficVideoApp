@@ -210,7 +210,8 @@ def _growing_bboxes(n=24, start=30.0, end=120.0):
 def test_scale_trend_growing_monotonic_over_threshold():
     trend, frac = scale_trend(_growing_bboxes(24, 30.0, 120.0))
     assert trend == "growing"
-    assert frac == pytest.approx((120.0 - 30.0) / 30.0, rel=1e-6)
+    # three-segment means for _growing_bboxes(24, 30, 120), k=8: s1≈61.78, s3≈150.26
+    assert frac == pytest.approx(1.4328358208955227, rel=1e-4)
 
 
 def test_scale_trend_shrinking_monotonic_over_threshold():
@@ -245,3 +246,19 @@ def test_scale_trend_flat_when_vehicle_passes_the_camera():
 def test_scale_trend_flat_for_short_track():
     trend, frac = scale_trend(_growing_bboxes(8, 30.0, 200.0))
     assert trend == "flat"
+
+
+def test_scale_trend_frac_uses_segment_means_not_endpoints():
+    # flat for the first third, then a steady ramp: the first-third MEAN is well
+    # below the first frame's neighbours' ... actually below the endpoint value's
+    # implied ratio. Segment-mean frac must differ materially from the raw
+    # endpoint ratio for this shape.
+    flat = [(0.0, 0.0, 40.0, 40.0)] * 8
+    ramp = [(0.0, 0.0, s, s) for s in (48.0 + (160.0 - 48.0) * i / 15 for i in range(16))]
+    trend, frac = scale_trend(flat + ramp)
+    assert trend == "growing"
+    first_diag = bbox_diagonal(flat[0])
+    last_diag = bbox_diagonal(ramp[-1])
+    endpoint_ratio = (last_diag - first_diag) / first_diag
+    # segment means should be less extreme than raw endpoints
+    assert frac < endpoint_ratio - 0.3

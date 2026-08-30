@@ -907,6 +907,10 @@ class ReportAnalysisJobTest {
 
     @Test
     fun `approach path does not run on a two-way street`() {
+        // Passes via the upstream TwoWay early return in determineOutcome (which rejects
+        // before the approach-path branch guard is ever reached), not the branch guard
+        // itself - the branch guard's own "not OneWay" exclusion is covered by the
+        // "approach path does not run when the street is not resolved to a one-way" test.
         val report = sampleReport(locationSamples = stationaryLocationSamplesJson())
         every {
             streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
@@ -1014,6 +1018,24 @@ class ReportAnalysisJobTest {
 
     @Test
     fun `approach path rejects when the strong grower's detection confidence is below the confirmation threshold`() {
+        // Isolates the confirmationThreshold gate specifically: with the default config the
+        // approachMinDetection filter (0.5) and confirmationThreshold (0.5) coincide, so a
+        // sub-0.5 grower is dropped before the gate ever runs. Here approachMinDetection is
+        // lowered to 0.3, and the grower's detection confidence (0.4) passes that filter but
+        // still fails the 0.5 confirmationThreshold gate -> REJECTED via the gate itself.
+        val approachProps = AnalysisProperties(wrongWayToleranceDegrees = 60.0, approachMinDetection = 0.3)
+        val approachJob = ReportAnalysisJob(
+            reportRepository,
+            approachProps,
+            streetDirectionResolver,
+            videoAnalysisClient,
+            videoStorageService,
+            wrongWayFrameStorageService,
+            clipFlowAnalyzer,
+            directionEvidenceResolver,
+            flowObservationService,
+            objectMapper,
+        )
         val report = sampleReport(locationSamples = stationaryLocationSamplesJson())
         every {
             streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
@@ -1023,8 +1045,67 @@ class ReportAnalysisJobTest {
                 vehicle(trackId = 1, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
                 vehicle(trackId = 2, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
                 vehicle(trackId = 3, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
-                vehicle(trackId = 5, bearingDegrees = 185.0, detectionConfidence = 0.45, scaleTrend = "growing", scaleGrowthFraction = 1.4, trackFrameCount = 60),
+                vehicle(trackId = 5, bearingDegrees = 185.0, detectionConfidence = 0.4, scaleTrend = "growing", scaleGrowthFraction = 1.4, trackFrameCount = 60),
             ),
+        )
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        approachJob.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
+    }
+
+    @Test
+    fun `approach path does not run when the street is not resolved to a one-way`() {
+        val report = sampleReport(locationSamples = stationaryLocationSamplesJson())
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
+        } returns DirectionResolution.Unknown("Some Street")
+        // Same shape as the CONFIRMED-via-approach-path test: 4 shrinking + 1 strong grower
+        // on a verified-stationary camera. The only difference is the street resolves to
+        // Unknown, not OneWay - the branch guard must keep the approach path from running.
+        every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
+            listOf(
+                vehicle(trackId = 1, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 2, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 3, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 4, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(
+                    trackId = 5, bearingDegrees = 185.0, detectionConfidence = 0.9,
+                    plateText = "LEA-9999", plateConfidence = 0.7,
+                    scaleTrend = "growing", scaleGrowthFraction = 1.4, trackFrameCount = 60,
+                ),
+            ),
+        )
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
+    }
+
+    @Test
+    fun `approach path bails when the analysis response has no frame dimensions`() {
+        val report = sampleReport(locationSamples = stationaryLocationSamplesJson())
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
+        } returns DirectionResolution.OneWay("Khayaban-e-Jinnah", 190.0)
+        // Zero frame dimensions mean an older service version that never produced usable
+        // geometry - the approach path must bail rather than trust the scale-trend signal.
+        every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
+            listOf(
+                vehicle(trackId = 1, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 2, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 3, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 4, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(
+                    trackId = 5, bearingDegrees = 185.0, detectionConfidence = 0.9,
+                    plateText = "LEA-9999", plateConfidence = 0.7,
+                    scaleTrend = "growing", scaleGrowthFraction = 1.4, trackFrameCount = 60,
+                ),
+            ),
+            frameWidth = 0,
+            frameHeight = 0,
         )
         every { reportRepository.save(any()) } answers { firstArg() }
 

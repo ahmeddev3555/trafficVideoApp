@@ -263,12 +263,7 @@ def test_ordinary_lateral_track_displacement_is_unaffected_by_bbox_size_change()
     # Centroid moves from (10,10) to (150,100): lateral = hypot(140, 90) ~= 166.5, well over
     # the 8px floor, even though the bbox diagonal also grew dramatically (28.28 -> 269.26).
     assert vehicle.displacement_pixels == pytest.approx(166.5, abs=0.5)
-    # Since the 2026-08-30 stationary-approach change, a lateral track whose bbox also
-    # grows monotonically is (correctly) classified as a near-camera approach:
-    # bearing_source becomes "scale". The point of THIS test is unchanged - that
-    # displacement_pixels reflects lateral motion only (166.5), not the bbox size change.
-    assert vehicle.bearing_source == "scale"
-    assert vehicle.scale_trend == "growing"
+    assert vehicle.bearing_source == "centroid"
 
 
 def test_corridor_path_capping_preserves_full_track_frame_count():

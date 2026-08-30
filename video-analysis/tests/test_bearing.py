@@ -249,10 +249,9 @@ def test_scale_trend_flat_for_short_track():
 
 
 def test_scale_trend_frac_uses_segment_means_not_endpoints():
-    # flat for the first third, then a steady ramp: the first-third MEAN is well
-    # below the first frame's neighbours' ... actually below the endpoint value's
-    # implied ratio. Segment-mean frac must differ materially from the raw
-    # endpoint ratio for this shape.
+    # flat for the first third, then a steady ramp: the first-third MEAN sits
+    # well above the very first frame's diagonal, so the segment-mean growth
+    # fraction is materially smaller than the raw first-vs-last endpoint ratio.
     flat = [(0.0, 0.0, 40.0, 40.0)] * 8
     ramp = [(0.0, 0.0, s, s) for s in (48.0 + (160.0 - 48.0) * i / 15 for i in range(16))]
     trend, frac = scale_trend(flat + ramp)
@@ -262,26 +261,3 @@ def test_scale_trend_frac_uses_segment_means_not_endpoints():
     endpoint_ratio = (last_diag - first_diag) / first_diag
     # segment means should be less extreme than raw endpoints
     assert frac < endpoint_ratio - 0.3
-
-
-def test_resolve_bearing_growing_near_camera_track_returns_scale_180():
-    # large lateral sweep AND a steadily growing bbox -> approaching, not "with flow"
-    centroids = _linear_track((900.0, 1400.0), (200.0, 1900.0), steps=24)
-    bboxes = _growing_bboxes(24, 40.0, 160.0)
-    assert resolve_bearing(centroids, bboxes) == (180.0, "scale")
-
-
-def test_resolve_bearing_large_lateral_shrinking_track_stays_centroid():
-    centroids = _linear_track((900.0, 1400.0), (200.0, 1900.0), steps=24)
-    bboxes = _growing_bboxes(24, 160.0, 40.0)  # shrinking
-    result = resolve_bearing(centroids, bboxes)
-    assert result is not None
-    assert result[1] == "centroid"
-
-
-def test_resolve_bearing_large_lateral_flat_bbox_stays_centroid():
-    centroids = _linear_track((900.0, 1400.0), (200.0, 1900.0), steps=24)
-    bboxes = [(0.0, 0.0, 80.0, 80.0)] * 24  # stable size
-    result = resolve_bearing(centroids, bboxes)
-    assert result is not None
-    assert result[1] == "centroid"

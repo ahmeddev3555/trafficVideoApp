@@ -21,6 +21,7 @@ import com.trafficwatch.server.storage.WrongWayFrameStorageService
 import com.trafficwatch.server.videoanalysis.VideoAnalysisClient
 import com.trafficwatch.server.videoanalysis.VideoAnalysisException
 import com.trafficwatch.server.videoanalysis.dto.VehicleAnalysisResult
+import com.trafficwatch.server.videoanalysis.dto.VideoAnalysisResponse
 import org.slf4j.LoggerFactory
 import org.springframework.scheduling.annotation.Async
 import org.springframework.stereotype.Component
@@ -181,8 +182,8 @@ class ReportAnalysisJob(
 
         ingestObservations(report, flowVehicles, evaluation.best?.flowVehicle)
 
-        if (outcome.status == ReportStatus.REJECTED && resolution !is DirectionResolution.TwoWay) {
-            tryStationaryApproachDetection(report, analysis.vehicles, orientationTimeline, streetName)
+        if (outcome.status == ReportStatus.REJECTED && resolution is DirectionResolution.OneWay) {
+            tryStationaryApproachDetection(report, analysis, orientationTimeline, streetName)
                 ?.let { return it }
         }
 
@@ -191,19 +192,28 @@ class ReportAnalysisJob(
 
     /**
      * Additive fallback (see the 2026-08-30 stationary-approach-detection spec): on a
-     * verified-stationary camera pointed down a one-way (or unknown, non-two-way) street,
-     * a vehicle whose bounding box grew sustainedly while at least three others receded is
-     * driving the wrong way - a signal that needs no compass or OSM legal bearing. Only
-     * ever upgrades an already-REJECTED outcome to CONFIRMED; returns null to leave the
-     * REJECTED outcome untouched.
+     * verified-stationary camera pointed down a one-way street, a vehicle whose bounding
+     * box grew sustainedly while at least three others receded is driving the wrong way -
+     * a signal that needs no compass or OSM legal bearing. Only ever upgrades an
+     * already-REJECTED outcome to CONFIRMED; returns null to leave the REJECTED outcome
+     * untouched.
      */
     private fun tryStationaryApproachDetection(
         report: Report,
-        vehicles: List<VehicleAnalysisResult>,
+        analysis: VideoAnalysisResponse,
         orientationTimeline: OrientationTimeline,
         streetName: String?,
     ): AnalysisOutcome? {
         if (!orientationTimeline.wasStationaryThroughout()) return null
+
+        // Mirrors ClipFlowAnalyzer.qualifyVehicles's "was a real frame analyzed" check:
+        // absent/zero frame dimensions mean an older service version that never produced
+        // usable geometry, so scale-trend signals cannot be trusted.
+        val frameWidth = analysis.frameWidth
+        val frameHeight = analysis.frameHeight
+        if (frameWidth == null || frameWidth == 0 || frameHeight == null || frameHeight == 0) return null
+
+        val vehicles = analysis.vehicles
 
         val minTrackFrames = 9 // == ClipFlowAnalyzer.MIN_TRACK_FRAMES
         val shrinking = vehicles.count {

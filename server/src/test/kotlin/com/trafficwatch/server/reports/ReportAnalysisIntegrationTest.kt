@@ -447,6 +447,73 @@ class ReportAnalysisIntegrationTest @Autowired constructor(
     }
 
     @Test
+    fun `stationary clip with a receding majority and a strong approacher is CONFIRMED via the approach path end to end`() {
+        val latitude = BigDecimal("31.5800")
+        stubOverpassOneWayNorth(latitude) // legal bearing 0 (north).
+
+        // Four location fixes, ALL speed 0.0 - OrientationTimeline.wasStationaryThroughout()
+        // is the gate for the stationary-approach path.
+        val baseEpochMs = 1_700_000_000_000L
+        val locationSamplesJson = """
+            [
+              {"latitude":${latitude.toDouble()},"longitude":74.358749,"accuracy":5.0,"altitude":210.0,"bearing":0.0,"speed":0.0,"captured_at":$baseEpochMs},
+              {"latitude":${latitude.toDouble()},"longitude":74.358749,"accuracy":5.0,"altitude":210.0,"bearing":0.0,"speed":0.0,"captured_at":${baseEpochMs + 4000L}},
+              {"latitude":${latitude.toDouble()},"longitude":74.358749,"accuracy":5.0,"altitude":210.0,"bearing":0.0,"speed":0.0,"captured_at":${baseEpochMs + 8000L}},
+              {"latitude":${latitude.toDouble()},"longitude":74.358749,"accuracy":5.0,"altitude":210.0,"bearing":0.0,"speed":0.0,"captured_at":${baseEpochMs + 12000L}}
+            ]
+        """.trimIndent()
+
+        // Every vehicle's frame-relative bearing (5) added to the due-north compass heading
+        // (0) lands near the LEGAL direction, so the bearing path finds no violator and
+        // REJECTS - then the additive stationary-approach path runs: 4 tracks receded
+        // ("shrinking") while one grew sustainedly (scale_growth_fraction 1.4 >= 0.8,
+        // 60 frames, detection 0.9), which on a verified-stationary camera is a wrong-way
+        // approacher regardless of compass/OSM legal bearing.
+        stubVideoAnalysis(
+            """
+            {
+              "vehicles": [
+                {"track_id": 1, "vehicle_type": "car", "detection_confidence": 0.9, "bearing_degrees": 5.0,
+                 "plate_text": null, "plate_confidence": null, "bounding_box": {"x1": 0.0, "y1": 0.0, "x2": 1414.0, "y2": 1414.0},
+                 "corridor_id": 1, "corridor_cohesion": 1.0, "track_frame_count": 40, "displacement_pixels": 310.0,
+                 "scale_trend": "shrinking"},
+                {"track_id": 2, "vehicle_type": "car", "detection_confidence": 0.9, "bearing_degrees": 5.0,
+                 "plate_text": null, "plate_confidence": null, "bounding_box": {"x1": 0.0, "y1": 0.0, "x2": 1414.0, "y2": 1414.0},
+                 "corridor_id": 1, "corridor_cohesion": 1.0, "track_frame_count": 40, "displacement_pixels": 310.0,
+                 "scale_trend": "shrinking"},
+                {"track_id": 3, "vehicle_type": "car", "detection_confidence": 0.9, "bearing_degrees": 5.0,
+                 "plate_text": null, "plate_confidence": null, "bounding_box": {"x1": 0.0, "y1": 0.0, "x2": 1414.0, "y2": 1414.0},
+                 "corridor_id": 1, "corridor_cohesion": 1.0, "track_frame_count": 40, "displacement_pixels": 310.0,
+                 "scale_trend": "shrinking"},
+                {"track_id": 4, "vehicle_type": "car", "detection_confidence": 0.9, "bearing_degrees": 5.0,
+                 "plate_text": null, "plate_confidence": null, "bounding_box": {"x1": 0.0, "y1": 0.0, "x2": 1414.0, "y2": 1414.0},
+                 "corridor_id": 1, "corridor_cohesion": 1.0, "track_frame_count": 40, "displacement_pixels": 310.0,
+                 "scale_trend": "shrinking"},
+                {"track_id": 5, "vehicle_type": "car", "detection_confidence": 0.9, "bearing_degrees": 5.0,
+                 "plate_text": "LEA-1234", "plate_confidence": 0.8, "bounding_box": {"x1": 0.0, "y1": 0.0, "x2": 1414.0, "y2": 1414.0},
+                 "corridor_id": 1, "corridor_cohesion": 1.0, "track_frame_count": 60, "displacement_pixels": 310.0,
+                 "scale_trend": "growing", "scale_growth_fraction": 1.4}
+              ],
+              "frame_width": 1920,
+              "frame_height": 1080
+            }
+            """.trimIndent(),
+        )
+
+        val reportId = submitReport(
+            latitude,
+            compassHeadingDegrees = BigDecimal("0.0"),
+            locationSamplesJson = locationSamplesJson,
+        )
+        val finalReport = waitForTerminalStatus(reportId)
+
+        assertThat(finalReport.status).isEqualTo(ReportStatus.CONFIRMED)
+        assertThat(finalReport.analysisMessage).contains("approaching a stationary camera")
+        assertThat(finalReport.directionEvidence).contains("stationary_approach")
+        assertThat(finalReport.licensePlate).isEqualTo("LEA-1234")
+    }
+
+    @Test
     fun `rotation_samples persisted and read back through a real Hibernate round-trip confirm a violation a stale compass scalar alone would have missed`() {
         val latitude = BigDecimal("31.5700")
         stubOverpassOneWayNorth(latitude) // legal bearing 0 (north); illegal bearing 180.

@@ -265,15 +265,17 @@ considered rather than forgotten.
 
 - **[HIGH - found 2026-08-30] A motorcycle riding straight at a
   stationary camera, against traffic, is not recognised as wrong-way at
-  all: its frame bearing is pulled toward the traffic flow and its track
-  fragments.** Two reports on the same خیبان جناح (Jinnah Ave) stretch,
-  both REJECTED as "Conflicting direction evidence", each with a
-  user-confirmed wrong-way rider coming toward the (stationary, GPS
-  speed 0) camera along the median while all other traffic recedes:
+  all: its frame bearing is pulled toward the traffic flow (and sometimes
+  its track also fragments).** Three reports on the same خیبان جناح
+  (Jinnah Ave) stretch, all REJECTED as "Conflicting direction evidence",
+  each with a user-confirmed wrong-way rider coming toward the (stationary,
+  GPS speed 0) camera along the median while all other traffic recedes:
+  - `101aef9e-b669-4388-807e-a35f269759cd` — CLEAN 72-frame single track,
+    no fragmentation, `bearing_degrees` 210&deg;, still ~74&deg; off the
+    ~285&deg; flow instead of ~180&deg; opposite (under the 90&deg;
+    "against flow" line). Isolates mechanism 1 from mechanism 2.
   - `9e44e167-0d3c-4e27-9480-30ae55024908` — rider tracked as one 80-frame
-    motorcycle, `bearing_degrees` 225&deg;, only ~60&deg; off the ~285&deg;
-    flow instead of ~180&deg; opposite. Never flagged; folded into the
-    flow-consensus blob.
+    motorcycle, `bearing_degrees` 225&deg;, only ~60&deg; off flow.
   - `7d578a63-874b-4af9-8cb8-263771aa5275` — SAME rider split across two
     tracker IDs: an 8-frame fragment (below `MIN_TRACK_FRAMES` = 9, never
     analysed) then a 34-frame fragment with `bearing_degrees` 254&deg;,

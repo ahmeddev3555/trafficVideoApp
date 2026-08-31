@@ -195,7 +195,11 @@ class ReportAnalysisJob(
             if (approachEligible) {
                 tryStationaryApproachDetection(
                     report, analysis, orientationTimeline, streetName,
-                    resolution, flowConsensus?.memberCount,
+                    resolution,
+                    // Corroboration is only a gate on the DIVIDED_CARRIAGEWAY Unknown branch;
+                    // on OneWay the consensus was never consulted, so record it as null.
+                    corroborationMembers = (resolution as? DirectionResolution.Unknown)
+                        ?.let { flowConsensus?.memberCount },
                 )?.let { return it }
             }
         }

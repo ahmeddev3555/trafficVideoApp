@@ -904,7 +904,11 @@ class ReportAnalysisJobTest {
         assertThat(report.wrongWayConfidence!!.toDouble()).isEqualTo(0.9)
         assertThat(report.analysisMessage).contains("approaching a stationary camera")
         assertThat(report.directionEvidence).contains("stationary_approach")
-        assertThat(report.directionEvidence).contains("ONE_WAY")
+        val evidence = objectMapper.readTree(report.directionEvidence)
+        assertThat(evidence.get("resolution_state").asText()).isEqualTo("ONE_WAY")
+        // Corroboration is not a gate on the OneWay branch - the member count must be
+        // recorded as null even though a consensus exists among the receding traffic.
+        assertThat(evidence.get("corroboration_consensus_members").isNull).isTrue()
     }
 
     @Test
@@ -1121,13 +1125,17 @@ class ReportAnalysisJobTest {
         val report = sampleReport(locationSamples = stationaryLocationSamplesJson())
         every { streetDirectionResolver.resolve(any(), any(), any()) } returns
             DirectionResolution.Unknown("Khayaban-e-Jinnah", UnknownReason.DIVIDED_CARRIAGEWAY)
-        // 3 shrinking by bbox scale, but bearings are scattered -> corridorConsensus elects nothing.
+        // Each qualified vehicle sits in its OWN corridor (distinct corridorId) and the
+        // bearings are scattered - so no corridor's consensus can ever reach 2 members
+        // under any grouping. strongestFlowConsensus therefore tops out at memberCount 1,
+        // below approachCorroborationMinMembers (2) -> the corroboration gate is ineligible
+        // and the approach path never runs.
         every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
             listOf(
-                vehicle(trackId = 1, bearingDegrees = 10.0, scaleTrend = "shrinking", trackFrameCount = 40),
-                vehicle(trackId = 2, bearingDegrees = 130.0, scaleTrend = "shrinking", trackFrameCount = 40),
-                vehicle(trackId = 3, bearingDegrees = 250.0, scaleTrend = "shrinking", trackFrameCount = 40),
-                vehicle(trackId = 5, bearingDegrees = 185.0, detectionConfidence = 0.9,
+                vehicle(trackId = 1, bearingDegrees = 10.0, corridorId = 1L, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 2, bearingDegrees = 130.0, corridorId = 2L, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 3, bearingDegrees = 250.0, corridorId = 3L, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 5, bearingDegrees = 185.0, corridorId = 4L, detectionConfidence = 0.9,
                     scaleTrend = "growing", scaleGrowthFraction = 1.4, trackFrameCount = 60),
             ),
         )
@@ -1136,6 +1144,10 @@ class ReportAnalysisJobTest {
         job.applyOutcome(report)
 
         assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
+        // The approach path (which would set these) never ran.
+        assertThat(report.licensePlate).isNull()
+        assertThat(report.wrongWayConfidence).isNull()
+        assertThat(report.directionEvidence).doesNotContain("stationary_approach")
     }
 
     @Test

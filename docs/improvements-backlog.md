@@ -165,7 +165,20 @@ considered rather than forgotten.
   Overpass response at request time, so this can't be proven after the
   fact; would need response logging added before the next occurrence to
   confirm.
-  *(added 2026-08-17, found investigating report 649b9a)*
+
+  **Update - non-deterministic single-fetch root cause addressed 2026-08-31**
+  (spec/plan
+  `2026-08-31-divided-carriageway-resolution-and-approach-on-unknown`):
+  `OverpassClient` now queries multiple mirrors in sequence and unions the
+  returned ways deduped by id, so one stale replica can no longer decide a
+  result on its own; a `OneWay` backed by only a single un-cross-checked
+  source downgrades to `Unknown(NOT_CROSS_CHECKED)`; the `osm_lookup_cache`
+  now carries a 30-day TTL, so a poisoned row self-heals on the next lookup
+  rather than sticking forever; and per-endpoint Overpass response logging
+  (endpoint host, way count, way ids) is now in place, so the next
+  occurrence is diagnosable straight from the server logs.
+  *(added 2026-08-17, found investigating report 649b9a; root cause
+  addressed 2026-08-31)*
 
 ## Direction analysis (compass + moving camera)
 
@@ -316,9 +329,11 @@ considered rather than forgotten.
   fallback (`ReportAnalysisJob.tryStationaryApproachDetection`) now CONFIRMS
   `759cd`, `24908`, and `a5275` with no world bearing at all: on a
   verified-stationary camera (`location_samples` all &le; 1.0 m/s) pointed
-  down a non-two-way street, a vehicle whose bbox grew sustainedly
-  (`scale_trend == "growing"`, growth &ge; 0.8 over &ge; 30 frames) while
-  &ge; 3 others receded is the wrong-way rider. A 2026-08-30 production
+  down a street resolved to `OneWay` (the whole-branch review narrowed the
+  gate to `is OneWay` - see the 2026-08-31 update below), a vehicle whose
+  bbox grew sustainedly (`scale_trend == "growing"`, growth &ge; 0.8 over
+  &ge; 30 frames) while &ge; 3 others receded is the wrong-way rider. A
+  2026-08-30 production
   replay of the real pipeline confirmed the classifier output: `759cd`
   grower growth 1.52 / 72 fr / det 0.89 with 3 shrinking; `24908` 2.24 / 80
   / 0.89 with 10 shrinking; `a5275` 0.93 / 34 / 0.78 with 3 shrinking - all
@@ -328,7 +343,24 @@ considered rather than forgotten.
   grower) and `71f78` (moving camera, GPS speed 1.19 m/s ->
   `wasStationaryThroughout()` false) remain open, deferred to the future
   "B" (clip-flow-relative bearing) design in section 6 of that spec.
-  *(added 2026-08-30 while building per-report vehicle readouts; approach-detection note added 2026-08-30)*
+
+  **Update 2026-08-31** (spec/plan
+  `2026-08-31-divided-carriageway-resolution-and-approach-on-unknown`): two
+  things moved. First, the whole-branch review of the 2026-08-30 work
+  narrowed the approach gate to `is OneWay` only - so once the
+  divided-carriageway Overpass fix in the 2026-08-31 plan makes خیبان جناح
+  resolve reliably to `Unknown(DIVIDED_CARRIAGEWAY)` instead of a coin-flip
+  between a wrong `OneWay(11.23&deg;)` and `Unknown`, that narrowed gate
+  would have blocked all three reports. Second, this plan closes the gap:
+  the approach path now also fires on `Unknown(DIVIDED_CARRIAGEWAY)` when the
+  clip's own qualified traffic forms one coherent flow consensus (strongest
+  corridor consensus &ge; `app.analysis.approach-corroboration-min-members`,
+  default 2). Net effect once deployed: `759cd` / `24908` / `a5275` resolve
+  deterministically to `Unknown(DIVIDED_CARRIAGEWAY)` and CONFIRM via the
+  approach path on current production, no longer dependent on which Overpass
+  replica answered. `50bcc6` and `71f78` are unaffected - still open,
+  deferred to the clip-flow-relative bearing "B" design.
+  *(added 2026-08-30 while building per-report vehicle readouts; approach-detection note added 2026-08-30; approach-gate scope + divided-carriageway follow-up 2026-08-31)*
 
 - **[PRIORITY RAISED 2026-08-30 - recurred] A long, cleanly-detected
   wrong-way vehicle can be denied confirmation purely by low

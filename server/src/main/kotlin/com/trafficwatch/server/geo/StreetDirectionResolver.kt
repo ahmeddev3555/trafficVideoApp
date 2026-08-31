@@ -60,7 +60,8 @@ class StreetDirectionResolver(
     }
 
     private fun resolveFresh(lat: Double, lon: Double, searchRadius: Double, accuracyMeters: Double): DirectionResolution {
-        val ways = overpassClient.findNearbyWays(lat, lon, searchRadius)
+        val overpass = overpassClient.findNearbyWays(lat, lon, searchRadius)
+        val ways = overpass.ways
         val point = GeoPoint(lat, lon)
 
         val candidates = ways.mapNotNull { way ->

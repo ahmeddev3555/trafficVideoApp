@@ -13,7 +13,15 @@ import org.springframework.stereotype.Component
 @ConfigurationProperties(prefix = "app.osm")
 data class OsmProperties(
     var nominatimBaseUrl: String = "https://nominatim.openstreetmap.org",
-    var overpassBaseUrl: String = "https://overpass-api.de/api/interpreter",
+    var overpassBaseUrls: List<String> = listOf(
+        "https://overpass-api.de/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter",
+        "https://overpass.private.coffee/api/interpreter",
+    ),
+    // Per-endpoint attempts inside OverpassClient's mirror loop. Cross-endpoint redundancy
+    // replaces most same-endpoint retrying, so this is 1 by default (lookupRetryAttempts
+    // still governs NominatimClient).
+    var overpassPerEndpointAttempts: Int = 1,
     var userAgent: String = "TrafficWatch-Server/1.0 (set a real contact in your environment)",
     var connectTimeoutMs: Int = 5000,
     var readTimeoutMs: Int = 8000,

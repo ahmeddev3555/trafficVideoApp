@@ -25,31 +25,27 @@ class OsmClientConfig(
     private val osmProperties: OsmProperties,
 ) {
 
-    @Bean("nominatimRestClient")
-    fun nominatimRestClient(): RestClient = buildClient(osmProperties.nominatimBaseUrl)
-
     @Bean("overpassRestClient")
-    fun overpassRestClient(): RestClient = buildClient(osmProperties.overpassBaseUrl)
+    fun overpassRestClient(): RestClient = baseClientBuilder().build()
 
-    private fun buildClient(baseUrl: String): RestClient {
+    @Bean("nominatimRestClient")
+    fun nominatimRestClient(): RestClient = baseClientBuilder().baseUrl(osmProperties.nominatimBaseUrl).build()
+
+    private fun baseClientBuilder(): RestClient.Builder {
         val objectMapper = ObjectMapper()
             .registerKotlinModule()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
         val converter = MappingJackson2HttpMessageConverter(objectMapper)
-
         val requestFactory = SimpleClientHttpRequestFactory().apply {
             setConnectTimeout(osmProperties.connectTimeoutMs)
             setReadTimeout(osmProperties.readTimeoutMs)
         }
-
         return RestClient.builder()
-            .baseUrl(baseUrl)
             .defaultHeader(HttpHeaders.USER_AGENT, osmProperties.userAgent)
             .requestFactory(requestFactory)
             .messageConverters { converters ->
                 converters.removeIf { it is MappingJackson2HttpMessageConverter }
                 converters.add(0, converter)
             }
-            .build()
     }
 }

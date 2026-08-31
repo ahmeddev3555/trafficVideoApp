@@ -35,38 +35,72 @@ class StreetDirectionResolverTest @Autowired constructor(
 ) {
 
     companion object {
+        // Nominatim mirror (only hit as a fallback when a way has no `name` tag).
         private val wireMockServer = WireMockServer(WireMockConfiguration.options().dynamicPort())
+
+        // The two Overpass mirrors OverpassClient now unions over. Every test stubs both
+        // identically via stubOverpass(), so overpassResolveRounds() can divide the total
+        // POST count by 2 to recover the number of full resolve rounds.
+        private val overpassA = WireMockServer(WireMockConfiguration.options().dynamicPort())
+        private val overpassB = WireMockServer(WireMockConfiguration.options().dynamicPort())
 
         @JvmStatic
         @BeforeAll
         fun startServer() {
             wireMockServer.start()
+            overpassA.start()
+            overpassB.start()
         }
 
         @JvmStatic
         @AfterAll
         fun stopServer() {
             wireMockServer.stop()
+            overpassA.stop()
+            overpassB.stop()
         }
 
         @JvmStatic
         @DynamicPropertySource
         fun overrideOsmUrls(registry: DynamicPropertyRegistry) {
             registry.add("app.osm.nominatim-base-url") { "http://localhost:${wireMockServer.port()}" }
-            registry.add("app.osm.overpass-base-url") { "http://localhost:${wireMockServer.port()}" }
+            registry.add("app.osm.overpass-base-urls") {
+                "http://localhost:${overpassA.port()},http://localhost:${overpassB.port()}"
+            }
         }
     }
 
     @AfterEach
     fun resetStubs() {
         wireMockServer.resetAll()
+        resetOverpassStubs()
     }
+
+    private fun stubOverpass(json: String) {
+        listOf(overpassA, overpassB).forEach {
+            it.stubFor(post(urlMatching(".*")).willReturn(okJson(json)))
+        }
+    }
+
+    private fun stubOverpassStatus(status: Int) {
+        listOf(overpassA, overpassB).forEach {
+            it.stubFor(post(urlMatching(".*")).willReturn(aResponse().withStatus(status)))
+        }
+    }
+
+    private fun resetOverpassStubs() {
+        overpassA.resetAll()
+        overpassB.resetAll()
+    }
+
+    /** Number of full resolve rounds = total Overpass POSTs across mirrors / mirror count. */
+    private fun overpassResolveRounds(): Int =
+        (overpassA.findAll(postRequestedFor(urlMatching(".*"))).size +
+            overpassB.findAll(postRequestedFor(urlMatching(".*"))).size) / 2
 
     @Test
     fun `returns OneWay with a legal bearing when Overpass returns a way tagged oneway=yes`() {
-        wireMockServer.stubFor(
-            post(urlMatching(".*")).willReturn(okJson(overpassResponseJson(oneway = "yes", name = "Main Boulevard"))),
-        )
+        stubOverpass(overpassResponseJson(oneway = "yes", name = "Main Boulevard"))
 
         val result = streetDirectionResolver.resolve(BigDecimal("31.520000"), BigDecimal("74.350000"), accuracyMeters = 10.0)
 
@@ -76,15 +110,11 @@ class StreetDirectionResolverTest @Autowired constructor(
 
     @Test
     fun `returns OneWay in the reverse direction when tagged oneway=-1`() {
-        wireMockServer.stubFor(
-            post(urlMatching(".*")).willReturn(okJson(overpassResponseJson(oneway = "-1", name = "Reverse Street"))),
-        )
+        stubOverpass(overpassResponseJson(oneway = "-1", name = "Reverse Street"))
 
         val forward = streetDirectionResolver.resolve(BigDecimal("32.520000"), BigDecimal("75.350000"), accuracyMeters = 10.0)
-        wireMockServer.resetAll()
-        wireMockServer.stubFor(
-            post(urlMatching(".*")).willReturn(okJson(overpassResponseJson(oneway = "yes", name = "Reverse Street"))),
-        )
+        resetOverpassStubs()
+        stubOverpass(overpassResponseJson(oneway = "yes", name = "Reverse Street"))
         val reverse = streetDirectionResolver.resolve(BigDecimal("33.520000"), BigDecimal("76.350000"), accuracyMeters = 10.0)
 
         val forwardBearing = (forward as DirectionResolution.OneWay).legalBearingDegrees
@@ -97,7 +127,7 @@ class StreetDirectionResolverTest @Autowired constructor(
 
     @Test
     fun `returns NotFound when Overpass returns no elements`() {
-        wireMockServer.stubFor(post(urlMatching(".*")).willReturn(okJson("""{"elements": []}""")))
+        stubOverpass("""{"elements": []}""")
 
         val result = streetDirectionResolver.resolve(BigDecimal("10.000000"), BigDecimal("10.000000"), accuracyMeters = 10.0)
 
@@ -106,9 +136,7 @@ class StreetDirectionResolverTest @Autowired constructor(
 
     @Test
     fun `returns Unknown when the way has no oneway tag`() {
-        wireMockServer.stubFor(
-            post(urlMatching(".*")).willReturn(okJson(overpassResponseJson(oneway = null, name = "Side Street"))),
-        )
+        stubOverpass(overpassResponseJson(oneway = null, name = "Side Street"))
 
         val result = streetDirectionResolver.resolve(BigDecimal("20.000000"), BigDecimal("20.000000"), accuracyMeters = 10.0)
 
@@ -118,9 +146,7 @@ class StreetDirectionResolverTest @Autowired constructor(
 
     @Test
     fun `returns TwoWay when the way is explicitly tagged oneway=no`() {
-        wireMockServer.stubFor(
-            post(urlMatching(".*")).willReturn(okJson(overpassResponseJson(oneway = "no", name = "Two Way Ave"))),
-        )
+        stubOverpass(overpassResponseJson(oneway = "no", name = "Two Way Ave"))
 
         val result = streetDirectionResolver.resolve(BigDecimal("30.000000"), BigDecimal("30.000000"), accuracyMeters = 10.0)
 
@@ -129,19 +155,17 @@ class StreetDirectionResolverTest @Autowired constructor(
 
     @Test
     fun `caches the resolution so a second call for the same bucket does not hit Overpass again`() {
-        wireMockServer.stubFor(
-            post(urlMatching(".*")).willReturn(okJson(overpassResponseJson(oneway = "yes", name = "Cached Street"))),
-        )
+        stubOverpass(overpassResponseJson(oneway = "yes", name = "Cached Street"))
 
         streetDirectionResolver.resolve(BigDecimal("40.000000"), BigDecimal("40.000000"), accuracyMeters = 10.0)
         streetDirectionResolver.resolve(BigDecimal("40.000000"), BigDecimal("40.000000"), accuracyMeters = 10.0)
 
-        wireMockServer.verify(1, postRequestedFor(urlMatching(".*")))
+        assertThat(overpassResolveRounds()).isEqualTo(1)
     }
 
     @Test
     fun `returns LookupFailed without caching when Overpass errors`() {
-        wireMockServer.stubFor(post(urlMatching(".*")).willReturn(aResponse().withStatus(500)))
+        stubOverpassStatus(500)
 
         val result = streetDirectionResolver.resolve(BigDecimal("50.000000"), BigDecimal("50.000000"), accuracyMeters = 10.0)
 
@@ -151,11 +175,11 @@ class StreetDirectionResolverTest @Autowired constructor(
 
     @Test
     fun `scales the Overpass search radius with the report's accuracy`() {
-        wireMockServer.stubFor(post(urlMatching(".*")).willReturn(okJson("""{"elements": []}""")))
+        stubOverpass("""{"elements": []}""")
 
         streetDirectionResolver.resolve(BigDecimal("60.000000"), BigDecimal("60.000000"), accuracyMeters = 80.0)
 
-        wireMockServer.verify(
+        overpassA.verify(
             postRequestedFor(urlMatching(".*")).withRequestBody(containing("around%3A160.0")),
         )
     }
@@ -163,15 +187,11 @@ class StreetDirectionResolverTest @Autowired constructor(
     @Test
     fun `returns Unknown when two different-named ways are within accuracy meters of each other`() {
         // Way A ~11.1m away, Way B ~22.2m away - gap ~11.1m, smaller than the 15.0m accuracy below.
-        wireMockServer.stubFor(
-            post(urlMatching(".*")).willReturn(
-                okJson(
-                    twoWayOverpassResponseJson(
-                        wayAId = 301, wayAName = "Street A", wayAOneway = "yes", wayALatOffsetDegrees = 0.000100, wayAWestToEast = true,
-                        wayBId = 302, wayBName = "Street B", wayBOneway = null, wayBLatOffsetDegrees = 0.000200, wayBWestToEast = true,
-                        baseLat = 61.000000, baseLon = 61.000000,
-                    ),
-                ),
+        stubOverpass(
+            twoWayOverpassResponseJson(
+                wayAId = 301, wayAName = "Street A", wayAOneway = "yes", wayALatOffsetDegrees = 0.000100, wayAWestToEast = true,
+                wayBId = 302, wayBName = "Street B", wayBOneway = null, wayBLatOffsetDegrees = 0.000200, wayBWestToEast = true,
+                baseLat = 61.000000, baseLon = 61.000000,
             ),
         )
 
@@ -184,15 +204,11 @@ class StreetDirectionResolverTest @Autowired constructor(
     @Test
     fun `does not treat two segments of the same named street as ambiguous`() {
         // Same gap (~11.1m) as the previous test, but both ways share a name.
-        wireMockServer.stubFor(
-            post(urlMatching(".*")).willReturn(
-                okJson(
-                    twoWayOverpassResponseJson(
-                        wayAId = 303, wayAName = "Shared Street", wayAOneway = "yes", wayALatOffsetDegrees = 0.000100, wayAWestToEast = true,
-                        wayBId = 304, wayBName = "Shared Street", wayBOneway = "yes", wayBLatOffsetDegrees = 0.000200, wayBWestToEast = true,
-                        baseLat = 62.000000, baseLon = 62.000000,
-                    ),
-                ),
+        stubOverpass(
+            twoWayOverpassResponseJson(
+                wayAId = 303, wayAName = "Shared Street", wayAOneway = "yes", wayALatOffsetDegrees = 0.000100, wayAWestToEast = true,
+                wayBId = 304, wayBName = "Shared Street", wayBOneway = "yes", wayBLatOffsetDegrees = 0.000200, wayBWestToEast = true,
+                baseLat = 62.000000, baseLon = 62.000000,
             ),
         )
 
@@ -207,15 +223,11 @@ class StreetDirectionResolverTest @Autowired constructor(
         // Way A ~11.1m away bearing ~90 deg (east); Way B ~27.8m away bearing ~270 deg (west,
         // anti-parallel). Gap ~16.7m: bigger than the 5.0m accuracy below (so the ambiguity
         // check does NOT fire), smaller than the 30m divided-carriageway proximity cap.
-        wireMockServer.stubFor(
-            post(urlMatching(".*")).willReturn(
-                okJson(
-                    twoWayOverpassResponseJson(
-                        wayAId = 305, wayAName = "Ring Road North", wayAOneway = "yes", wayALatOffsetDegrees = 0.000100, wayAWestToEast = true,
-                        wayBId = 306, wayBName = "Ring Road South", wayBOneway = "yes", wayBLatOffsetDegrees = 0.000250, wayBWestToEast = false,
-                        baseLat = 63.000000, baseLon = 63.000000,
-                    ),
-                ),
+        stubOverpass(
+            twoWayOverpassResponseJson(
+                wayAId = 305, wayAName = "Ring Road North", wayAOneway = "yes", wayALatOffsetDegrees = 0.000100, wayAWestToEast = true,
+                wayBId = 306, wayBName = "Ring Road South", wayBOneway = "yes", wayBLatOffsetDegrees = 0.000250, wayBWestToEast = false,
+                baseLat = 63.000000, baseLon = 63.000000,
             ),
         )
 
@@ -229,15 +241,11 @@ class StreetDirectionResolverTest @Autowired constructor(
     fun `does not downgrade for a distant anti-parallel oneway way outside the carriageway proximity cap`() {
         // Way A ~11.1m away bearing ~90 deg; Way B ~55.6m away bearing ~270 deg (anti-parallel,
         // but the ~44.5m gap exceeds the 30m divided-carriageway proximity cap).
-        wireMockServer.stubFor(
-            post(urlMatching(".*")).willReturn(
-                okJson(
-                    twoWayOverpassResponseJson(
-                        wayAId = 307, wayAName = "Avenue A", wayAOneway = "yes", wayALatOffsetDegrees = 0.000100, wayAWestToEast = true,
-                        wayBId = 308, wayBName = "Avenue B", wayBOneway = "yes", wayBLatOffsetDegrees = 0.000500, wayBWestToEast = false,
-                        baseLat = 64.000000, baseLon = 64.000000,
-                    ),
-                ),
+        stubOverpass(
+            twoWayOverpassResponseJson(
+                wayAId = 307, wayAName = "Avenue A", wayAOneway = "yes", wayALatOffsetDegrees = 0.000100, wayAWestToEast = true,
+                wayBId = 308, wayBName = "Avenue B", wayBOneway = "yes", wayBLatOffsetDegrees = 0.000500, wayBWestToEast = false,
+                baseLat = 64.000000, baseLon = 64.000000,
             ),
         )
 
@@ -249,43 +257,35 @@ class StreetDirectionResolverTest @Autowired constructor(
 
     @Test
     fun `reuses a cached result when its stored radius covers the current lookup's needed radius`() {
-        wireMockServer.stubFor(
-            post(urlMatching(".*")).willReturn(okJson(overpassResponseJson(oneway = "yes", name = "Wide Search Street"))),
-        )
+        stubOverpass(overpassResponseJson(oneway = "yes", name = "Wide Search Street"))
 
         // accuracy 40.0 -> needs 80.0m radius; cache row is written with searchRadiusMeters = 80.0.
         streetDirectionResolver.resolve(BigDecimal("65.000000"), BigDecimal("65.000000"), accuracyMeters = 40.0)
         // accuracy 10.0 -> only needs 50.0m; 80.0 >= 50.0, so this must be served from cache.
         streetDirectionResolver.resolve(BigDecimal("65.000000"), BigDecimal("65.000000"), accuracyMeters = 10.0)
 
-        wireMockServer.verify(1, postRequestedFor(urlMatching(".*")))
+        assertThat(overpassResolveRounds()).isEqualTo(1)
     }
 
     @Test
     fun `re-resolves and overwrites the cache when its stored radius is smaller than the current lookup needs`() {
-        wireMockServer.stubFor(
-            post(urlMatching(".*")).willReturn(okJson(overpassResponseJson(oneway = "yes", name = "Narrow Search Street"))),
-        )
+        stubOverpass(overpassResponseJson(oneway = "yes", name = "Narrow Search Street"))
 
         // accuracy 5.0 -> needs only the 50.0m floor; cache row is written with searchRadiusMeters = 50.0.
         streetDirectionResolver.resolve(BigDecimal("66.000000"), BigDecimal("66.000000"), accuracyMeters = 5.0)
         // accuracy 80.0 -> needs 160.0m; 50.0 < 160.0, so this must NOT be served from the stale cache row.
         streetDirectionResolver.resolve(BigDecimal("66.000000"), BigDecimal("66.000000"), accuracyMeters = 80.0)
 
-        wireMockServer.verify(2, postRequestedFor(urlMatching(".*")))
+        assertThat(overpassResolveRounds()).isEqualTo(2)
     }
 
     @Test
     fun `a confident result cached from a precise report is not served to a later imprecise report that should be ambiguous`() {
-        wireMockServer.stubFor(
-            post(urlMatching(".*")).willReturn(
-                okJson(
-                    twoWayOverpassResponseJson(
-                        wayAId = 401, wayAName = "Precise Street A", wayAOneway = "yes", wayALatOffsetDegrees = 0.000100, wayAWestToEast = true,
-                        wayBId = 402, wayBName = "Precise Street B", wayBOneway = null, wayBLatOffsetDegrees = 0.000200, wayBWestToEast = true,
-                        baseLat = 67.000000, baseLon = 67.000000,
-                    ),
-                ),
+        stubOverpass(
+            twoWayOverpassResponseJson(
+                wayAId = 401, wayAName = "Precise Street A", wayAOneway = "yes", wayALatOffsetDegrees = 0.000100, wayAWestToEast = true,
+                wayBId = 402, wayBName = "Precise Street B", wayBOneway = null, wayBLatOffsetDegrees = 0.000200, wayBWestToEast = true,
+                baseLat = 67.000000, baseLon = 67.000000,
             ),
         )
 
@@ -300,7 +300,7 @@ class StreetDirectionResolverTest @Autowired constructor(
         val imprecise = streetDirectionResolver.resolve(BigDecimal("67.000000"), BigDecimal("67.000000"), accuracyMeters = 20.0)
         assertThat(imprecise).isInstanceOf(DirectionResolution.Unknown::class.java)
 
-        wireMockServer.verify(2, postRequestedFor(urlMatching(".*")))
+        assertThat(overpassResolveRounds()).isEqualTo(2)
     }
 
     @Test
@@ -311,15 +311,11 @@ class StreetDirectionResolverTest @Autowired constructor(
         // Both ways share a name so the ambiguity check's same-street exemption applies (their
         // near-equal distances-to-point would otherwise trigger the ambiguity downgrade first) -
         // this isolates the divided-carriageway check, which is what this test targets.
-        wireMockServer.stubFor(
-            post(urlMatching(".*")).willReturn(
-                okJson(
-                    twoWayOverpassResponseJson(
-                        wayAId = 403, wayAName = "Far Ave", wayAOneway = "yes", wayALatOffsetDegrees = 0.000500, wayAWestToEast = true,
-                        wayBId = 404, wayBName = "Far Ave", wayBOneway = "yes", wayBLatOffsetDegrees = -0.000500, wayBWestToEast = false,
-                        baseLat = 68.000000, baseLon = 68.000000,
-                    ),
-                ),
+        stubOverpass(
+            twoWayOverpassResponseJson(
+                wayAId = 403, wayAName = "Far Ave", wayAOneway = "yes", wayALatOffsetDegrees = 0.000500, wayAWestToEast = true,
+                wayBId = 404, wayBName = "Far Ave", wayBOneway = "yes", wayBLatOffsetDegrees = -0.000500, wayBWestToEast = false,
+                baseLat = 68.000000, baseLon = 68.000000,
             ),
         )
 
@@ -344,7 +340,7 @@ class StreetDirectionResolverTest @Autowired constructor(
                "geometry": [{"lat": 69.000130, "lon": 68.999000}, {"lat": 69.000130, "lon": 69.001000}]}
             ]}
         """.trimIndent()
-        wireMockServer.stubFor(post(urlMatching(".*")).willReturn(okJson(responseJson)))
+        stubOverpass(responseJson)
 
         val result = streetDirectionResolver.resolve(BigDecimal("69.000000"), BigDecimal("69.000000"), accuracyMeters = 10.0)
 
@@ -353,9 +349,7 @@ class StreetDirectionResolverTest @Autowired constructor(
 
     @Test
     fun `a radius that does not round evenly to 2 decimal places is still reused on a repeat lookup`() {
-        wireMockServer.stubFor(
-            post(urlMatching(".*")).willReturn(okJson(overpassResponseJson(oneway = "yes", name = "Odd Radius Street"))),
-        )
+        stubOverpass(overpassResponseJson(oneway = "yes", name = "Odd Radius Street"))
 
         // accuracy 33.332 -> radius 66.664, which does not round evenly to 2 decimal places.
         streetDirectionResolver.resolve(BigDecimal("70.000000"), BigDecimal("70.000000"), accuracyMeters = 33.332)
@@ -363,7 +357,7 @@ class StreetDirectionResolverTest @Autowired constructor(
         // incorrectly miss the cache and issue a second Overpass call.
         streetDirectionResolver.resolve(BigDecimal("70.000000"), BigDecimal("70.000000"), accuracyMeters = 33.332)
 
-        wireMockServer.verify(1, postRequestedFor(urlMatching(".*")))
+        assertThat(overpassResolveRounds()).isEqualTo(1)
     }
 
     /**
@@ -392,7 +386,7 @@ class StreetDirectionResolverTest @Autowired constructor(
         val fixtureJson = javaClass.getResourceAsStream("/fixtures/overpass-khayaban-e-jinnah-report-649b9a.json")
             ?.bufferedReader(Charsets.UTF_8)?.readText()
             ?: error("Missing test fixture: fixtures/overpass-khayaban-e-jinnah-report-649b9a.json")
-        wireMockServer.stubFor(post(urlMatching(".*")).willReturn(okJson(fixtureJson)))
+        stubOverpass(fixtureJson)
 
         val result = streetDirectionResolver.resolve(
             BigDecimal("31.486191240932015"),

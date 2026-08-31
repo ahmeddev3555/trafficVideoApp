@@ -82,6 +82,12 @@ class EndToEndFlowTest @Autowired constructor(
             // blows this test's 5-second poll budget below - force a single attempt here to
             // restore the pre-retry timing this test's budget was tuned against.
             registry.add("app.osm.lookup-retry-attempts") { 1 }
+            // OverpassClient now queries every configured mirror in sequence; against the
+            // real public endpoints that is 3x the latency (and 3x the chance of hitting a
+            // slow mirror) for no benefit to this test, which does not care which Overpass
+            // replica answers. Pin it to a single mirror to keep the pre-multi-source timing
+            // this 5-second poll budget was tuned against.
+            registry.add("app.osm.overpass-base-urls") { "https://overpass-api.de/api/interpreter" }
             // ReportAnalysisJob now resolves the street and calls video analysis even when
             // compass heading is missing (only candidate scoring is skipped) - unlike
             // before, this test's "no compass" submission no longer short-circuits before

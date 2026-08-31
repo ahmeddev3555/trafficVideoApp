@@ -82,7 +82,7 @@ class ReportAnalysisIntegrationTest @Autowired constructor(
         fun overrideProperties(registry: DynamicPropertyRegistry) {
             registry.add("app.storage.video-directory") { tempVideoDir.toString() }
             registry.add("app.osm.nominatim-base-url") { "http://localhost:${wireMockServer.port()}" }
-            registry.add("app.osm.overpass-base-url") { "http://localhost:${wireMockServer.port()}" }
+            registry.add("app.osm.overpass-base-urls") { "http://localhost:${wireMockServer.port()}/" }
             registry.add("app.video-analysis.base-url") { "http://localhost:${wireMockServer.port()}" }
         }
     }

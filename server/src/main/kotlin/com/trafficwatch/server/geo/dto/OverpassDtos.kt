@@ -19,3 +19,13 @@ data class OverpassNode(
     val lat: Double,
     val lon: Double,
 )
+
+/**
+ * Result of an [com.trafficwatch.server.geo.OverpassClient] query. [ways] is the union of
+ * every mirror that answered, deduped by way id; [sourceCount] is how many configured
+ * endpoints returned a usable HTTP response (an empty `elements` body still counts).
+ */
+data class OverpassResult(
+    val ways: List<OverpassElement>,
+    val sourceCount: Int,
+)

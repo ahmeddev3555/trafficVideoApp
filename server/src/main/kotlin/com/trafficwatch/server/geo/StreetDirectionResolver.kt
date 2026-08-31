@@ -178,6 +178,7 @@ class StreetDirectionResolver(
         entity.accuracyMeters = accuracyMeters.toBigDecimal()
         entity.streetName = resolution.streetNameOrNull()
         entity.directionState = resolution.toDirectionState()
+        entity.unknownReason = (resolution as? DirectionResolution.Unknown)?.reason
         entity.legalBearingDegrees = (resolution as? DirectionResolution.OneWay)
             ?.legalBearingDegrees
             ?.toBigDecimal()
@@ -204,7 +205,10 @@ class StreetDirectionResolver(
 
     private fun OsmLookupCache.toDirectionResolution(): DirectionResolution = when (directionState) {
         DirectionState.NOT_FOUND -> DirectionResolution.NotFound
-        DirectionState.UNKNOWN -> DirectionResolution.Unknown(streetName)
+        DirectionState.UNKNOWN -> DirectionResolution.Unknown(
+            streetName,
+            unknownReason ?: UnknownReason.NO_ONEWAY_TAG,
+        )
         DirectionState.TWO_WAY -> DirectionResolution.TwoWay(streetName)
         DirectionState.ONE_WAY -> DirectionResolution.OneWay(
             streetName,

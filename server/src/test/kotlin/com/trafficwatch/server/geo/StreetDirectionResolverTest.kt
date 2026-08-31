@@ -543,6 +543,24 @@ class StreetDirectionResolverTest @Autowired constructor(
         assertThat(overpassResolveRounds()).isEqualTo(1)
     }
 
+    @Test
+    fun `a cached DIVIDED_CARRIAGEWAY resolution keeps its reason on the next lookup`() {
+        val fixture = readFixture("overpass-khayaban-e-jinnah-report-649b9a.json")
+        stubOverpass(fixture)
+        val lat = BigDecimal("31.4869"); val lon = BigDecimal("74.3830")
+        val first = streetDirectionResolver.resolve(lat, lon, 5.0)
+        assertThat((first as DirectionResolution.Unknown).reason).isEqualTo(UnknownReason.DIVIDED_CARRIAGEWAY)
+        assertThat(overpassResolveRounds()).isEqualTo(1)
+
+        // resetAll() wipes both the stubs AND the request journal - so any further Overpass
+        // call would now 404. The second resolve returning the right value regardless proves
+        // it was served from the cache row, reason and all.
+        overpassA.resetAll(); overpassB.resetAll()
+        val second = streetDirectionResolver.resolve(lat, lon, 5.0)
+        assertThat(second).isEqualTo(DirectionResolution.Unknown(first.streetName, UnknownReason.DIVIDED_CARRIAGEWAY))
+        assertThat(overpassResolveRounds()).isEqualTo(0)
+    }
+
     private fun overpassResponseJson(oneway: String?, name: String): String {
         val tagsJson = buildString {
             append(""""name": "$name"""")

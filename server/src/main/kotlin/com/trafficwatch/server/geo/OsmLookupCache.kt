@@ -47,6 +47,10 @@ class OsmLookupCache(
     @Column(name = "direction_state", nullable = false, length = 20)
     var directionState: DirectionState,
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "unknown_reason", length = 32)
+    var unknownReason: UnknownReason? = null,
+
     @Column(name = "legal_bearing_degrees")
     var legalBearingDegrees: BigDecimal? = null,
 

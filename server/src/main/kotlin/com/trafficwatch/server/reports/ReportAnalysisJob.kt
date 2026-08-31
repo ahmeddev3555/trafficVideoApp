@@ -14,6 +14,7 @@ import com.trafficwatch.server.geo.FlowVehicle
 import com.trafficwatch.server.geo.FusionResult
 import com.trafficwatch.server.geo.OrientationTimeline
 import com.trafficwatch.server.geo.StreetDirectionResolver
+import com.trafficwatch.server.geo.UnknownReason
 import com.trafficwatch.server.reports.dto.LocationSampleDto
 import com.trafficwatch.server.reports.dto.RotationSampleDto
 import com.trafficwatch.server.storage.VideoStorageService
@@ -182,13 +183,35 @@ class ReportAnalysisJob(
 
         ingestObservations(report, flowVehicles, evaluation.best?.flowVehicle)
 
-        if (outcome.status == ReportStatus.REJECTED && resolution is DirectionResolution.OneWay) {
-            tryStationaryApproachDetection(report, analysis, orientationTimeline, streetName)
-                ?.let { return it }
+        if (outcome.status == ReportStatus.REJECTED) {
+            val flowConsensus = strongestFlowConsensus(flowVehicles)
+            val approachEligible = when (resolution) {
+                is DirectionResolution.OneWay -> true
+                is DirectionResolution.Unknown ->
+                    resolution.reason == UnknownReason.DIVIDED_CARRIAGEWAY &&
+                        (flowConsensus?.memberCount ?: 0) >= analysisProperties.approachCorroborationMinMembers
+                else -> false
+            }
+            if (approachEligible) {
+                tryStationaryApproachDetection(
+                    report, analysis, orientationTimeline, streetName,
+                    resolution, flowConsensus?.memberCount,
+                )?.let { return it }
+            }
         }
 
         return outcome
     }
+
+    /**
+     * The clip's strongest corridor consensus over all qualified vehicles, no candidate
+     * excluded - a "the scene is one coherent directional stream" signal. Reuses
+     * ClipFlowAnalyzer's R-gate (returns null below consensus-min-resultant-length).
+     */
+    private fun strongestFlowConsensus(flowVehicles: List<FlowVehicle>): CorridorConsensus? =
+        flowVehicles.map { it.corridorId }.distinct()
+            .mapNotNull { clipFlowAnalyzer.corridorConsensus(flowVehicles, it, excluding = null) }
+            .maxByOrNull { it.clipConfidence }
 
     /**
      * Additive fallback (see the 2026-08-30 stationary-approach-detection spec): on a
@@ -203,6 +226,8 @@ class ReportAnalysisJob(
         analysis: VideoAnalysisResponse,
         orientationTimeline: OrientationTimeline,
         streetName: String?,
+        resolution: DirectionResolution,
+        corroborationMembers: Int?,
     ): AnalysisOutcome? {
         if (!orientationTimeline.wasStationaryThroughout()) return null
 
@@ -243,15 +268,29 @@ class ReportAnalysisJob(
             wrongWayFramePath = annotateAndStoreFrame(
                 best, requireNotNull(report.id) { "Report must have a generated id before analysis" },
             ),
-            directionEvidenceJson = approachBreakdownJson(best, shrinking, strongGrowers.size),
+            directionEvidenceJson = approachBreakdownJson(
+                best, shrinking, strongGrowers.size, resolution, corroborationMembers,
+            ),
         )
     }
 
-    private fun approachBreakdownJson(best: VehicleAnalysisResult, recedingCount: Int, strongGrowerCount: Int): String? = try {
+    private fun approachBreakdownJson(
+        best: VehicleAnalysisResult,
+        recedingCount: Int,
+        strongGrowerCount: Int,
+        resolution: DirectionResolution,
+        corroborationMembers: Int?,
+    ): String? = try {
         objectMapper.writeValueAsString(
             ApproachEvidenceBreakdown(
+                resolutionState = when (resolution) {
+                    is DirectionResolution.Unknown -> "UNKNOWN_${resolution.reason.name}"
+                    is DirectionResolution.OneWay -> "ONE_WAY"
+                    else -> "OTHER"
+                },
                 recedingCount = recedingCount,
                 strongGrowerCount = strongGrowerCount,
+                corroborationConsensusMembers = corroborationMembers,
                 growthFraction = best.scaleGrowthFraction,
                 trackFrames = best.trackFrameCount ?: 0,
                 detectionConfidence = best.detectionConfidence,
@@ -509,8 +548,10 @@ internal data class EvidenceBreakdown(
  */
 internal data class ApproachEvidenceBreakdown(
     val method: String = "stationary_approach",
+    val resolutionState: String,
     val recedingCount: Int,
     val strongGrowerCount: Int,
+    val corroborationConsensusMembers: Int?,
     val growthFraction: Double,
     val trackFrames: Int,
     val detectionConfidence: Double,

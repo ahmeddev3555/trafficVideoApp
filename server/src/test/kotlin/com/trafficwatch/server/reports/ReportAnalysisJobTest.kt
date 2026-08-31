@@ -11,6 +11,7 @@ import com.trafficwatch.server.geo.EvidenceKind
 import com.trafficwatch.server.geo.FlowObservationService
 import com.trafficwatch.server.geo.OrientationSource
 import com.trafficwatch.server.geo.StreetDirectionResolver
+import com.trafficwatch.server.geo.UnknownReason
 import com.trafficwatch.server.reports.dto.RotationSampleDto
 import com.trafficwatch.server.storage.VideoStorageService
 import com.trafficwatch.server.storage.WrongWayFrameStorageService
@@ -903,6 +904,7 @@ class ReportAnalysisJobTest {
         assertThat(report.wrongWayConfidence!!.toDouble()).isEqualTo(0.9)
         assertThat(report.analysisMessage).contains("approaching a stationary camera")
         assertThat(report.directionEvidence).contains("stationary_approach")
+        assertThat(report.directionEvidence).contains("ONE_WAY")
     }
 
     @Test
@@ -1060,10 +1062,13 @@ class ReportAnalysisJobTest {
         val report = sampleReport(locationSamples = stationaryLocationSamplesJson())
         every {
             streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
-        } returns DirectionResolution.Unknown("Some Street")
+        } returns DirectionResolution.Unknown("Side Street", UnknownReason.NO_ONEWAY_TAG)
         // Same shape as the CONFIRMED-via-approach-path test: 4 shrinking + 1 strong grower
         // on a verified-stationary camera. The only difference is the street resolves to
         // Unknown, not OneWay - the branch guard must keep the approach path from running.
+        // DIVIDED_CARRIAGEWAY is now the one Unknown reason that reaches the approach path
+        // (with flow corroboration); every other Unknown reason - NO_ONEWAY_TAG here - is
+        // still excluded outright.
         every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
             listOf(
                 vehicle(trackId = 1, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
@@ -1075,6 +1080,76 @@ class ReportAnalysisJobTest {
                     plateText = "LEA-9999", plateConfidence = 0.7,
                     scaleTrend = "growing", scaleGrowthFraction = 1.4, trackFrameCount = 60,
                 ),
+            ),
+        )
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
+    }
+
+    @Test
+    fun `stationary approach on a DIVIDED_CARRIAGEWAY Unknown street with a coherent receding stream is CONFIRMED`() {
+        val report = sampleReport(locationSamples = stationaryLocationSamplesJson())
+        every { streetDirectionResolver.resolve(any(), any(), any()) } returns
+            DirectionResolution.Unknown("Khayaban-e-Jinnah", UnknownReason.DIVIDED_CARRIAGEWAY)
+        every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
+            listOf(
+                vehicle(trackId = 1, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 2, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 3, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(
+                    trackId = 5, bearingDegrees = 185.0, detectionConfidence = 0.9,
+                    plateText = "LEA-9999", plateConfidence = 0.7,
+                    scaleTrend = "growing", scaleGrowthFraction = 1.4, trackFrameCount = 60,
+                ),
+            ),
+        )
+        every { wrongWayFrameStorageService.store(any(), any()) } returns "frames/x.jpg"
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.CONFIRMED)
+        assertThat(report.directionEvidence).contains("stationary_approach")
+        assertThat(report.directionEvidence).contains("UNKNOWN_DIVIDED_CARRIAGEWAY")
+    }
+
+    @Test
+    fun `stationary approach on a DIVIDED_CARRIAGEWAY street is REJECTED when the traffic has no coherent consensus`() {
+        val report = sampleReport(locationSamples = stationaryLocationSamplesJson())
+        every { streetDirectionResolver.resolve(any(), any(), any()) } returns
+            DirectionResolution.Unknown("Khayaban-e-Jinnah", UnknownReason.DIVIDED_CARRIAGEWAY)
+        // 3 shrinking by bbox scale, but bearings are scattered -> corridorConsensus elects nothing.
+        every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
+            listOf(
+                vehicle(trackId = 1, bearingDegrees = 10.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 2, bearingDegrees = 130.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 3, bearingDegrees = 250.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 5, bearingDegrees = 185.0, detectionConfidence = 0.9,
+                    scaleTrend = "growing", scaleGrowthFraction = 1.4, trackFrameCount = 60),
+            ),
+        )
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
+    }
+
+    @Test
+    fun `stationary approach does NOT run on a NO_ONEWAY_TAG Unknown street`() {
+        val report = sampleReport(locationSamples = stationaryLocationSamplesJson())
+        every { streetDirectionResolver.resolve(any(), any(), any()) } returns
+            DirectionResolution.Unknown("Side Street", UnknownReason.NO_ONEWAY_TAG)
+        every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
+            listOf(
+                vehicle(trackId = 1, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 2, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 3, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 5, bearingDegrees = 185.0, scaleTrend = "growing",
+                    scaleGrowthFraction = 1.4, trackFrameCount = 60),
             ),
         )
         every { reportRepository.save(any()) } answers { firstArg() }

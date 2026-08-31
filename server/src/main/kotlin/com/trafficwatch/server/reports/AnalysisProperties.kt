@@ -39,4 +39,9 @@ data class AnalysisProperties(
     var approachGrowthMin: Double = 0.8,
     var approachMinFrames: Int = 30,
     var approachMinDetection: Double = 0.5,
+    // Stationary-approach on a DIVIDED_CARRIAGEWAY Unknown street additionally requires the
+    // clip's qualified traffic to form one coherent stream: the strongest corridor consensus
+    // must have at least this many members. NOT a bearing-opposition check on the grower -
+    // the grower's frame bearing is perspective-understated by construction.
+    var approachCorroborationMinMembers: Int = 2,
 )

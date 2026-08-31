@@ -1,5 +1,13 @@
 # Overpass Multi-Source Direction Resolution Design
 
+> **SUPERSEDED (2026-08-31)** by
+> `docs/superpowers/specs/2026-08-31-divided-carriageway-resolution-and-approach-on-unknown-design.md`,
+> which carries this design forward as its "Part A" and adds the
+> `Unknown`-reason tagging + stationary-approach gate changes ("Part B")
+> without which this spec alone is a regression for reports 759cd / 24908 /
+> a5275 (it makes them resolve reliably to `Unknown`, which the shipped
+> `is OneWay` confirmation gate blocks). Kept for history.
+
 ## Context
 
 `StreetDirectionResolver` resolves the street and legal traffic direction

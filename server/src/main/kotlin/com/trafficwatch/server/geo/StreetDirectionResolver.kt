@@ -64,9 +64,18 @@ class StreetDirectionResolver(
             return DirectionResolution.LookupFailed(ex.message ?: "OSM lookup failed")
         }
 
+        // NOT_CROSS_CHECKED is the same class of artifact as LookupFailed: it says only that
+        // fewer than two Overpass mirrors answered at this instant, not anything about the
+        // street. Caching it would serve a mirror outage back for the full TTL, so - exactly
+        // like LookupFailed above - it skips persist and is re-resolved next time.
+        if (resolution.isTransientArtifact()) return resolution
+
         persist(cached, latBucket, lonBucket, searchRadius, clampedAccuracy, resolution)
         return resolution
     }
+
+    private fun DirectionResolution.isTransientArtifact(): Boolean =
+        this is DirectionResolution.Unknown && reason == UnknownReason.NOT_CROSS_CHECKED
 
     private fun resolveFresh(lat: Double, lon: Double, searchRadius: Double, accuracyMeters: Double): DirectionResolution {
         val overpass = overpassClient.findNearbyWays(lat, lon, searchRadius)

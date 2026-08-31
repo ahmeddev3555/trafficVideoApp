@@ -513,6 +513,31 @@ class StreetDirectionResolverTest @Autowired constructor(
     }
 
     @Test
+    fun `a NOT_CROSS_CHECKED Unknown is never cached, so the next lookup re-resolves`() {
+        // NOT_CROSS_CHECKED records a mirror outage, not a fact about the street - caching it
+        // would serve that outage back for the full 30-day TTL. Round 1: only mirror A
+        // answers -> Unknown(NOT_CROSS_CHECKED), nothing persisted. Round 2, same coordinate,
+        // both mirrors up -> a real second lookup, and a genuine OneWay.
+        val lat = BigDecimal("31.6301"); val lon = BigDecimal("74.6301")
+        overpassA.stubFor(post(urlMatching(".*"))
+            .willReturn(okJson(overpassResponseJson(oneway = "yes", name = "Flaky Mirror St"))))
+        overpassB.stubFor(post(urlMatching(".*")).willReturn(aResponse().withStatus(500)))
+
+        val first = streetDirectionResolver.resolve(lat, lon, 5.0)
+        assertThat((first as DirectionResolution.Unknown).reason).isEqualTo(UnknownReason.NOT_CROSS_CHECKED)
+        assertThat(overpassResolveRounds()).isEqualTo(1)
+        assertThat(cacheRepository.findAll()).isEmpty()
+
+        overpassB.stubFor(post(urlMatching(".*"))
+            .willReturn(okJson(overpassResponseJson(oneway = "yes", name = "Flaky Mirror St"))))
+
+        val second = streetDirectionResolver.resolve(lat, lon, 5.0)
+        assertThat(second).isInstanceOf(DirectionResolution.OneWay::class.java)
+        assertThat((second as DirectionResolution.OneWay).streetName).isEqualTo("Flaky Mirror St")
+        assertThat(overpassResolveRounds()).isEqualTo(2)
+    }
+
+    @Test
     fun `keeps OneWay when two Overpass sources agree`() {
         stubOverpass(overpassResponseJson(oneway = "yes", name = "Cross Checked Ave"))
         val result = streetDirectionResolver.resolve(

@@ -173,12 +173,47 @@ considered rather than forgotten.
   returned ways deduped by id, so one stale replica can no longer decide a
   result on its own; a `OneWay` backed by only a single un-cross-checked
   source downgrades to `Unknown(NOT_CROSS_CHECKED)`; the `osm_lookup_cache`
-  now carries a 30-day TTL, so a poisoned row self-heals on the next lookup
-  rather than sticking forever; and per-endpoint Overpass response logging
+  now carries a 30-day TTL, so a poisoned row self-heals once that TTL
+  expires rather than sticking forever (note: up to 30 days, not on the
+  next lookup); and per-endpoint Overpass response logging
   (endpoint host, way count, way ids) is now in place, so the next
   occurrence is diagnosable straight from the server logs.
   *(added 2026-08-17, found investigating report 649b9a; root cause
   addressed 2026-08-31)*
+
+- **No alerting on sustained Overpass mirror degradation.** The multi-mirror
+  cross-check above is a correctness win but a silent availability cliff:
+  when fewer than two mirrors answer, `StreetDirectionResolver` downgrades
+  every `OneWay` to `Unknown(NOT_CROSS_CHECKED)`, so a multi-mirror outage
+  turns off OSM-backed one-way detection system-wide and the only trace is a
+  per-lookup WARN (`OverpassClient`'s "endpoint {} failed, skipping" and the
+  resolver's "single un-cross-checked source ... downgrading to Unknown").
+  Nobody reads those in aggregate, and reports keep landing as REJECTED
+  "insufficient data" with no operator signal that anything is wrong. Want:
+  a counter per Overpass endpoint (success/failure) plus one on
+  `sourceCount < 2` resolutions, and an alert when either stays elevated
+  over a window — a sustained rate, not a single blip, since one flaky
+  mirror is normal. Micrometer counters through the existing Spring Boot
+  actuator would be the cheap version; a log-based alert on the WARN rate
+  would do at a pinch. *(added 2026-08-31)*
+
+- **`StreetDirectionResolver.persist` is a check-then-insert with no upsert,
+  so concurrent analyses at the same coordinate can kill the job.** `resolve`
+  reads `findByLatBucketAndLonBucket` and, on a miss, constructs a brand-new
+  `OsmLookupCache` row; two `@Async` analyses for the same lat/lon bucket can
+  both miss and both `INSERT`, and the loser violates
+  `uq_osm_lookup_cache_bucket`. The resulting `DataIntegrityViolationException`
+  is not an `OsmLookupException`, so it escapes `resolve()`'s only catch,
+  propagates out of `ReportAnalysisJob.analyze`, and the report is left
+  `PENDING` forever (nothing ever retries it). Pre-existing, but this branch
+  widens the window on both ends: the fresh-lookup path is now three
+  sequential mirror round-trips instead of one, and the new 30-day TTL adds a
+  second way for two callers to miss simultaneously on a bucket that already
+  has a row. Fix would be a real upsert (`INSERT ... ON CONFLICT
+  (lat_bucket, lon_bucket) DO UPDATE`, native query) or catching the
+  violation in `persist` and re-reading + updating the winner's row; the
+  resolution itself is already computed, so a save failure need not fail the
+  analysis at all. *(added 2026-08-31)*
 
 ## Direction analysis (compass + moving camera)
 

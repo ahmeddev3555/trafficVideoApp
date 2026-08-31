@@ -111,6 +111,25 @@ class OverpassClientTest {
     }
 
     @Test
+    fun `duplicate endpoint URLs are deduped so one mirror cannot count as two sources`() {
+        // Listing the same mirror twice must never satisfy StreetDirectionResolver's
+        // cross-check threshold - that is one source, not two.
+        stub(endpointA, waysJson(1L))
+        val restClient = RestClient.builder().build()
+        val properties = OsmProperties(
+            overpassBaseUrls = listOf(url(endpointA), url(endpointA)),
+            overpassPerEndpointAttempts = 1,
+            lookupRetryDelayMs = 1L,
+        )
+
+        val result = OverpassClient(restClient, properties).findNearbyWays(31.5, 74.3, 50.0)
+
+        assertThat(result.sourceCount).isEqualTo(1)
+        assertThat(result.ways.mapNotNull { it.id }).containsExactly(1L)
+        endpointA.verify(1, postRequestedFor(urlPathEqualTo("/")))
+    }
+
+    @Test
     fun `includes the given radius in each endpoint query`() {
         stubEmpty(endpointA); stubEmpty(endpointB); stubEmpty(endpointC)
         client().findNearbyWays(31.5, 74.3, 120.0)

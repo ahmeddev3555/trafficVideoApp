@@ -3,6 +3,7 @@ package com.trafficwatch.server.geo
 import com.trafficwatch.server.geo.dto.OverpassElement
 import com.trafficwatch.server.geo.dto.OverpassResponse
 import com.trafficwatch.server.geo.dto.OverpassResult
+import jakarta.annotation.PostConstruct
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.http.MediaType
@@ -26,6 +27,24 @@ class OverpassClient(
 ) {
     private val logger = LoggerFactory.getLogger(OverpassClient::class.java)
 
+    /**
+     * StreetDirectionResolver downgrades any `OneWay` backed by fewer than two distinct
+     * sources to `Unknown(NOT_CROSS_CHECKED)`, so a single-mirror configuration silently
+     * disables one-way resolution entirely. Say so once, loudly, at startup.
+     */
+    @PostConstruct
+    fun warnIfSingleMirror() {
+        val distinctUrls = osmProperties.overpassBaseUrls.distinct()
+        if (distinctUrls.size < 2) {
+            logger.warn(
+                "app.osm.overpass-base-urls has only {} distinct endpoint(s) - OSM one-way " +
+                    "resolution is DISABLED (every OneWay downgrades to Unknown/NOT_CROSS_CHECKED) " +
+                    "until a second distinct Overpass mirror is configured",
+                distinctUrls.size,
+            )
+        }
+    }
+
     fun findNearbyWays(lat: Double, lon: Double, radiusMeters: Double): OverpassResult {
         val query = """
             [out:json];
@@ -37,7 +56,9 @@ class OverpassClient(
         val byId = LinkedHashMap<Long, OverpassElement>()
         var sourceCount = 0
 
-        for (url in osmProperties.overpassBaseUrls) {
+        // distinct() so sourceCount counts DISTINCT endpoints: the same URL listed twice is
+        // one mirror, and must never be able to satisfy the cross-check threshold.
+        for (url in osmProperties.overpassBaseUrls.distinct()) {
             val host = runCatching { URI(url).host }.getOrNull() ?: url
             val elements = try {
                 queryEndpoint(url, formBody)

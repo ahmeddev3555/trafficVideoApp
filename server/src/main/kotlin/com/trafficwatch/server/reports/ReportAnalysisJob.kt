@@ -184,22 +184,28 @@ class ReportAnalysisJob(
         ingestObservations(report, flowVehicles, evaluation.best?.flowVehicle)
 
         if (outcome.status == ReportStatus.REJECTED) {
-            val flowConsensus = strongestFlowConsensus(flowVehicles)
+            // Corroboration is computed over the RECEDING/steady traffic only: a vehicle
+            // whose box is growing is a potential violator, and a violator's own track must
+            // never count towards the corroboration of the flow it opposes.
+            val corroborationConsensus =
+                strongestFlowConsensus(flowVehicles.filterNot { it.vehicle.scaleTrend == "growing" })
             val approachEligible = when (resolution) {
                 is DirectionResolution.OneWay -> true
                 is DirectionResolution.Unknown ->
                     resolution.reason == UnknownReason.DIVIDED_CARRIAGEWAY &&
-                        (flowConsensus?.memberCount ?: 0) >= analysisProperties.approachCorroborationMinMembers
+                        (corroborationConsensus?.memberCount ?: 0) >= analysisProperties.approachCorroborationMinMembers
                 else -> false
             }
             if (approachEligible) {
                 tryStationaryApproachDetection(
                     report, analysis, orientationTimeline, streetName,
                     resolution,
-                    // Corroboration is only a gate on the DIVIDED_CARRIAGEWAY Unknown branch;
-                    // on OneWay the consensus was never consulted, so record it as null.
-                    corroborationMembers = (resolution as? DirectionResolution.Unknown)
-                        ?.let { flowConsensus?.memberCount },
+                    // Both the corridor co-membership requirement and the recorded member
+                    // count only apply on the DIVIDED_CARRIAGEWAY Unknown branch; on OneWay
+                    // the consensus was never consulted, so neither is passed.
+                    corroboration = (resolution as? DirectionResolution.Unknown)
+                        ?.let { corroborationConsensus },
+                    requireCorridorCoMembership = resolution is DirectionResolution.Unknown,
                 )?.let { return it }
             }
         }
@@ -208,9 +214,11 @@ class ReportAnalysisJob(
     }
 
     /**
-     * The clip's strongest corridor consensus over all qualified vehicles, no candidate
-     * excluded - a "the scene is one coherent directional stream" signal. Reuses
-     * ClipFlowAnalyzer's R-gate (returns null below consensus-min-resultant-length).
+     * The clip's strongest corridor consensus over [flowVehicles], no candidate excluded -
+     * a "the scene is one coherent directional stream" signal. Reuses ClipFlowAnalyzer's
+     * R-gate (returns null below consensus-min-resultant-length). Callers choose the
+     * population: [buildOutcome]'s conflict veto passes every qualified vehicle, while the
+     * stationary-approach corroboration gate passes the non-growing ones only.
      */
     private fun strongestFlowConsensus(flowVehicles: List<FlowVehicle>): CorridorConsensus? =
         flowVehicles.map { it.corridorId }.distinct()
@@ -224,6 +232,16 @@ class ReportAnalysisJob(
      * a signal that needs no compass or OSM legal bearing. Only ever upgrades an
      * already-REJECTED outcome to CONFIRMED; returns null to leave the REJECTED outcome
      * untouched.
+     *
+     * On the `Unknown(DIVIDED_CARRIAGEWAY)` branch ([requireCorridorCoMembership]) the
+     * grower must additionally sit in the SAME frame-space corridor as [corroboration], the
+     * strongest consensus among the non-growing traffic. Without that, the scene's shrinking
+     * count and the grower can come from two unrelated corridors - a stationary camera aimed
+     * upstream at a divided road sees one legally-approaching vehicle on the near carriageway
+     * and a stream of legally-receding vehicles on the far one, and the receding corridor's
+     * clean consensus would otherwise corroborate a violation the near-carriageway driver is
+     * not committing. A genuine wrong-way rider is tracked in the same corridor as the
+     * traffic he opposes.
      */
     private fun tryStationaryApproachDetection(
         report: Report,
@@ -231,7 +249,8 @@ class ReportAnalysisJob(
         orientationTimeline: OrientationTimeline,
         streetName: String?,
         resolution: DirectionResolution,
-        corroborationMembers: Int?,
+        corroboration: CorridorConsensus?,
+        requireCorridorCoMembership: Boolean,
     ): AnalysisOutcome? {
         if (!orientationTimeline.wasStationaryThroughout()) return null
 
@@ -260,6 +279,13 @@ class ReportAnalysisJob(
         if (shrinking < 3 * strongGrowers.size) return null
 
         val best = strongGrowers.maxByOrNull { it.detectionConfidence } ?: return null
+        // Fails closed on a null corridorId or a null consensus: a grower that cannot be
+        // SHOWN to share a corridor with the corroborating flow never earns a confirmation.
+        if (requireCorridorCoMembership &&
+            (corroboration == null || best.corridorId == null || best.corridorId != corroboration.corridorId)
+        ) {
+            return null
+        }
         if (best.detectionConfidence < analysisProperties.confirmationThreshold) return null
 
         return AnalysisOutcome(
@@ -273,7 +299,7 @@ class ReportAnalysisJob(
                 best, requireNotNull(report.id) { "Report must have a generated id before analysis" },
             ),
             directionEvidenceJson = approachBreakdownJson(
-                best, shrinking, strongGrowers.size, resolution, corroborationMembers,
+                best, shrinking, strongGrowers.size, resolution, corroboration?.memberCount,
             ),
         )
     }
@@ -419,9 +445,7 @@ class ReportAnalysisJob(
         // vehicle flows legally with its corridor, no per-candidate fusion ever
         // ran - yet a corridor unanimously opposing the OSM tag is exactly the
         // cross-check case, and the conflict veto must still surface here.
-        val strongestClipEvidence = flowVehicles.map { it.corridorId }.distinct()
-            .mapNotNull { clipFlowAnalyzer.corridorConsensus(flowVehicles, it, excluding = null) }
-            .maxByOrNull { it.clipConfidence }
+        val strongestClipEvidence = strongestFlowConsensus(flowVehicles)
             ?.let { DirectionEvidence(EvidenceKind.CLIP_CONSENSUS, it.bearingDegrees, it.clipConfidence) }
         val fallbackFusion = directionEvidenceResolver.fuse(
             listOfNotNull(osmEvidence, strongestClipEvidence, historyEvidence),

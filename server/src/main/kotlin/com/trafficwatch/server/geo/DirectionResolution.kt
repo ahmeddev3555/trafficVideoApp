@@ -11,18 +11,6 @@ package com.trafficwatch.server.geo
  * Nominatim/Overpass outage should not poison the cache with a wrong answer for the next
  * report at the same coordinate bucket.
  */
-/**
- * Why [DirectionResolution.Unknown] was returned. Only [DIVIDED_CARRIAGEWAY] means "the
- * street IS one-way, we just can't tell which carriageway" - the one case where
- * ReportAnalysisJob's stationary-approach path may still fire (see the 2026-08-31 design).
- */
-enum class UnknownReason {
-    NO_ONEWAY_TAG,
-    AMBIGUOUS_NEAREST_STREET,
-    DIVIDED_CARRIAGEWAY,
-    NOT_CROSS_CHECKED,
-}
-
 sealed class DirectionResolution {
     object NotFound : DirectionResolution()
     data class Unknown(
@@ -32,4 +20,20 @@ sealed class DirectionResolution {
     data class TwoWay(val streetName: String?) : DirectionResolution()
     data class OneWay(val streetName: String?, val legalBearingDegrees: Double) : DirectionResolution()
     data class LookupFailed(val reason: String) : DirectionResolution()
+}
+
+/**
+ * Why [DirectionResolution.Unknown] was returned. Only [DIVIDED_CARRIAGEWAY] means "the
+ * street IS one-way, we just can't tell which carriageway" - the one case where
+ * ReportAnalysisJob's stationary-approach path may still fire (see the 2026-08-31 design).
+ *
+ * [NOT_CROSS_CHECKED] is, like [DirectionResolution.LookupFailed], an artifact of the
+ * lookup moment rather than a fact about the street (fewer than two Overpass mirrors
+ * answered), so [StreetDirectionResolver] deliberately does not cache it either.
+ */
+enum class UnknownReason {
+    NO_ONEWAY_TAG,
+    AMBIGUOUS_NEAREST_STREET,
+    DIVIDED_CARRIAGEWAY,
+    NOT_CROSS_CHECKED,
 }

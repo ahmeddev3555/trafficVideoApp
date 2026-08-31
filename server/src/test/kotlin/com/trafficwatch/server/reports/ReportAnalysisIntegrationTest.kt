@@ -65,6 +65,9 @@ class ReportAnalysisIntegrationTest @Autowired constructor(
         private val tempVideoDir = Files.createTempDirectory("trafficwatch-analysis-it-videos")
         private val wireMockServer = WireMockServer(WireMockConfiguration.options().dynamicPort())
 
+        /** The two distinct Overpass "mirror" paths served by [wireMockServer]. */
+        private val overpassMirrorPaths = listOf("/", "/api/interpreter")
+
         @JvmStatic
         @BeforeAll
         fun startWireMock() {
@@ -82,11 +85,13 @@ class ReportAnalysisIntegrationTest @Autowired constructor(
         fun overrideProperties(registry: DynamicPropertyRegistry) {
             registry.add("app.storage.video-directory") { tempVideoDir.toString() }
             registry.add("app.osm.nominatim-base-url") { "http://localhost:${wireMockServer.port()}" }
-            // Two entries pointing at the same WireMock server so OverpassClient sees
-            // sourceCount == 2 - a single un-cross-checked source is downgraded to Unknown
-            // (StreetDirectionResolver), which these OneWay-outcome tests must not trip.
+            // Two DISTINCT mirror URLs (OverpassClient dedupes its endpoint list, so the same
+            // URL twice would count as one source) so it sees sourceCount == 2 - a single
+            // un-cross-checked source is downgraded to Unknown (StreetDirectionResolver),
+            // which these OneWay-outcome tests must not trip. Both paths are stubbed
+            // identically on the shared WireMock server by stubOverpass().
             registry.add("app.osm.overpass-base-urls") {
-                "http://localhost:${wireMockServer.port()}/,http://localhost:${wireMockServer.port()}/"
+                overpassMirrorPaths.joinToString(",") { "http://localhost:${wireMockServer.port()}$it" }
             }
             registry.add("app.video-analysis.base-url") { "http://localhost:${wireMockServer.port()}" }
         }
@@ -160,28 +165,34 @@ class ReportAnalysisIntegrationTest @Autowired constructor(
         return reportRepository.findById(reportId).orElseThrow()
     }
 
+    /**
+     * Answers [json] on BOTH configured Overpass mirror paths - OverpassClient needs two
+     * distinct endpoints to answer before a `OneWay` survives its cross-check.
+     */
+    private fun stubOverpass(json: String) {
+        overpassMirrorPaths.forEach { path ->
+            wireMockServer.stubFor(post(urlEqualTo(path)).willReturn(okJson(json)))
+        }
+    }
+
     /** A one-way street running due north, near [latitude]. */
     private fun stubOverpassOneWayNorth(latitude: BigDecimal) {
-        wireMockServer.stubFor(
-            post(urlEqualTo("/")).willReturn(
-                okJson(
-                    """
-                    {
-                      "elements": [
-                        {
-                          "type": "way",
-                          "id": 1,
-                          "tags": { "name": "Test One Way", "oneway": "yes" },
-                          "geometry": [
-                            {"lat": ${latitude.toDouble() - 0.001}, "lon": 74.358749},
-                            {"lat": ${latitude.toDouble() + 0.001}, "lon": 74.358749}
-                          ]
-                        }
-                      ]
-                    }
-                    """.trimIndent(),
-                ),
-            ),
+        stubOverpass(
+            """
+            {
+              "elements": [
+                {
+                  "type": "way",
+                  "id": 1,
+                  "tags": { "name": "Test One Way", "oneway": "yes" },
+                  "geometry": [
+                    {"lat": ${latitude.toDouble() - 0.001}, "lon": 74.358749},
+                    {"lat": ${latitude.toDouble() + 0.001}, "lon": 74.358749}
+                  ]
+                }
+              ]
+            }
+            """.trimIndent(),
         )
     }
 
@@ -229,26 +240,22 @@ class ReportAnalysisIntegrationTest @Autowired constructor(
      * Unknown-direction fallback (no oneway tag) AND the Nominatim reverse-geocode fallback
      * (no name tag) that [stubNominatimReverse] answers. */
     private fun stubOverpassWayNoTags(latitude: BigDecimal) {
-        wireMockServer.stubFor(
-            post(urlEqualTo("/")).willReturn(
-                okJson(
-                    """
-                    {
-                      "elements": [
-                        {
-                          "type": "way",
-                          "id": 3,
-                          "tags": {},
-                          "geometry": [
-                            {"lat": ${latitude.toDouble() - 0.001}, "lon": 74.358749},
-                            {"lat": ${latitude.toDouble() + 0.001}, "lon": 74.358749}
-                          ]
-                        }
-                      ]
-                    }
-                    """.trimIndent(),
-                ),
-            ),
+        stubOverpass(
+            """
+            {
+              "elements": [
+                {
+                  "type": "way",
+                  "id": 3,
+                  "tags": {},
+                  "geometry": [
+                    {"lat": ${latitude.toDouble() - 0.001}, "lon": 74.358749},
+                    {"lat": ${latitude.toDouble() + 0.001}, "lon": 74.358749}
+                  ]
+                }
+              ]
+            }
+            """.trimIndent(),
         )
     }
 
@@ -350,26 +357,22 @@ class ReportAnalysisIntegrationTest @Autowired constructor(
     @Test
     fun `a coordinate with no oneway data at all is REJECTED as insufficient data, not a guess`() {
         val latitude = BigDecimal("31.5400")
-        wireMockServer.stubFor(
-            post(urlEqualTo("/")).willReturn(
-                okJson(
-                    """
-                    {
-                      "elements": [
-                        {
-                          "type": "way",
-                          "id": 2,
-                          "tags": { "name": "Untagged Street" },
-                          "geometry": [
-                            {"lat": ${latitude.toDouble() - 0.001}, "lon": 74.358749},
-                            {"lat": ${latitude.toDouble() + 0.001}, "lon": 74.358749}
-                          ]
-                        }
-                      ]
-                    }
-                    """.trimIndent(),
-                ),
-            ),
+        stubOverpass(
+            """
+            {
+              "elements": [
+                {
+                  "type": "way",
+                  "id": 2,
+                  "tags": { "name": "Untagged Street" },
+                  "geometry": [
+                    {"lat": ${latitude.toDouble() - 0.001}, "lon": 74.358749},
+                    {"lat": ${latitude.toDouble() + 0.001}, "lon": 74.358749}
+                  ]
+                }
+              ]
+            }
+            """.trimIndent(),
         )
         // No OSM tag AND (deliberately, unlike stubVideoAnalysis) no corridor/flow fields on
         // the vehicle either, so ClipFlowAnalyzer.qualifyVehicles finds nothing usable -

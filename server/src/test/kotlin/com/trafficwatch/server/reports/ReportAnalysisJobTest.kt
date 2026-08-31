@@ -1098,13 +1098,16 @@ class ReportAnalysisJobTest {
         val report = sampleReport(locationSamples = stationaryLocationSamplesJson())
         every { streetDirectionResolver.resolve(any(), any(), any()) } returns
             DirectionResolution.Unknown("Khayaban-e-Jinnah", UnknownReason.DIVIDED_CARRIAGEWAY)
+        // The grower shares corridor 1 with the three receding vehicles it opposes - the
+        // co-membership the DIVIDED_CARRIAGEWAY branch now requires. The corroborating
+        // consensus is computed with the grower excluded, so corridor 1 still has 3 members.
         every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
             listOf(
-                vehicle(trackId = 1, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
-                vehicle(trackId = 2, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
-                vehicle(trackId = 3, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 1, corridorId = 1L, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 2, corridorId = 1L, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 3, corridorId = 1L, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
                 vehicle(
-                    trackId = 5, bearingDegrees = 185.0, detectionConfidence = 0.9,
+                    trackId = 5, corridorId = 1L, bearingDegrees = 185.0, detectionConfidence = 0.9,
                     plateText = "LEA-9999", plateConfidence = 0.7,
                     scaleTrend = "growing", scaleGrowthFraction = 1.4, trackFrameCount = 60,
                 ),
@@ -1118,6 +1121,40 @@ class ReportAnalysisJobTest {
         assertThat(report.status).isEqualTo(ReportStatus.CONFIRMED)
         assertThat(report.directionEvidence).contains("stationary_approach")
         assertThat(report.directionEvidence).contains("UNKNOWN_DIVIDED_CARRIAGEWAY")
+    }
+
+    @Test
+    fun `stationary approach on a DIVIDED_CARRIAGEWAY street is REJECTED when the grower is in a different corridor from the flow`() {
+        // The upstream-camera / far-carriageway false positive the corridor co-membership
+        // check exists to close: a stationary camera aimed upstream on a divided road sees a
+        // coherent stream of LEGALLY receding vehicles on the far carriageway (corridor 1)
+        // plus one LEGALLY approaching vehicle on the near carriageway (corridor 2). Every
+        // raw approach threshold is met - 3 shrinkers, 1 strong grower, detection 0.9 - and
+        // the far corridor yields a clean 3-member consensus, so without co-membership the
+        // legal approacher would be CONFIRMED as a wrong-way rider.
+        val report = sampleReport(locationSamples = stationaryLocationSamplesJson())
+        every { streetDirectionResolver.resolve(any(), any(), any()) } returns
+            DirectionResolution.Unknown("Khayaban-e-Jinnah", UnknownReason.DIVIDED_CARRIAGEWAY)
+        every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
+            listOf(
+                vehicle(trackId = 1, corridorId = 1L, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 2, corridorId = 1L, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 3, corridorId = 1L, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(
+                    trackId = 5, corridorId = 2L, bearingDegrees = 10.0, detectionConfidence = 0.9,
+                    plateText = "LEA-9999", plateConfidence = 0.7,
+                    scaleTrend = "growing", scaleGrowthFraction = 1.4, trackFrameCount = 60,
+                ),
+            ),
+        )
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
+        assertThat(report.licensePlate).isNull()
+        assertThat(report.wrongWayConfidence).isNull()
+        assertThat(report.directionEvidence).doesNotContain("stationary_approach")
     }
 
     @Test

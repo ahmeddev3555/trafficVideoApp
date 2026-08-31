@@ -51,8 +51,10 @@ class StreetDirectionResolverTest @Autowired constructor(
         fun testClock(): Clock = MutableClock(Instant.parse("2026-08-31T00:00:00Z"))
     }
 
-    class MutableClock(private var instant: Instant) : Clock() {
+    class MutableClock(private val base: Instant) : Clock() {
+        private var instant: Instant = base
         fun advanceDays(days: Long) { instant = instant.plus(Duration.ofDays(days)) }
+        fun resetToBase() { instant = base }
         override fun instant() = instant
         override fun getZone(): ZoneId = ZoneOffset.UTC
         override fun withZone(zone: ZoneId?) = this
@@ -94,11 +96,25 @@ class StreetDirectionResolverTest @Autowired constructor(
         }
     }
 
+    @org.junit.jupiter.api.BeforeEach
+    fun resetSharedState() {
+        (clock as MutableClock).resetToBase()
+        // The cache table lives in the shared Spring context; clear it so a test that shares
+        // a coordinate bucket with another (e.g. the two report-649b9a divided-carriageway
+        // tests) never reads the other's cached row - which, pre-Task-4, drops the reason.
+        cacheRepository.deleteAll()
+    }
+
     @AfterEach
     fun resetStubs() {
         wireMockServer.resetAll()
         resetOverpassStubs()
     }
+
+    private fun readFixture(name: String): String =
+        javaClass.getResourceAsStream("/fixtures/$name")
+            ?.bufferedReader(Charsets.UTF_8)?.readText()
+            ?: error("Missing test fixture: fixtures/$name")
 
     private fun stubOverpass(json: String) {
         listOf(overpassA, overpassB).forEach {
@@ -419,6 +435,66 @@ class StreetDirectionResolverTest @Autowired constructor(
         )
 
         assertThat(result).isInstanceOf(DirectionResolution.Unknown::class.java)
+        assertThat((result as DirectionResolution.Unknown).reason)
+            .isEqualTo(UnknownReason.DIVIDED_CARRIAGEWAY)
+    }
+
+    @Test
+    fun `Unknown from an untagged way carries NO_ONEWAY_TAG`() {
+        stubOverpass(overpassResponseJson(oneway = null, name = "Untagged St"))
+        val r = streetDirectionResolver.resolve(BigDecimal("31.6200"), BigDecimal("74.6200"), 5.0)
+        assertThat(r).isEqualTo(DirectionResolution.Unknown("Untagged St", UnknownReason.NO_ONEWAY_TAG))
+    }
+
+    @Test
+    fun `Unknown from a divided carriageway carries DIVIDED_CARRIAGEWAY`() {
+        val fixture = readFixture("overpass-khayaban-e-jinnah-report-649b9a.json")
+        stubOverpass(fixture)
+        val r = streetDirectionResolver.resolve(
+            BigDecimal("31.486191240932015"), BigDecimal("74.38313319364715"), 5.0,
+        )
+        assertThat(r).isInstanceOf(DirectionResolution.Unknown::class.java)
+        assertThat((r as DirectionResolution.Unknown).reason).isEqualTo(UnknownReason.DIVIDED_CARRIAGEWAY)
+    }
+
+    @Test
+    fun `Unknown from a single un-cross-checked source carries NOT_CROSS_CHECKED`() {
+        overpassA.stubFor(post(urlMatching(".*"))
+            .willReturn(okJson(overpassResponseJson(oneway = "yes", name = "Solo St"))))
+        overpassB.stubFor(post(urlMatching(".*")).willReturn(aResponse().withStatus(500)))
+        val r = streetDirectionResolver.resolve(BigDecimal("31.6201"), BigDecimal("74.6201"), 5.0)
+        assertThat((r as DirectionResolution.Unknown).reason).isEqualTo(UnknownReason.NOT_CROSS_CHECKED)
+    }
+
+    @Test
+    fun `Unknown from two equidistant different-named streets carries AMBIGUOUS_NEAREST_STREET`() {
+        stubOverpass(
+            twoWayOverpassResponseJson(
+                wayAId = 311, wayAName = "Street A", wayAOneway = "yes", wayALatOffsetDegrees = 0.000100, wayAWestToEast = true,
+                wayBId = 312, wayBName = "Street B", wayBOneway = null, wayBLatOffsetDegrees = 0.000200, wayBWestToEast = true,
+                baseLat = 61.100000, baseLon = 61.100000,
+            ),
+        )
+
+        val result = streetDirectionResolver.resolve(BigDecimal("61.100000"), BigDecimal("61.100000"), accuracyMeters = 15.0)
+
+        assertThat(result).isInstanceOf(DirectionResolution.Unknown::class.java)
+        assertThat((result as DirectionResolution.Unknown).reason).isEqualTo(UnknownReason.AMBIGUOUS_NEAREST_STREET)
+    }
+
+    @Test
+    fun `union across a full mirror and a trimmed mirror still downgrades a divided carriageway`() {
+        overpassA.stubFor(post(urlMatching(".*"))
+            .willReturn(okJson(readFixture("overpass-khayaban-e-jinnah-report-649b9a.json"))))
+        overpassB.stubFor(post(urlMatching(".*"))
+            .willReturn(okJson(readFixture("overpass-khayaban-e-jinnah-one-carriageway.json"))))
+
+        val result = streetDirectionResolver.resolve(
+            BigDecimal("31.486191240932015"), BigDecimal("74.38313319364715"), accuracyMeters = 5.0,
+        )
+
+        assertThat(result).isInstanceOf(DirectionResolution.Unknown::class.java)
+        assertThat((result as DirectionResolution.Unknown).reason).isEqualTo(UnknownReason.DIVIDED_CARRIAGEWAY)
     }
 
     @Test

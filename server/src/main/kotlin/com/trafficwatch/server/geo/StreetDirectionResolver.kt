@@ -89,7 +89,7 @@ class StreetDirectionResolver(
             !(bestNameTag != null && nameTag != null && bestNameTag == nameTag)
         }
         if (nearestDifferentStreet != null && (nearestDifferentStreet.distanceMeters - best.distanceMeters) < accuracyMeters) {
-            return DirectionResolution.Unknown(streetName)
+            return DirectionResolution.Unknown(streetName, UnknownReason.AMBIGUOUS_NEAREST_STREET)
         }
 
         val resolution = when (best.way.tags?.get("oneway")) {
@@ -105,11 +105,11 @@ class StreetDirectionResolver(
             // Tag absent or an unrecognized value: OSM coverage here is too sparse to
             // safely assume "no tag" means "legally two-way" - see DirectionResolution's
             // doc comment.
-            else -> DirectionResolution.Unknown(streetName)
+            else -> DirectionResolution.Unknown(streetName, UnknownReason.NO_ONEWAY_TAG)
         }
 
         if (resolution is DirectionResolution.OneWay && hasAntiParallelOneWayNeighbor(best, candidates)) {
-            return DirectionResolution.Unknown(streetName)
+            return DirectionResolution.Unknown(streetName, UnknownReason.DIVIDED_CARRIAGEWAY)
         }
 
         if (resolution is DirectionResolution.OneWay && overpass.sourceCount < 2) {
@@ -117,7 +117,7 @@ class StreetDirectionResolver(
                 "Overpass OneWay from a single un-cross-checked source at {},{} - downgrading to Unknown",
                 lat, lon,
             )
-            return DirectionResolution.Unknown(streetName)
+            return DirectionResolution.Unknown(streetName, UnknownReason.NOT_CROSS_CHECKED)
         }
         return resolution
     }

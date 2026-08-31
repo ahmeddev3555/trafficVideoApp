@@ -32,4 +32,7 @@ data class OsmProperties(
     // many times total before giving up - a 4xx is never retried, see withOsmRetry.
     var lookupRetryAttempts: Int = 3,
     var lookupRetryDelayMs: Long = 500,
+    // A cache row older than this is treated as a miss and re-resolved, so any future
+    // poisoned row self-heals rather than being served indefinitely.
+    var cacheTtlDays: Long = 30,
 )

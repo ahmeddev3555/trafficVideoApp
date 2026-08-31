@@ -15,10 +15,19 @@ import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.boot.test.context.TestConfiguration
+import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Import
+import org.springframework.context.annotation.Primary
 import org.springframework.test.context.ActiveProfiles
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
 import java.math.BigDecimal
+import java.time.Clock
+import java.time.Duration
+import java.time.Instant
+import java.time.ZoneId
+import java.time.ZoneOffset
 
 /**
  * WireMock stubs both the Overpass and Nominatim base URLs (Overpass is exercised by every
@@ -29,10 +38,25 @@ import java.math.BigDecimal
  */
 @SpringBootTest
 @ActiveProfiles("test")
+@Import(StreetDirectionResolverTest.FixedClockConfig::class)
 class StreetDirectionResolverTest @Autowired constructor(
     private val streetDirectionResolver: StreetDirectionResolver,
     private val cacheRepository: OsmLookupCacheRepository,
+    private val clock: Clock,
 ) {
+
+    @TestConfiguration
+    class FixedClockConfig {
+        @Bean @Primary
+        fun testClock(): Clock = MutableClock(Instant.parse("2026-08-31T00:00:00Z"))
+    }
+
+    class MutableClock(private var instant: Instant) : Clock() {
+        fun advanceDays(days: Long) { instant = instant.plus(Duration.ofDays(days)) }
+        override fun instant() = instant
+        override fun getZone(): ZoneId = ZoneOffset.UTC
+        override fun withZone(zone: ZoneId?) = this
+    }
 
     companion object {
         // Nominatim mirror (only hit as a fallback when a way has no `name` tag).
@@ -395,6 +419,52 @@ class StreetDirectionResolverTest @Autowired constructor(
         )
 
         assertThat(result).isInstanceOf(DirectionResolution.Unknown::class.java)
+    }
+
+    @Test
+    fun `downgrades OneWay to Unknown when only one Overpass source answered`() {
+        // Only mirror A responds; B is down. A clean single-carriageway oneway way with no
+        // anti-parallel neighbour would be OneWay from a cross-checked fetch - but one source
+        // is not enough to assert a direction.
+        overpassA.stubFor(post(urlMatching(".*"))
+            .willReturn(okJson(overpassResponseJson(oneway = "yes", name = "Single Source St"))))
+        overpassB.stubFor(post(urlMatching(".*")).willReturn(aResponse().withStatus(500)))
+
+        val result = streetDirectionResolver.resolve(
+            BigDecimal("31.6001"), BigDecimal("74.6001"), accuracyMeters = 5.0,
+        )
+        assertThat(result).isInstanceOf(DirectionResolution.Unknown::class.java)
+    }
+
+    @Test
+    fun `keeps OneWay when two Overpass sources agree`() {
+        stubOverpass(overpassResponseJson(oneway = "yes", name = "Cross Checked Ave"))
+        val result = streetDirectionResolver.resolve(
+            BigDecimal("31.6002"), BigDecimal("74.6002"), accuracyMeters = 5.0,
+        )
+        assertThat(result).isInstanceOf(DirectionResolution.OneWay::class.java)
+    }
+
+    @Test
+    fun `re-resolves after the cache TTL expires`() {
+        stubOverpass(overpassResponseJson(oneway = "yes", name = "Ttl Street"))
+        val lat = BigDecimal("31.6100"); val lon = BigDecimal("74.6100")
+        streetDirectionResolver.resolve(lat, lon, 5.0)
+        assertThat(overpassResolveRounds()).isEqualTo(1)
+
+        (clock as MutableClock).advanceDays(31)
+        streetDirectionResolver.resolve(lat, lon, 5.0)
+        assertThat(overpassResolveRounds()).isEqualTo(2) // cache treated as a miss
+    }
+
+    @Test
+    fun `still hits the cache within the TTL`() {
+        stubOverpass(overpassResponseJson(oneway = "yes", name = "Fresh Cache Street"))
+        val lat = BigDecimal("31.6101"); val lon = BigDecimal("74.6101")
+        streetDirectionResolver.resolve(lat, lon, 5.0)
+        (clock as MutableClock).advanceDays(5)
+        streetDirectionResolver.resolve(lat, lon, 5.0)
+        assertThat(overpassResolveRounds()).isEqualTo(1)
     }
 
     private fun overpassResponseJson(oneway: String?, name: String): String {

@@ -1,9 +1,11 @@
 package com.trafficwatch.server.geo
 
 import com.trafficwatch.server.geo.dto.OverpassElement
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.time.Clock
 import java.time.OffsetDateTime
 
 private const val DIVIDED_CARRIAGEWAY_ANTI_PARALLEL_TOLERANCE_DEGREES = 45.0
@@ -31,7 +33,10 @@ class StreetDirectionResolver(
     private val overpassClient: OverpassClient,
     private val cacheRepository: OsmLookupCacheRepository,
     private val osmProperties: OsmProperties,
+    private val clock: Clock,
 ) {
+
+    private val logger = LoggerFactory.getLogger(StreetDirectionResolver::class.java)
 
     fun resolve(latitude: BigDecimal, longitude: BigDecimal, accuracyMeters: Double): DirectionResolution {
         val clampedAccuracy = accuracyMeters.coerceIn(1.0, osmProperties.maxSearchRadiusMeters.toDouble())
@@ -45,7 +50,11 @@ class StreetDirectionResolver(
         )
 
         val cached = cacheRepository.findByLatBucketAndLonBucket(latBucket, lonBucket)
-        if (cached != null && cached.searchRadiusMeters.toDouble() >= searchRadius && cached.accuracyMeters.toDouble() >= clampedAccuracy) {
+        val cacheFresh = cached != null &&
+            cached.updatedAt.isAfter(OffsetDateTime.now(clock).minusDays(osmProperties.cacheTtlDays))
+        if (cacheFresh && cached!!.searchRadiusMeters.toDouble() >= searchRadius &&
+            cached.accuracyMeters.toDouble() >= clampedAccuracy
+        ) {
             return cached.toDirectionResolution()
         }
 
@@ -100,6 +109,14 @@ class StreetDirectionResolver(
         }
 
         if (resolution is DirectionResolution.OneWay && hasAntiParallelOneWayNeighbor(best, candidates)) {
+            return DirectionResolution.Unknown(streetName)
+        }
+
+        if (resolution is DirectionResolution.OneWay && overpass.sourceCount < 2) {
+            logger.warn(
+                "Overpass OneWay from a single un-cross-checked source at {},{} - downgrading to Unknown",
+                lat, lon,
+            )
             return DirectionResolution.Unknown(streetName)
         }
         return resolution
@@ -164,7 +181,7 @@ class StreetDirectionResolver(
         entity.legalBearingDegrees = (resolution as? DirectionResolution.OneWay)
             ?.legalBearingDegrees
             ?.toBigDecimal()
-        entity.updatedAt = OffsetDateTime.now()
+        entity.updatedAt = OffsetDateTime.now(clock)
         cacheRepository.save(entity)
     }
 

@@ -43,6 +43,7 @@ app:
     radius-accuracy-multiplier: 2.0
     lookup-retry-attempts: 3
     lookup-retry-delay-ms: 500
+    cache-ttl-days: 30
   video-analysis:
     base-url: "http://localhost:8000"
     connect-timeout-ms: 5000

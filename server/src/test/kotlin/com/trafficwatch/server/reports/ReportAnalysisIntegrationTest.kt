@@ -82,7 +82,12 @@ class ReportAnalysisIntegrationTest @Autowired constructor(
         fun overrideProperties(registry: DynamicPropertyRegistry) {
             registry.add("app.storage.video-directory") { tempVideoDir.toString() }
             registry.add("app.osm.nominatim-base-url") { "http://localhost:${wireMockServer.port()}" }
-            registry.add("app.osm.overpass-base-urls") { "http://localhost:${wireMockServer.port()}/" }
+            // Two entries pointing at the same WireMock server so OverpassClient sees
+            // sourceCount == 2 - a single un-cross-checked source is downgraded to Unknown
+            // (StreetDirectionResolver), which these OneWay-outcome tests must not trip.
+            registry.add("app.osm.overpass-base-urls") {
+                "http://localhost:${wireMockServer.port()}/,http://localhost:${wireMockServer.port()}/"
+            }
             registry.add("app.video-analysis.base-url") { "http://localhost:${wireMockServer.port()}" }
         }
     }

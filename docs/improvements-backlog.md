@@ -386,16 +386,63 @@ considered rather than forgotten.
   divided-carriageway Overpass fix in the 2026-08-31 plan makes خیبان جناح
   resolve reliably to `Unknown(DIVIDED_CARRIAGEWAY)` instead of a coin-flip
   between a wrong `OneWay(11.23&deg;)` and `Unknown`, that narrowed gate
-  would have blocked all three reports. Second, this plan closes the gap:
-  the approach path now also fires on `Unknown(DIVIDED_CARRIAGEWAY)` when the
-  clip's own qualified traffic forms one coherent flow consensus (strongest
-  corridor consensus &ge; `app.analysis.approach-corroboration-min-members`,
-  default 2). Net effect once deployed: `759cd` / `24908` / `a5275` resolve
-  deterministically to `Unknown(DIVIDED_CARRIAGEWAY)` and CONFIRM via the
-  approach path on current production, no longer dependent on which Overpass
-  replica answered. `50bcc6` and `71f78` are unaffected - still open,
-  deferred to the clip-flow-relative bearing "B" design.
-  *(added 2026-08-30 while building per-report vehicle readouts; approach-detection note added 2026-08-30; approach-gate scope + divided-carriageway follow-up 2026-08-31)*
+  would have blocked all three reports. Second, this plan re-opened the
+  approach path on `Unknown(DIVIDED_CARRIAGEWAY)` behind a flow-corroboration
+  gate. That gate has since been reworked twice; see the next two updates
+  for the shipped shape.
+
+  **Update 2026-08-31 (b)** (commit `f981177`): the first
+  `Unknown(DIVIDED_CARRIAGEWAY)` gate additionally required the flagged
+  grower to sit in the SAME frame-space corridor as the corroborating
+  receding-traffic consensus (corridor co-membership). A production
+  diagnostic (reports `759cd` + `a5275`) proved that assumption wrong for
+  this road: the wrong-way rider opposes traffic FROM THE MEDIAN, so
+  `corridors.py` tracks it in its own isolated single-member corridor,
+  separate from the multi-member receding-lane corridor. Every other
+  approach gate passed; only co-membership blocked these true positives.
+
+  **Update 2026-09-02** (commit `1efbe32`, spec
+  `docs/superpowers/sdd/approach-gate-A/`): corridor co-membership is
+  DROPPED. On `Unknown(DIVIDED_CARRIAGEWAY)` the approach path now CONFIRMS
+  only when, on top of the stationary-camera / `shrinking &ge; 3` /
+  `&ge; 1` strong grower / `shrinking &ge; 3 &times; growers` / detection
+  `&ge; confirmationThreshold` gates it shares with `OneWay`:
+  - the strongest consensus among the NON-growing flow vehicles is non-null
+    and has `memberCount &ge; app.analysis.approach-corroboration-min-members`
+    (default raised 2 &rarr; **5**),
+  - that consensus has mean resultant length
+    `R &ge; app.analysis.approach-corroboration-min-resultant-length`
+    (**new, default 0.9**),
+  - there is exactly ONE strong grower in the clip.
+
+  Rationale: on a divided one-way road there is no legal opposing traffic
+  within a carriageway, so a lone sustained-growing vehicle against a large
+  (5+) and tight (R &ge; 0.9) coherent receding stream is the wrong-way
+  rider - regardless of which frame-space corridor the tracker put it in.
+  The `OneWay` branch is UNCHANGED (the OSM tag already asserts the legal
+  direction; it never consults the consensus).
+
+  **Accepted residual false positive:** a stationary camera aimed UPSTREAM
+  at a light-traffic divided road, with exactly one vehicle LEGALLY
+  approaching on the near carriageway while &ge; 5 vehicles recede in tight
+  formation on the far one, will CONFIRM the legal approacher as wrong-way.
+  This is rare (needs near-empty near carriageway + full far platoon in the
+  same short clip) and is deliberately traded for the median-rider true
+  positives. Spot-check hook: every such confirm carries
+  `resolution_state = "UNKNOWN_DIVIDED_CARRIAGEWAY"` and a populated
+  `corroboration_resultant_length` in `direction_evidence` (both null on the
+  `OneWay` branch) - filter production `CONFIRMED` reports on that. If it
+  recurs, the fix is corridor spatial-proximity scoring (grower's corridor
+  centroid near the consensus corridor's), or a return to a structural
+  co-membership check - see the
+  [divided-carriageway-approach-watch] memory.
+
+  Verification status: `759cd` (consensus n=8, R=0.94, grower 1.52 / 72 fr /
+  det 0.89) and `a5275` (n=5, R=0.99, grower 0.93 / 34 fr / 0.78) both
+  CONFIRM under the shipped gate. `24908` could NOT be re-verified - its
+  ~10 s clip exceeds the video-analysis service's 180 s processing budget
+  on the VPS (a separate perf issue, not a gate regression).
+  *(added 2026-08-30 while building per-report vehicle readouts; approach-detection note added 2026-08-30; approach-gate scope + divided-carriageway follow-up 2026-08-31; co-membership added f981177 then dropped for a stream-strength gate 2026-09-02)*
 
 - **[PRIORITY RAISED 2026-08-30 - recurred] A long, cleanly-detected
   wrong-way vehicle can be denied confirmation purely by low

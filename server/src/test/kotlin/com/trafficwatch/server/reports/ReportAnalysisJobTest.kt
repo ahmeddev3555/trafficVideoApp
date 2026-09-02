@@ -906,9 +906,11 @@ class ReportAnalysisJobTest {
         assertThat(report.directionEvidence).contains("stationary_approach")
         val evidence = objectMapper.readTree(report.directionEvidence)
         assertThat(evidence.get("resolution_state").asText()).isEqualTo("ONE_WAY")
-        // Corroboration is not a gate on the OneWay branch - the member count must be
-        // recorded as null even though a consensus exists among the receding traffic.
+        // Corroboration is not a gate on the OneWay branch - the member count AND the
+        // resultant length must both be recorded as null even though a consensus exists
+        // among the receding traffic.
         assertThat(evidence.get("corroboration_consensus_members").isNull).isTrue()
+        assertThat(evidence.get("corroboration_resultant_length").isNull).isTrue()
     }
 
     @Test
@@ -1128,6 +1130,7 @@ class ReportAnalysisJobTest {
         assertThat(report.directionEvidence).contains("UNKNOWN_DIVIDED_CARRIAGEWAY")
         val evidence = objectMapper.readTree(report.directionEvidence)
         assertThat(evidence.get("corroboration_consensus_members").asInt()).isGreaterThanOrEqualTo(5)
+        assertThat(evidence.get("corroboration_resultant_length").asDouble()).isGreaterThanOrEqualTo(0.9)
     }
 
     @Test
@@ -1197,21 +1200,39 @@ class ReportAnalysisJobTest {
 
     @Test
     fun `stationary approach on a DIVIDED_CARRIAGEWAY street is REJECTED when the receding stream is not tightly coherent`() {
+        // The R gate is isolated with a custom approachCorroborationMinResultantLength (0.95).
+        // The 5 non-growing corridor-1 vehicles are spread +/-40 deg around 190 -> R ~ 0.88:
+        // comfortably above consensusMinResultantLength (still the default 0.6, since
+        // clipFlowAnalyzer keeps the class-level props) so the consensus is definitely
+        // non-null with memberCount 5 >= 5 - the member-count gate and the
+        // `corroboration ?: return null` guard both pass. R ~ 0.88 < 0.95 is then the only
+        // thing that can trip the gate -> REJECTED, provably via the resultant-length check.
+        val rGateProps = AnalysisProperties(
+            wrongWayToleranceDegrees = 60.0,
+            approachCorroborationMinResultantLength = 0.95,
+        )
+        val rGateJob = ReportAnalysisJob(
+            reportRepository,
+            rGateProps,
+            streetDirectionResolver,
+            videoAnalysisClient,
+            videoStorageService,
+            wrongWayFrameStorageService,
+            clipFlowAnalyzer,
+            directionEvidenceResolver,
+            flowObservationService,
+            objectMapper,
+        )
         val report = sampleReport(locationSamples = stationaryLocationSamplesJson())
         every { streetDirectionResolver.resolve(any(), any(), any()) } returns
             DirectionResolution.Unknown("Khayaban-e-Jinnah", UnknownReason.DIVIDED_CARRIAGEWAY)
-        // 6 non-growing vehicles in corridor 1, but with bearings spread 130..255 around a
-        // ~192.5 mean -> R ~ 0.74: still >= consensusMinResultantLength (0.6) so the
-        // consensus is non-null with memberCount 6, but below
-        // approachCorroborationMinResultantLength (0.9) -> the new R gate trips -> REJECTED.
         every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
             listOf(
-                vehicle(trackId = 1, corridorId = 1L, bearingDegrees = 130.0, scaleTrend = "shrinking", trackFrameCount = 40),
-                vehicle(trackId = 2, corridorId = 1L, bearingDegrees = 155.0, scaleTrend = "shrinking", trackFrameCount = 40),
-                vehicle(trackId = 3, corridorId = 1L, bearingDegrees = 180.0, scaleTrend = "shrinking", trackFrameCount = 40),
-                vehicle(trackId = 4, corridorId = 1L, bearingDegrees = 205.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 1, corridorId = 1L, bearingDegrees = 150.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 2, corridorId = 1L, bearingDegrees = 170.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 3, corridorId = 1L, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 4, corridorId = 1L, bearingDegrees = 210.0, scaleTrend = "shrinking", trackFrameCount = 40),
                 vehicle(trackId = 7, corridorId = 1L, bearingDegrees = 230.0, scaleTrend = "shrinking", trackFrameCount = 40),
-                vehicle(trackId = 8, corridorId = 1L, bearingDegrees = 255.0, scaleTrend = "shrinking", trackFrameCount = 40),
                 vehicle(
                     trackId = 5, corridorId = 2L, bearingDegrees = 185.0, detectionConfidence = 0.9,
                     scaleTrend = "growing", scaleGrowthFraction = 1.4, trackFrameCount = 60,
@@ -1220,7 +1241,7 @@ class ReportAnalysisJobTest {
         )
         every { reportRepository.save(any()) } answers { firstArg() }
 
-        job.applyOutcome(report)
+        rGateJob.applyOutcome(report)
 
         assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
         assertThat(report.directionEvidence).doesNotContain("stationary_approach")
@@ -1249,7 +1270,9 @@ class ReportAnalysisJobTest {
         job.applyOutcome(report)
 
         assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
-        // The approach path (which would set these) never ran.
+        // tryStationaryApproachDetection now runs for this case (approachEligible is no
+        // longer gated on member count) but returns null at the member-count gate before
+        // confirming, so none of these are ever set.
         assertThat(report.licensePlate).isNull()
         assertThat(report.wrongWayConfidence).isNull()
         assertThat(report.directionEvidence).doesNotContain("stationary_approach")

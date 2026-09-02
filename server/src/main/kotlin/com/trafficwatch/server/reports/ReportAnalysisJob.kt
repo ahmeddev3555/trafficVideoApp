@@ -267,6 +267,9 @@ class ReportAnalysisJob(
                 it.detectionConfidence >= analysisProperties.approachMinDetection
         }
         if (strongGrowers.isEmpty()) return null
+        // On the Unknown branch this collapses to `shrinking < 3` (already checked above),
+        // since `strongGrowers.size == 1` is enforced further down; the check still does
+        // real work for OneWay, where multiple strong growers are allowed.
         if (shrinking < 3 * strongGrowers.size) return null
 
         val best = strongGrowers.maxByOrNull { it.detectionConfidence } ?: return null

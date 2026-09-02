@@ -437,12 +437,20 @@ considered rather than forgotten.
   co-membership check - see the
   [divided-carriageway-approach-watch] memory.
 
-  Verification status: `759cd` (consensus n=8, R=0.94, grower 1.52 / 72 fr /
-  det 0.89) and `a5275` (n=5, R=0.99, grower 0.93 / 34 fr / 0.78) both
-  CONFIRM under the shipped gate. `24908` could NOT be re-verified - its
-  ~10 s clip exceeds the video-analysis service's 180 s processing budget
-  on the VPS (a separate perf issue, not a gate regression).
-  *(added 2026-08-30 while building per-report vehicle readouts; approach-detection note added 2026-08-30; approach-gate scope + divided-carriageway follow-up 2026-08-31; co-membership added f981177 then dropped for a stream-strength gate 2026-09-02)*
+  Verification status (2026-09-02 production replay against the shipped
+  gate): `759cd` (consensus n=8, R=0.94, grower 1.52 / 72 fr / det 0.89) and
+  `a5275` (n=5, R=0.99, grower 0.93 / 34 fr / 0.78) both **CONFIRM**
+  (`wrong_way_confidence` 0.89 / 0.78). `24908` still **REJECTED**: its
+  ~10 s clip usually exceeds the video-analysis service's 180 s budget on
+  the VPS (a separate perf issue), and on the one run that completed it
+  reached the bearing path (candidate scored `final_score` 0.135, below the
+  0.5 bar) and then the approach path, which declined - most likely its
+  receding traffic does not clear the n &ge; 5 / R &ge; 0.9 corroboration
+  bar (24908's flow is looser than 759cd/a5275). Getting it to confirm
+  would need another diagnostic-logging deploy to pin the exact gate, or the
+  "B" clip-flow-relative bearing design; not pursued 2026-09-02. `50bcc6`
+  and `71f78` remain out of scope (still the "B" design).
+  *(added 2026-08-30 while building per-report vehicle readouts; approach-detection note added 2026-08-30; approach-gate scope + divided-carriageway follow-up 2026-08-31; co-membership added f981177 then dropped for a stream-strength gate 2026-09-02; production verification 2026-09-02: 759cd + a5275 confirm, 24908 still rejected)*
 
 - **[PRIORITY RAISED 2026-08-30 - recurred] A long, cleanly-detected
   wrong-way vehicle can be denied confirmation purely by low

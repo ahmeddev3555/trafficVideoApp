@@ -61,4 +61,5 @@ app:
     approach-growth-min: 0.8
     approach-min-frames: 30
     approach-min-detection: 0.5
-    approach-corroboration-min-members: 2
+    approach-corroboration-min-members: 5
+    approach-corroboration-min-resultant-length: 0.9

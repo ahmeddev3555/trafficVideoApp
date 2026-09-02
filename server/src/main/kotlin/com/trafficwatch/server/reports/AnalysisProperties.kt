@@ -40,8 +40,15 @@ data class AnalysisProperties(
     var approachMinFrames: Int = 30,
     var approachMinDetection: Double = 0.5,
     // Stationary-approach on a DIVIDED_CARRIAGEWAY Unknown street additionally requires the
-    // clip's qualified traffic to form one coherent stream: the strongest corridor consensus
-    // must have at least this many members. NOT a bearing-opposition check on the grower -
-    // the grower's frame bearing is perspective-understated by construction.
-    var approachCorroborationMinMembers: Int = 2,
+    // non-growing receding traffic to form one LARGE, TIGHTLY-COHERENT stream and the grower
+    // to be a LONE anomaly: the strongest corridor consensus must have at least
+    // [approachCorroborationMinMembers] members AND a mean resultant length R of at least
+    // [approachCorroborationMinResultantLength], and there must be exactly one strong grower.
+    // Corridor co-membership between the grower and that consensus is deliberately NOT
+    // required (the median rider is tracked in its own frame-space corridor - 2026-08-31
+    // production diagnostic). NOT a bearing-opposition check on the grower - the grower's
+    // frame bearing is perspective-understated by construction.
+    var approachCorroborationMinMembers: Int = 5,
+    // Minimum mean resultant length R for that receding consensus (see above).
+    var approachCorroborationMinResultantLength: Double = 0.9,
 )

@@ -1098,16 +1098,21 @@ class ReportAnalysisJobTest {
         val report = sampleReport(locationSamples = stationaryLocationSamplesJson())
         every { streetDirectionResolver.resolve(any(), any(), any()) } returns
             DirectionResolution.Unknown("Khayaban-e-Jinnah", UnknownReason.DIVIDED_CARRIAGEWAY)
-        // The grower shares corridor 1 with the three receding vehicles it opposes - the
-        // co-membership the DIVIDED_CARRIAGEWAY branch now requires. The corroborating
-        // consensus is computed with the grower excluded, so corridor 1 still has 3 members.
+        // The DIVIDED_CARRIAGEWAY branch no longer requires the grower to share a corridor
+        // with the receding flow: here the grower sits ALONE in corridor 2 while the
+        // 5-vehicle non-growing stream (>=3 "shrinking", the rest "flat") forms a single
+        // tight consensus in corridor 1 - all at 190.0 so R ~ 1.0. memberCount 5 >= 5,
+        // R >= 0.9, and exactly one strong grower -> the new gate passes and the clip
+        // CONFIRMS purely on the strength of the opposing stream.
         every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
             listOf(
                 vehicle(trackId = 1, corridorId = 1L, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
                 vehicle(trackId = 2, corridorId = 1L, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
                 vehicle(trackId = 3, corridorId = 1L, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 4, corridorId = 1L, bearingDegrees = 190.0, scaleTrend = "flat", trackFrameCount = 40),
+                vehicle(trackId = 6, corridorId = 1L, bearingDegrees = 190.0, scaleTrend = "flat", trackFrameCount = 40),
                 vehicle(
-                    trackId = 5, corridorId = 1L, bearingDegrees = 185.0, detectionConfidence = 0.9,
+                    trackId = 5, corridorId = 2L, bearingDegrees = 185.0, detectionConfidence = 0.9,
                     plateText = "LEA-9999", plateConfidence = 0.7,
                     scaleTrend = "growing", scaleGrowthFraction = 1.4, trackFrameCount = 60,
                 ),
@@ -1121,27 +1126,25 @@ class ReportAnalysisJobTest {
         assertThat(report.status).isEqualTo(ReportStatus.CONFIRMED)
         assertThat(report.directionEvidence).contains("stationary_approach")
         assertThat(report.directionEvidence).contains("UNKNOWN_DIVIDED_CARRIAGEWAY")
+        val evidence = objectMapper.readTree(report.directionEvidence)
+        assertThat(evidence.get("corroboration_consensus_members").asInt()).isGreaterThanOrEqualTo(5)
     }
 
     @Test
-    fun `stationary approach on a DIVIDED_CARRIAGEWAY street is REJECTED when the grower is in a different corridor from the flow`() {
-        // The upstream-camera / far-carriageway false positive the corridor co-membership
-        // check exists to close: a stationary camera aimed upstream on a divided road sees a
-        // coherent stream of LEGALLY receding vehicles on the far carriageway (corridor 1)
-        // plus one LEGALLY approaching vehicle on the near carriageway (corridor 2). Every
-        // raw approach threshold is met - 3 shrinkers, 1 strong grower, detection 0.9 - and
-        // the far corridor yields a clean 3-member consensus, so without co-membership the
-        // legal approacher would be CONFIRMED as a wrong-way rider.
+    fun `stationary approach on a DIVIDED_CARRIAGEWAY street is REJECTED when the receding consensus is too small`() {
         val report = sampleReport(locationSamples = stationaryLocationSamplesJson())
         every { streetDirectionResolver.resolve(any(), any(), any()) } returns
             DirectionResolution.Unknown("Khayaban-e-Jinnah", UnknownReason.DIVIDED_CARRIAGEWAY)
+        // Only 4 non-growing vehicles in the corroborating corridor -> consensus memberCount
+        // 4 < approachCorroborationMinMembers (5) -> the new gate returns null -> REJECTED.
         every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
             listOf(
                 vehicle(trackId = 1, corridorId = 1L, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
                 vehicle(trackId = 2, corridorId = 1L, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
                 vehicle(trackId = 3, corridorId = 1L, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 4, corridorId = 1L, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
                 vehicle(
-                    trackId = 5, corridorId = 2L, bearingDegrees = 10.0, detectionConfidence = 0.9,
+                    trackId = 5, corridorId = 2L, bearingDegrees = 185.0, detectionConfidence = 0.9,
                     plateText = "LEA-9999", plateConfidence = 0.7,
                     scaleTrend = "growing", scaleGrowthFraction = 1.4, trackFrameCount = 60,
                 ),
@@ -1158,15 +1161,80 @@ class ReportAnalysisJobTest {
     }
 
     @Test
+    fun `stationary approach on a DIVIDED_CARRIAGEWAY street is REJECTED when there are two strong growers`() {
+        val report = sampleReport(locationSamples = stationaryLocationSamplesJson())
+        every { streetDirectionResolver.resolve(any(), any(), any()) } returns
+            DirectionResolution.Unknown("Khayaban-e-Jinnah", UnknownReason.DIVIDED_CARRIAGEWAY)
+        // 6 non-growing "shrinking" vehicles keep the pre-existing shrinking >= 3 * growers
+        // ratio satisfied (6 >= 3 * 2) AND give a memberCount-6 R~1.0 consensus that clears
+        // approachCorroborationMinMembers / MinResultantLength. So the ONLY gate left to
+        // trip is the new strongGrowers.size != 1 check (2 != 1) -> REJECTED.
+        every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
+            listOf(
+                vehicle(trackId = 1, corridorId = 1L, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 2, corridorId = 1L, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 3, corridorId = 1L, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 4, corridorId = 1L, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 7, corridorId = 1L, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 8, corridorId = 1L, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(
+                    trackId = 5, corridorId = 2L, bearingDegrees = 185.0, detectionConfidence = 0.9,
+                    scaleTrend = "growing", scaleGrowthFraction = 1.4, trackFrameCount = 60,
+                ),
+                vehicle(
+                    trackId = 6, corridorId = 3L, bearingDegrees = 185.0, detectionConfidence = 0.9,
+                    scaleTrend = "growing", scaleGrowthFraction = 1.4, trackFrameCount = 60,
+                ),
+            ),
+        )
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
+        assertThat(report.directionEvidence).doesNotContain("stationary_approach")
+    }
+
+    @Test
+    fun `stationary approach on a DIVIDED_CARRIAGEWAY street is REJECTED when the receding stream is not tightly coherent`() {
+        val report = sampleReport(locationSamples = stationaryLocationSamplesJson())
+        every { streetDirectionResolver.resolve(any(), any(), any()) } returns
+            DirectionResolution.Unknown("Khayaban-e-Jinnah", UnknownReason.DIVIDED_CARRIAGEWAY)
+        // 6 non-growing vehicles in corridor 1, but with bearings spread 130..255 around a
+        // ~192.5 mean -> R ~ 0.74: still >= consensusMinResultantLength (0.6) so the
+        // consensus is non-null with memberCount 6, but below
+        // approachCorroborationMinResultantLength (0.9) -> the new R gate trips -> REJECTED.
+        every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
+            listOf(
+                vehicle(trackId = 1, corridorId = 1L, bearingDegrees = 130.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 2, corridorId = 1L, bearingDegrees = 155.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 3, corridorId = 1L, bearingDegrees = 180.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 4, corridorId = 1L, bearingDegrees = 205.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 7, corridorId = 1L, bearingDegrees = 230.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 8, corridorId = 1L, bearingDegrees = 255.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(
+                    trackId = 5, corridorId = 2L, bearingDegrees = 185.0, detectionConfidence = 0.9,
+                    scaleTrend = "growing", scaleGrowthFraction = 1.4, trackFrameCount = 60,
+                ),
+            ),
+        )
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
+        assertThat(report.directionEvidence).doesNotContain("stationary_approach")
+    }
+
+    @Test
     fun `stationary approach on a DIVIDED_CARRIAGEWAY street is REJECTED when the traffic has no coherent consensus`() {
         val report = sampleReport(locationSamples = stationaryLocationSamplesJson())
         every { streetDirectionResolver.resolve(any(), any(), any()) } returns
             DirectionResolution.Unknown("Khayaban-e-Jinnah", UnknownReason.DIVIDED_CARRIAGEWAY)
-        // Each qualified vehicle sits in its OWN corridor (distinct corridorId) and the
-        // bearings are scattered - so no corridor's consensus can ever reach 2 members
-        // under any grouping. strongestFlowConsensus therefore tops out at memberCount 1,
-        // below approachCorroborationMinMembers (2) -> the corroboration gate is ineligible
-        // and the approach path never runs.
+        // Each qualified vehicle sits in its OWN corridor (distinct corridorId), so the
+        // strongest non-growing consensus is a lone 1-member corridor (R = 1.0 trivially).
+        // memberCount 1 < approachCorroborationMinMembers (5) -> the new member-count gate
+        // returns null and the approach path never confirms.
         every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
             listOf(
                 vehicle(trackId = 1, bearingDegrees = 10.0, corridorId = 1L, scaleTrend = "shrinking", trackFrameCount = 40),

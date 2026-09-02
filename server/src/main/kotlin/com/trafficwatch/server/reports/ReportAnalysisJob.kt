@@ -184,28 +184,20 @@ class ReportAnalysisJob(
         ingestObservations(report, flowVehicles, evaluation.best?.flowVehicle)
 
         if (outcome.status == ReportStatus.REJECTED) {
-            // Corroboration is computed over the RECEDING/steady traffic only: a vehicle
-            // whose box is growing is a potential violator, and a violator's own track must
-            // never count towards the corroboration of the flow it opposes.
+            // Corroboration is computed over the RECEDING/steady traffic only: a vehicle whose
+            // box is growing is a potential violator and must never corroborate the flow it opposes.
             val corroborationConsensus =
                 strongestFlowConsensus(flowVehicles.filterNot { it.vehicle.scaleTrend == "growing" })
             val approachEligible = when (resolution) {
                 is DirectionResolution.OneWay -> true
-                is DirectionResolution.Unknown ->
-                    resolution.reason == UnknownReason.DIVIDED_CARRIAGEWAY &&
-                        (corroborationConsensus?.memberCount ?: 0) >= analysisProperties.approachCorroborationMinMembers
+                is DirectionResolution.Unknown -> resolution.reason == UnknownReason.DIVIDED_CARRIAGEWAY
                 else -> false
             }
             if (approachEligible) {
                 tryStationaryApproachDetection(
-                    report, analysis, orientationTimeline, streetName,
-                    resolution,
-                    // Both the corridor co-membership requirement and the recorded member
-                    // count only apply on the DIVIDED_CARRIAGEWAY Unknown branch; on OneWay
-                    // the consensus was never consulted, so neither is passed.
-                    corroboration = (resolution as? DirectionResolution.Unknown)
-                        ?.let { corroborationConsensus },
-                    requireCorridorCoMembership = resolution is DirectionResolution.Unknown,
+                    report, analysis, orientationTimeline, streetName, resolution,
+                    // Consulted only on the DIVIDED_CARRIAGEWAY branch; null on OneWay.
+                    corroboration = (resolution as? DirectionResolution.Unknown)?.let { corroborationConsensus },
                 )?.let { return it }
             }
         }
@@ -233,15 +225,15 @@ class ReportAnalysisJob(
      * already-REJECTED outcome to CONFIRMED; returns null to leave the REJECTED outcome
      * untouched.
      *
-     * On the `Unknown(DIVIDED_CARRIAGEWAY)` branch ([requireCorridorCoMembership]) the
-     * grower must additionally sit in the SAME frame-space corridor as [corroboration], the
-     * strongest consensus among the non-growing traffic. Without that, the scene's shrinking
-     * count and the grower can come from two unrelated corridors - a stationary camera aimed
-     * upstream at a divided road sees one legally-approaching vehicle on the near carriageway
-     * and a stream of legally-receding vehicles on the far one, and the receding corridor's
-     * clean consensus would otherwise corroborate a violation the near-carriageway driver is
-     * not committing. A genuine wrong-way rider is tracked in the same corridor as the
-     * traffic he opposes.
+     * On the `Unknown(DIVIDED_CARRIAGEWAY)` branch OSM gives no legal bearing, so the
+     * detection is only trusted when [corroboration] - the strongest consensus among the
+     * non-growing traffic - is LARGE (>= [AnalysisProperties.approachCorroborationMinMembers])
+     * and TIGHTLY COHERENT (R >= [AnalysisProperties.approachCorroborationMinResultantLength])
+     * and the grower is the LONE strong grower in the clip. Corridor co-membership between
+     * the grower and that consensus is deliberately NOT required: on these roads the rider
+     * opposes traffic from the median and is tracked in its own frame-space corridor
+     * (verified in a 2026-08-31 production diagnostic). On `OneWay` the OSM tag already
+     * asserts the legal direction, so none of this applies and [corroboration] is null.
      */
     private fun tryStationaryApproachDetection(
         report: Report,
@@ -250,7 +242,6 @@ class ReportAnalysisJob(
         streetName: String?,
         resolution: DirectionResolution,
         corroboration: CorridorConsensus?,
-        requireCorridorCoMembership: Boolean,
     ): AnalysisOutcome? {
         if (!orientationTimeline.wasStationaryThroughout()) return null
 
@@ -279,13 +270,23 @@ class ReportAnalysisJob(
         if (shrinking < 3 * strongGrowers.size) return null
 
         val best = strongGrowers.maxByOrNull { it.detectionConfidence } ?: return null
-        // Fails closed on a null corridorId or a null consensus: a grower that cannot be
-        // SHOWN to share a corridor with the corroborating flow never earns a confirmation.
-        if (requireCorridorCoMembership &&
-            (corroboration == null || best.corridorId == null || best.corridorId != corroboration.corridorId)
-        ) {
-            return null
+
+        // On the DIVIDED_CARRIAGEWAY (Unknown) branch OSM gives no legal bearing, so a
+        // divided-road wrong-way approach is only trusted when a LARGE, TIGHTLY-COHERENT
+        // receding stream corroborates it and the grower is a LONE anomaly. Corridor
+        // co-membership is deliberately NOT required: the rider on these roads opposes
+        // traffic from the median and is tracked in its own frame-space corridor (verified
+        // in a 2026-08-31 production diagnostic). The strength of the receding consensus is
+        // the safeguard against a stationary camera aimed upstream at a divided road, which
+        // would see multiple legally-approaching growers rather than one. On OneWay the OSM
+        // tag already asserts the legal direction, so none of this applies.
+        if (resolution is DirectionResolution.Unknown) {
+            val consensus = corroboration ?: return null
+            if (consensus.memberCount < analysisProperties.approachCorroborationMinMembers) return null
+            if (consensus.resultantLength < analysisProperties.approachCorroborationMinResultantLength) return null
+            if (strongGrowers.size != 1) return null
         }
+
         if (best.detectionConfidence < analysisProperties.confirmationThreshold) return null
 
         return AnalysisOutcome(
@@ -299,7 +300,8 @@ class ReportAnalysisJob(
                 best, requireNotNull(report.id) { "Report must have a generated id before analysis" },
             ),
             directionEvidenceJson = approachBreakdownJson(
-                best, shrinking, strongGrowers.size, resolution, corroboration?.memberCount,
+                best, shrinking, strongGrowers.size, resolution,
+                corroboration?.memberCount, corroboration?.resultantLength,
             ),
         )
     }
@@ -310,6 +312,7 @@ class ReportAnalysisJob(
         strongGrowerCount: Int,
         resolution: DirectionResolution,
         corroborationMembers: Int?,
+        corroborationResultantLength: Double?,
     ): String? = try {
         objectMapper.writeValueAsString(
             ApproachEvidenceBreakdown(
@@ -321,6 +324,7 @@ class ReportAnalysisJob(
                 recedingCount = recedingCount,
                 strongGrowerCount = strongGrowerCount,
                 corroborationConsensusMembers = corroborationMembers,
+                corroborationResultantLength = corroborationResultantLength,
                 growthFraction = best.scaleGrowthFraction,
                 trackFrames = best.trackFrameCount ?: 0,
                 detectionConfidence = best.detectionConfidence,
@@ -580,6 +584,7 @@ internal data class ApproachEvidenceBreakdown(
     val recedingCount: Int,
     val strongGrowerCount: Int,
     val corroborationConsensusMembers: Int?,
+    val corroborationResultantLength: Double? = null,
     val growthFraction: Double,
     val trackFrames: Int,
     val detectionConfidence: Double,

@@ -43,6 +43,7 @@ interface ApiService {
         @Part("device_id") deviceId: RequestBody,
         @Part("compass_heading_degrees") compassHeadingDegrees: RequestBody?,
         @Part("zoom_ratio") zoomRatio: RequestBody?,
+        @Part("recorded_at_is_utc") recordedAtIsUtc: RequestBody?,
         @Part("location_samples") locationSamples: RequestBody?,
         @Part("rotation_samples") rotationSamples: RequestBody?
     ): SubmitReportResponse

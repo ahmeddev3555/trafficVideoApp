@@ -27,8 +27,9 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
+import java.time.Instant
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -94,7 +95,7 @@ class UploadWorker @AssistedInject constructor(
                 }
             )
 
-            val isoDate = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).format(Date(recordedAt))
+            val isoDate = formatRecordedAt(recordedAt)
 
             val response = apiService.submitReport(
                 video = videoPart,
@@ -109,6 +110,9 @@ class UploadWorker @AssistedInject constructor(
                 deviceId = tokenStore.getOrCreateDeviceId().toRequestBody(),
                 compassHeadingDegrees = compassHeadingDegrees?.toString()?.toRequestBody(),
                 zoomRatio = zoomRatio?.toString()?.toRequestBody(),
+                // Always "true" from this client version; the server keys on the part's
+                // presence to parse recorded_at as a real UTC instant (legacy = absent).
+                recordedAtIsUtc = "true".toRequestBody(),
                 locationSamples = locationSamplesJson?.toRequestBody(),
                 rotationSamples = rotationSamplesJson?.toRequestBody()
             )
@@ -155,6 +159,18 @@ class UploadWorker @AssistedInject constructor(
         const val KEY_TOTAL_BYTES = "total_bytes"
         const val KEY_BYTES_PER_SECOND = "bytes_per_second"
         const val KEY_SERVER_ID = "server_id"
+
+        private val RECORDED_AT_FORMATTER: DateTimeFormatter =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
+                .withZone(ZoneOffset.UTC)
+
+        /**
+         * ISO-8601 seconds-precision UTC timestamp with a literal `Z`, formatted from the
+         * true UTC instant at [epochMillis] (independent of the device's default time zone).
+         * Public for test.
+         */
+        fun formatRecordedAt(epochMillis: Long): String =
+            RECORDED_AT_FORMATTER.format(Instant.ofEpochMilli(epochMillis))
 
         fun buildInputData(
             reportId: String,

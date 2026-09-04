@@ -71,6 +71,7 @@ class MockApiService @Inject constructor() : ApiService {
         deviceId: RequestBody,
         compassHeadingDegrees: RequestBody?,
         zoomRatio: RequestBody?,
+        recordedAtIsUtc: RequestBody?,
         locationSamples: RequestBody?,
         rotationSamples: RequestBody?
     ): SubmitReportResponse {

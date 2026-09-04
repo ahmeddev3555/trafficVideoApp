@@ -25,4 +25,18 @@ class UploadWorkerTest {
         assertNull(data.getString(UploadWorker.KEY_LOCATION_SAMPLES_JSON))
         assertNull(data.getString(UploadWorker.KEY_ROTATION_SAMPLES_JSON))
     }
+
+    @Test fun `formatRecordedAt is UTC regardless of device zone`() {
+        val millis = 1_756_479_157_000L // 2025-08-29T14:52:37Z (verified via date -u -d @1756479157)
+        val expected = "2025-08-29T14:52:37Z"
+        val default = java.util.TimeZone.getDefault()
+        try {
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Asia/Karachi"))
+            assertEquals(expected, UploadWorker.formatRecordedAt(millis))
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("America/Los_Angeles"))
+            assertEquals(expected, UploadWorker.formatRecordedAt(millis))
+        } finally {
+            java.util.TimeZone.setDefault(default)
+        }
+    }
 }

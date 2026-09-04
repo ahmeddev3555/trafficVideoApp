@@ -489,7 +489,34 @@ considered rather than forgotten.
   peers only); or a new per-track bearing-stability signal from
   `video-analysis` (correct but a cross-service wire change). Not started —
   needs a fresh go-ahead and its own spec.
-  *(added 2026-08-30, priority raised same day after the second occurrence)*
+
+  **Update 2026-09-04** (spec/plan
+  `2026-09-04-corridor-cohesion-candidate-scoring`, Tasks 1-2): "option B"
+  shipped. `corridor_cohesion` is removed from the per-candidate
+  `candidateQuality` on `ClipFlowAnalyzer.FlowVehicle`, which is now
+  `candidateQuality = trackQuality = frameFactor &times; displacementFactor
+  &times; bearingSourceFactor` — `frameFactor = min(trackFrameCount / 15,
+  1.0)`, `displacementFactor` is `displacementPixels` over
+  (`displacementTrustDiagonals &times; largestBboxDiagonal`), clamped to
+  `1.0`, with the new `AnalysisProperties.displacementTrustDiagonals`
+  (ship default `1.0`, a linear ramp: one full bbox-diagonal of travel
+  &rarr; fully trusted), and
+  `bearingSourceFactor = scaleBearingTrustFactor` (default `1.0`, a no-op
+  lever) for a `"scale"` bearing else `1.0`. `corridor_cohesion`
+  is UNCHANGED in `CorridorConsensus.meanCohesion` / `clipConfidence`
+  (consensus strength only). `direction_evidence` now also carries
+  `track_frame_factor` / `track_displacement_factor` /
+  `track_bearing_source_factor`. New `ReportAnalysisJobTest` cases prove a
+  long clean low-cohesion track now CONFIRMS (`finalScore` ~0.9 vs the old
+  ~0.18) while a short barely-moving track still REJECTS. **Calibration
+  status:** `displacement-trust-diagonals: 1.0` is the ship default;
+  whether both production reports confirm at that value is pending a
+  production replay (plan Deploy section). `50bcc6` (179-frame, 475 px
+  travel) is expected to confirm comfortably; `71f78` (62-frame,
+  moving-camera) may need the knob lowered or may genuinely need the
+  deferred camera-translation work — entry stays OPEN until the replay
+  confirms both.
+  *(added 2026-08-30, priority raised same day after the second occurrence; addressed 2026-09-04 pending 71f78 replay)*
 
 - **Explored (not implemented): a vehicle-orientation (front vs rear)
   cross-check as an additional guard against false-positive wrong-way

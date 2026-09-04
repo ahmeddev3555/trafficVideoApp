@@ -69,8 +69,10 @@ Non-goals.
 2. **Per-candidate track trust** — the `× corridorCohesion` in `candidateQuality`. Here it is a
    poor proxy: it measures path centrality, not bearing reliability, and it systematically
    penalises exactly the vehicle class (small, fast, frame-edge) that this app most needs to
-   confirm. It also **double-counts** — a low-cohesion corridor already produces weaker
-   `clipConfidence`, which already flows into `finalScore` via `fusion.directionConfidence`.
+   confirm. (An earlier draft of this section claimed the term also *double-counts* against
+   `clipConfidence`; that is wrong and is corrected in the Safety analysis below —
+   `meanCohesion` in `clipConfidence` is computed with the candidate excluded, so the
+   candidate's own cohesion has only ever scored it once, right here.)
 
 ## Scope decisions (confirm before planning)
 

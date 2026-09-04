@@ -30,6 +30,8 @@ data class ReportEntity(
     val hasWrongWayFrame: Boolean,
     val wrongWayConfidence: Float?,
     val evidenceBreakdownJson: String?,
+    val locationSamplesJson: String?,
+    val rotationSamplesJson: String?,
     val createdAt: Long,
     val updatedAt: Long
 ) {
@@ -56,6 +58,8 @@ data class ReportEntity(
         hasWrongWayFrame = hasWrongWayFrame,
         wrongWayConfidence = wrongWayConfidence,
         evidenceBreakdownJson = evidenceBreakdownJson,
+        locationSamplesJson = locationSamplesJson,
+        rotationSamplesJson = rotationSamplesJson,
         createdAt = createdAt,
         updatedAt = updatedAt
     )
@@ -82,6 +86,8 @@ data class ReportEntity(
             hasWrongWayFrame = report.hasWrongWayFrame,
             wrongWayConfidence = report.wrongWayConfidence,
             evidenceBreakdownJson = report.evidenceBreakdownJson,
+            locationSamplesJson = report.locationSamplesJson,
+            rotationSamplesJson = report.rotationSamplesJson,
             createdAt = report.createdAt,
             updatedAt = report.updatedAt
         )

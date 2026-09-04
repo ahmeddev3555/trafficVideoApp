@@ -15,6 +15,8 @@ data class Report(
     val hasWrongWayFrame: Boolean = false,
     val wrongWayConfidence: Float? = null,
     val evidenceBreakdownJson: String? = null,
+    val locationSamplesJson: String? = null,
+    val rotationSamplesJson: String? = null,
     val createdAt: Long,
     val updatedAt: Long
 )

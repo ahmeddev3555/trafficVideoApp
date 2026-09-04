@@ -3,6 +3,7 @@ package com.trafficwatch.app.di
 import android.content.Context
 import androidx.room.Room
 import com.trafficwatch.app.core.data.local.AppDatabase
+import com.trafficwatch.app.core.data.local.MIGRATION_3_4
 import com.trafficwatch.app.core.data.local.dao.ReportDao
 import dagger.Module
 import dagger.Provides
@@ -19,6 +20,7 @@ object DatabaseModule {
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AppDatabase =
         Room.databaseBuilder(context, AppDatabase::class.java, AppDatabase.DATABASE_NAME)
+            .addMigrations(MIGRATION_3_4)
             .fallbackToDestructiveMigration()
             .build()
 

@@ -28,6 +28,7 @@ import io.mockk.mockkObject
 import io.mockk.unmockkObject
 import io.mockk.verify
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.within
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
@@ -439,6 +440,12 @@ class ReportAnalysisJobTest {
         assertThat(report.confidence).isEqualByComparingTo(BigDecimal("0.9"))
         assertThat(report.streetName).isEqualTo("Main Boulevard")
         assertThat(report.analysisMessage).contains("Main Boulevard")
+        // The three track-trust sub-factors are serialized into direction_evidence
+        // (snake_case) on a scored outcome; all 1.0 for a default trustworthy fixture.
+        val evidence = objectMapper.readTree(report.directionEvidence)
+        assertThat(evidence.get("track_frame_factor").asDouble()).isEqualTo(1.0)
+        assertThat(evidence.get("track_displacement_factor").asDouble()).isEqualTo(1.0)
+        assertThat(evidence.get("track_bearing_source_factor").asDouble()).isEqualTo(1.0)
     }
 
     @Test
@@ -828,6 +835,135 @@ class ReportAnalysisJobTest {
             "Possible wrong-way vehicle detected, but confidence was too low to confirm",
         )
         assertThat(report.directionEvidence).isNotNull()
+    }
+
+    @Test
+    fun `a long clean centroid track in a low-cohesion corridor is CONFIRMED`() {
+        // Miniature of the 71f78 / 50bcc6 production regression (a long, cleanly-tracked
+        // wrong-way motorcycle sharing one corridor with the legal flow, whose
+        // corridor_cohesion reads ~0.2 purely as a near-camera size / frame-edge artifact).
+        // Pre-Task-1, candidateQuality == trackQuality * corridorCohesion, so
+        //   finalScore = 1.0 (osm) * (1.0 * 0.2) * 0.9 (detection) * 1.0 (bearingMatch) = 0.18
+        // -> below the 0.50 bar -> REJECTED. Task 1 dropped the cohesion term from
+        // candidateQuality; this now CONFIRMS at finalScore = 1.0 * 1.0 * 0.9 * 1.0 = 0.9.
+        val report = sampleReport(compassHeadingDegrees = BigDecimal.ZERO)
+        every { streetDirectionResolver.resolve(any(), any(), any()) } returns
+            DirectionResolution.OneWay("Khayaban-e-Jinnah", 0.0) // legal 0, illegal 180
+        every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
+            listOf(
+                vehicle(trackId = 1, bearingDegrees = 0.0, corridorCohesion = 1.0, trackFrameCount = 40),
+                vehicle(trackId = 2, bearingDegrees = 2.0, corridorCohesion = 1.0, trackFrameCount = 40),
+                vehicle(trackId = 3, bearingDegrees = 358.0, corridorCohesion = 1.0, trackFrameCount = 40),
+                vehicle(
+                    trackId = 5, bearingDegrees = 180.0, detectionConfidence = 0.9,
+                    corridorCohesion = 0.2, trackFrameCount = 62, displacementPixels = 2100.0,
+                    plateText = "LEA-1234", plateConfidence = 0.8,
+                ),
+            ),
+        )
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.CONFIRMED)
+        assertThat(report.licensePlate).isEqualTo("LEA-1234")
+        assertThat(report.directionEvidence).contains("\"track_frame_factor\":1.0")
+        val evidence = objectMapper.readTree(report.directionEvidence)
+        // candidate_quality is now ~1.0 (the product of the three trust sub-factors), NOT ~0.2.
+        assertThat(evidence.get("candidate_quality").asDouble()).isEqualTo(1.0)
+        assertThat(evidence.get("track_displacement_factor").asDouble()).isEqualTo(1.0)
+        assertThat(evidence.get("track_bearing_source_factor").asDouble()).isEqualTo(1.0)
+    }
+
+    @Test
+    fun `a short barely-moving track in a low-cohesion corridor is still REJECTED`() {
+        // Same shape as the CONFIRMED regression above, but the candidate track is short
+        // (10 frames) and barely moves (320px, just over the 0.15 * ~2000 ~= 300px
+        // qualification floor for its 1414x1414 bbox). The new track-trust score bites:
+        //   frameFactor        ~= 10/15      = 0.667
+        //   displacementFactor ~= 320/~2000  = 0.16
+        //   candidateQuality   ~= 0.107
+        //   finalScore = 1.0 * 0.107 * 0.9 * 1.0 ~= 0.10 -> REJECTED (residual-risk guard).
+        val report = sampleReport(compassHeadingDegrees = BigDecimal.ZERO)
+        every { streetDirectionResolver.resolve(any(), any(), any()) } returns
+            DirectionResolution.OneWay("Khayaban-e-Jinnah", 0.0)
+        every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
+            listOf(
+                vehicle(trackId = 1, bearingDegrees = 0.0, corridorCohesion = 1.0, trackFrameCount = 40),
+                vehicle(trackId = 2, bearingDegrees = 2.0, corridorCohesion = 1.0, trackFrameCount = 40),
+                vehicle(trackId = 3, bearingDegrees = 358.0, corridorCohesion = 1.0, trackFrameCount = 40),
+                vehicle(
+                    trackId = 5, bearingDegrees = 180.0, detectionConfidence = 0.9,
+                    corridorCohesion = 0.2, trackFrameCount = 10, displacementPixels = 320.0,
+                ),
+            ),
+        )
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
+        assertThat(report.analysisMessage).isEqualTo(
+            "Possible wrong-way vehicle detected, but confidence was too low to confirm",
+        )
+        val evidence = objectMapper.readTree(report.directionEvidence)
+        assertThat(evidence.get("track_frame_factor").asDouble()).isLessThan(1.0)
+        assertThat(evidence.get("track_displacement_factor").asDouble()).isLessThan(0.3)
+        assertThat(evidence.get("candidate_quality").asDouble()).isLessThan(0.2)
+    }
+
+    @Test
+    fun `a scale-sourced bearing is discounted by scaleBearingTrustFactor`() {
+        // A "scale" (bbox-diagonal fallback) bearing is a coarse 0/180 binary; with
+        // scaleBearingTrustFactor = 0.5 the candidate's track-trust score - and hence its
+        // finalScore - is halved relative to the identical track carrying a "centroid"
+        // bearing. (The factor arithmetic itself is unit-tested in ClipFlowAnalyzerTest's
+        // `bearingSourceFactor penalises only a scale bearing`; here we prove it flows
+        // through evaluateCandidates and is serialized as track_bearing_source_factor.)
+        val scaleProps = AnalysisProperties(wrongWayToleranceDegrees = 60.0, scaleBearingTrustFactor = 0.5)
+        val scaleJob = ReportAnalysisJob(
+            reportRepository,
+            scaleProps,
+            streetDirectionResolver,
+            videoAnalysisClient,
+            videoStorageService,
+            wrongWayFrameStorageService,
+            ClipFlowAnalyzer(scaleProps),
+            DirectionEvidenceResolver(scaleProps),
+            flowObservationService,
+            objectMapper,
+        )
+
+        fun runWith(bearingSource: String): com.fasterxml.jackson.databind.JsonNode {
+            // A "scale" bearing only qualifies when the recording camera was near-stationary
+            // at the track midpoint - stationary location_samples + trackMidpointMs supply that.
+            val report = sampleReport(
+                compassHeadingDegrees = BigDecimal.ZERO,
+                locationSamples = stationaryLocationSamplesJson(),
+            )
+            every { streetDirectionResolver.resolve(any(), any(), any()) } returns
+                DirectionResolution.OneWay("Khayaban-e-Jinnah", 0.0) // legal 0, illegal 180
+            every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
+                listOf(
+                    vehicle(
+                        trackId = 5, bearingDegrees = 180.0, detectionConfidence = 0.9,
+                        trackFrameCount = 40, displacementPixels = 2100.0, trackMidpointMs = 1000L,
+                    ).copy(bearingSource = bearingSource),
+                ),
+            )
+            every { reportRepository.save(any()) } answers { firstArg() }
+            scaleJob.applyOutcome(report)
+            return objectMapper.readTree(report.directionEvidence)
+        }
+
+        val scale = runWith("scale")
+        val centroid = runWith("centroid")
+
+        assertThat(scale.get("track_bearing_source_factor").asDouble()).isEqualTo(0.5)
+        assertThat(centroid.get("track_bearing_source_factor").asDouble()).isEqualTo(1.0)
+        // finalScore: scale = 1.0 * 0.5 * 0.9 * 1.0 = 0.45; centroid = 1.0 * 1.0 * 0.9 * 1.0 = 0.9.
+        assertThat(scale.get("final_score").asDouble())
+            .isCloseTo(centroid.get("final_score").asDouble() / 2.0, within(1e-9))
     }
 
     @Test

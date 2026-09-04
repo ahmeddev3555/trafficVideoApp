@@ -37,11 +37,9 @@ class RetryUploadUseCase @Inject constructor(
         reportRepository.updateStatus(report.id, ReportStatus.UPLOADING, null)
 
         val onWifi = networkMonitor.isOnWifi()
-        // TODO(Task 3): pass report.locationSamplesJson / report.rotationSamplesJson now that
-        // the Report row carries them. Kept null here so this task's buildRequest signature
-        // change compiles without altering retry behaviour (null == omit, same as before).
         val request = UploadWorker.buildRequest(
-            report.id, report.videoPath, report.location, null, null,
+            report.id, report.videoPath, report.location,
+            report.locationSamplesJson, report.rotationSamplesJson,
             report.recordingStartedAt, report.durationMs,
             requireWifiOnly = !forceCellular
         )

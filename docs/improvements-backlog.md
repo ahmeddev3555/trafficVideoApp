@@ -553,7 +553,22 @@ considered rather than forgotten.
   (e.g. sub-project 3's fusion work) will see them disagree by the device's
   UTC offset. Fix `recorded_at`'s formatter to use `TimeZone.getTimeZone("UTC")`
   explicitly.
-  *(added 2026-08-03, found during continuous-GPS-heading-capture final review)*
+
+  **Update 2026-09-03** (spec/plan
+  `2026-09-03-upload-metadata-fidelity`) - addressed. The client now emits
+  a true UTC instant for `recorded_at` (`UploadWorker.formatRecordedAt`,
+  `java.time`) and marks the multipart request `recorded_at_is_utc=true`;
+  the server (`ReportService`) parses real UTC (`ISO_OFFSET_DATE_TIME`,
+  normalized to UTC, seconds precision) only when that marker is present,
+  taking the unchanged legacy literal-`Z` path otherwise - so older
+  clients are unaffected and there is no transition window where any
+  client is wrong. **No historical backfill**: `recorded_at` from app
+  versions before this release is device-local wall clock, after is UTC
+  (a dated seam). Nothing consumes `recorded_at` that this seam breaks -
+  `OrientationTimeline` deliberately keys off sample `captured_at` (epoch
+  millis), which was always correct.
+  *(added 2026-08-03, found during continuous-GPS-heading-capture final
+  review; addressed 2026-09-03)*
 - **A report that fails its first upload attempt permanently loses its
   `location_samples`/`rotation_samples`.** `RetryUploadUseCase` re-enqueues
   from the persisted `Report` Room entity, which never gained
@@ -576,8 +591,18 @@ considered rather than forgotten.
   Wi-Fi confirmed all three fields populate correctly when no retry is
   involved - so the capture/wire/persistence path itself is fine; this
   retry gap is the only thing that drops the data.
+
+  **Update 2026-09-03** (spec/plan
+  `2026-09-03-upload-metadata-fidelity`) - fixed. `location_samples`/
+  `rotation_samples` are now serialized once at submit (`SampleJson`) and
+  persisted as that wire JSON on the `reports` Room row (v3 &rarr; v4
+  additive migration `MIGRATION_3_4`); `RetryUploadUseCase` and
+  `SubmitReportUseCase.confirmCellular` re-enqueue from that row, so a
+  retried upload resends both series. Reports stuck mid-upload *before*
+  this release remain unrecoverable - the samples exist nowhere on
+  device, so there is nothing to backfill.
   *(added 2026-08-03, updated 2026-08-04 to cover rotation_samples too,
-  confirmed in production 2026-08-05)*
+  confirmed in production 2026-08-05, fixed 2026-09-03)*
 - **`Report.locationSamples`/`rotationSamples` round-trip a Kotlin `null`
   through the database as the literal 4-character text `"null"`, not a
   true SQL NULL - any code reading these columns must check for both.**

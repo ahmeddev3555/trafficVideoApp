@@ -44,7 +44,6 @@ class ReviewViewModel @Inject constructor(
     val submitted: Flow<Unit> = _submitted.receiveAsFlow()
 
     private var lastReportId: String? = null
-    private var lastEffectiveLocation: LocationData? = null
 
     fun init(
         trimmedFile: File,
@@ -99,7 +98,6 @@ class ReviewViewModel @Inject constructor(
                 File(state.trimmedFilePath), state.location, state.locationSamples, state.rotationSamples, state.recordingStartedAt, state.durationMs
             )
             lastReportId = result.reportId
-            lastEffectiveLocation = result.effectiveLocation
             if (result.onWifi) {
                 _uiState.update { it.copy(isSubmitting = false) }
                 _submitted.send(Unit)
@@ -113,13 +111,9 @@ class ReviewViewModel @Inject constructor(
     fun confirmCellularSubmit() {
         if (_uiState.value.isSubmitting) return
         val reportId = lastReportId ?: return
-        val location = lastEffectiveLocation ?: return
-        val state = _uiState.value
         _uiState.update { it.copy(isSubmitting = true) }
         viewModelScope.launch {
-            submitReportUseCase.confirmCellular(
-                reportId, state.trimmedFilePath, location, state.locationSamples, state.rotationSamples, state.recordingStartedAt, state.durationMs
-            )
+            submitReportUseCase.confirmCellular(reportId)
             _uiState.update { it.copy(showCellularPrompt = false, isSubmitting = false) }
             _submitted.send(Unit)
         }

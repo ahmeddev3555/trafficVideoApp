@@ -3,6 +3,7 @@ package com.trafficwatch.app.core.domain.usecase
 import android.content.Context
 import androidx.work.ExistingWorkPolicy
 import androidx.work.WorkManager
+import com.trafficwatch.app.core.data.remote.dto.SampleJson
 import com.trafficwatch.app.core.data.repository.ReportRepository
 import com.trafficwatch.app.core.domain.model.LocationData
 import com.trafficwatch.app.core.domain.model.Report
@@ -18,9 +19,9 @@ import javax.inject.Singleton
 
 /**
  * [effectiveLocation] is the location actually persisted on the [Report] row (falls back to
- * a zeroed [LocationData] when the caller has none) - callers re-enqueueing later via
- * [SubmitReportUseCase.confirmCellular] must reuse this value rather than recompute the
- * fallback themselves.
+ * a zeroed [LocationData] when the caller has none). [SubmitReportUseCase.confirmCellular]
+ * re-reads it (and every other field) straight off the persisted row, so callers no longer
+ * need to hold onto this for re-enqueueing.
  */
 data class SubmitReportResult(
     val reportId: String,
@@ -50,6 +51,12 @@ class SubmitReportUseCase @Inject constructor(
         val reportId = UUID.randomUUID().toString()
         val effectiveLocation = location ?: LocationData(0.0, 0.0, 0f, 0.0, 0f, 0f, recordingStartedAt)
 
+        // Serialize each captured series exactly once, here. The same strings are persisted on
+        // the report row and put on the wire, so a first upload and any later retry/cellular
+        // re-enqueue transmit byte-identical data.
+        val locationSamplesJson = SampleJson.location(locationSamples)
+        val rotationSamplesJson = SampleJson.rotation(rotationSamples)
+
         reportRepository.saveReport(
             Report(
                 id = reportId,
@@ -59,13 +66,15 @@ class SubmitReportUseCase @Inject constructor(
                 durationMs = durationMs,
                 fileSizeBytes = trimmedFile.length(),
                 status = ReportStatus.UPLOADING,
+                locationSamplesJson = locationSamplesJson,
+                rotationSamplesJson = rotationSamplesJson,
                 createdAt = System.currentTimeMillis(),
                 updatedAt = System.currentTimeMillis()
             )
         )
 
         enqueue(
-            reportId, trimmedFile.absolutePath, effectiveLocation, locationSamples, rotationSamples, recordingStartedAt, durationMs,
+            reportId, trimmedFile.absolutePath, effectiveLocation, locationSamplesJson, rotationSamplesJson, recordingStartedAt, durationMs,
             requireWifiOnly = true, policy = ExistingWorkPolicy.KEEP
         )
 
@@ -77,17 +86,16 @@ class SubmitReportUseCase @Inject constructor(
      * already [ReportStatus.UPLOADING] from [invoke], so unlike [com.trafficwatch.app.core.domain.usecase.RetryUploadUseCase]
      * there is no status to re-set here - just a re-enqueue with a relaxed network constraint.
      */
-    suspend fun confirmCellular(
-        reportId: String,
-        videoPath: String,
-        location: LocationData,
-        locationSamples: List<LocationData>,
-        rotationSamples: List<RotationSample>,
-        recordingStartedAt: Long,
-        durationMs: Long
-    ) {
+    suspend fun confirmCellular(reportId: String) {
+        val row = reportRepository.getReport(reportId) ?: run {
+            // The row was written by invoke() moments ago; a miss means local DB corruption.
+            // The Wi-Fi-only enqueue from invoke() still stands, so the report is not lost -
+            // don't crash (see docs/improvements-backlog.md: ReviewViewModel.submit() error handling).
+            return
+        }
         enqueue(
-            reportId, videoPath, location, locationSamples, rotationSamples, recordingStartedAt, durationMs,
+            reportId, row.videoPath, row.location, row.locationSamplesJson, row.rotationSamplesJson,
+            row.recordingStartedAt, row.durationMs,
             requireWifiOnly = false, policy = ExistingWorkPolicy.REPLACE
         )
     }
@@ -96,19 +104,15 @@ class SubmitReportUseCase @Inject constructor(
         reportId: String,
         videoPath: String,
         location: LocationData,
-        locationSamples: List<LocationData>,
-        rotationSamples: List<RotationSample>,
+        locationSamplesJson: String?,
+        rotationSamplesJson: String?,
         recordingStartedAt: Long,
         durationMs: Long,
         requireWifiOnly: Boolean,
         policy: ExistingWorkPolicy
     ) {
-        // Serialization (and omitting the field entirely when the list is empty - the same
-        // "presence, not sentinel" convention as compass heading) happens inside
-        // UploadWorker.buildInputData, not here - keeps this use case free of a Gson/DTO
-        // dependency and matches how compassHeadingDegrees is threaded through unconverted.
         val request = UploadWorker.buildRequest(
-            reportId, videoPath, location, locationSamples, rotationSamples, recordingStartedAt, durationMs, requireWifiOnly
+            reportId, videoPath, location, locationSamplesJson, rotationSamplesJson, recordingStartedAt, durationMs, requireWifiOnly
         )
         WorkManager.getInstance(context)
             .enqueueUniqueWork(UploadWorker.uniqueWorkName(reportId), policy, request)

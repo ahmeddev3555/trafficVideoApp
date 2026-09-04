@@ -12,14 +12,11 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkerParameters
 import androidx.work.hasKeyWithValueOfType
 import androidx.work.workDataOf
-import com.google.gson.Gson
 import com.trafficwatch.app.core.data.remote.ApiService
-import com.trafficwatch.app.core.data.remote.dto.toSampleDto
 import com.trafficwatch.app.core.data.repository.ReportRepository
 import com.trafficwatch.app.core.domain.model.LocationData
 import com.trafficwatch.app.core.domain.model.Report
 import com.trafficwatch.app.core.domain.model.ReportStatus
-import com.trafficwatch.app.core.domain.model.RotationSample
 import com.trafficwatch.app.core.util.FileUtil
 import com.trafficwatch.app.core.util.TokenStore
 import com.trafficwatch.app.core.util.UploadProgressTracker
@@ -163,8 +160,8 @@ class UploadWorker @AssistedInject constructor(
             reportId: String,
             videoPath: String,
             location: LocationData,
-            locationSamples: List<LocationData>,
-            rotationSamples: List<RotationSample>,
+            locationSamplesJson: String?,
+            rotationSamplesJson: String?,
             recordingStartedAt: Long,
             durationMs: Long
         ): Data {
@@ -187,17 +184,11 @@ class UploadWorker @AssistedInject constructor(
             // is what distinguishes "unavailable" from "present."
             location.compassHeadingDegrees?.let { builder.putFloat(KEY_COMPASS_HEADING, it) }
             location.zoomRatio?.let { builder.putFloat(KEY_ZOOM_RATIO, it) }
-            // Same "presence, not sentinel" convention: an empty list omits the key entirely
-            // rather than storing a "[]" string, so doWork()'s getString(...) naturally
-            // returns null (matching "no samples captured") instead of an empty-array string.
-            if (locationSamples.isNotEmpty()) {
-                val json = Gson().toJson(locationSamples.map { it.toSampleDto() })
-                builder.putString(KEY_LOCATION_SAMPLES_JSON, json)
-            }
-            if (rotationSamples.isNotEmpty()) {
-                val json = Gson().toJson(rotationSamples.map { it.toSampleDto() })
-                builder.putString(KEY_ROTATION_SAMPLES_JSON, json)
-            }
+            // Serialized once at submit time by SampleJson and persisted on the report row;
+            // passed here verbatim. Same "presence, not sentinel" convention: null (no samples
+            // captured) omits the key entirely, so doWork()'s getString(...) returns null.
+            locationSamplesJson?.let { builder.putString(KEY_LOCATION_SAMPLES_JSON, it) }
+            rotationSamplesJson?.let { builder.putString(KEY_ROTATION_SAMPLES_JSON, it) }
             return builder.build()
         }
 
@@ -213,13 +204,13 @@ class UploadWorker @AssistedInject constructor(
             reportId: String,
             videoPath: String,
             location: LocationData,
-            locationSamples: List<LocationData>,
-            rotationSamples: List<RotationSample>,
+            locationSamplesJson: String?,
+            rotationSamplesJson: String?,
             recordingStartedAt: Long,
             durationMs: Long,
             requireWifiOnly: Boolean
         ): OneTimeWorkRequest {
-            val inputData = buildInputData(reportId, videoPath, location, locationSamples, rotationSamples, recordingStartedAt, durationMs)
+            val inputData = buildInputData(reportId, videoPath, location, locationSamplesJson, rotationSamplesJson, recordingStartedAt, durationMs)
             val networkType = if (requireWifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED
             val constraints = Constraints.Builder().setRequiredNetworkType(networkType).build()
             return OneTimeWorkRequestBuilder<UploadWorker>()

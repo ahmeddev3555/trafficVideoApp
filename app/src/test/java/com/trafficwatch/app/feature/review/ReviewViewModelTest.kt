@@ -76,9 +76,7 @@ class ReviewViewModelTest {
     fun `confirmCellularSubmit re-enqueues over cellular, clears prompt, and fires submitted`() = runTest {
         coEvery { submitReportUseCase(any(), any(), any(), any(), any(), any()) } returns
             SubmitReportResult(reportId = "r1", effectiveLocation = location, onWifi = false)
-        coEvery {
-            submitReportUseCase.confirmCellular(any(), any(), any(), any(), any(), any(), any())
-        } just runs
+        coEvery { submitReportUseCase.confirmCellular(any()) } just runs
 
         viewModel.submit()
         testDispatcher.scheduler.advanceUntilIdle()
@@ -87,9 +85,7 @@ class ReviewViewModelTest {
         testDispatcher.scheduler.advanceUntilIdle()
 
         viewModel.submitted.test { awaitItem() }
-        coVerify(exactly = 1) {
-            submitReportUseCase.confirmCellular("r1", testFile.absolutePath, location, locationSamples, emptyList(), 1000L, 8000L)
-        }
+        coVerify(exactly = 1) { submitReportUseCase.confirmCellular("r1") }
         assertFalse(viewModel.uiState.value.showCellularPrompt)
     }
 
@@ -117,9 +113,7 @@ class ReviewViewModelTest {
         testDispatcher.scheduler.advanceUntilIdle()
 
         viewModel.submitted.test { awaitItem() }
-        coVerify(exactly = 0) {
-            submitReportUseCase.confirmCellular(any(), any(), any(), any(), any(), any(), any())
-        }
+        coVerify(exactly = 0) { submitReportUseCase.confirmCellular(any()) }
         assertFalse(viewModel.uiState.value.showCellularPrompt)
     }
 

@@ -37,13 +37,11 @@ class RetryUploadUseCase @Inject constructor(
         reportRepository.updateStatus(report.id, ReportStatus.UPLOADING, null)
 
         val onWifi = networkMonitor.isOnWifi()
-        // The persisted Report row has no locationSamples/rotationSamples fields (Task 1
-        // only threaded the continuous GPS/rotation series through the transient
-        // ReviewUiState, not into local storage), so a retry has nothing to resend for
-        // either - empty lists omit both fields entirely per the "presence, not sentinel"
-        // convention in UploadWorker.buildInputData. See docs/improvements-backlog.md.
+        // TODO(Task 3): pass report.locationSamplesJson / report.rotationSamplesJson now that
+        // the Report row carries them. Kept null here so this task's buildRequest signature
+        // change compiles without altering retry behaviour (null == omit, same as before).
         val request = UploadWorker.buildRequest(
-            report.id, report.videoPath, report.location, emptyList(), emptyList(),
+            report.id, report.videoPath, report.location, null, null,
             report.recordingStartedAt, report.durationMs,
             requireWifiOnly = !forceCellular
         )

@@ -601,8 +601,19 @@ considered rather than forgotten.
   retried upload resends both series. Reports stuck mid-upload *before*
   this release remain unrecoverable - the samples exist nowhere on
   device, so there is nothing to backfill.
+
+  **Update 2026-09-04** (final whole-branch review of the same plan) -
+  the same gap existed for `compass_heading_degrees` and `zoom_ratio`:
+  `ReportEntity` flattened only 7 of `LocationData`'s 9 fields, so the
+  `2dcf9912` null `compass_heading_degrees` above was this same defect,
+  not a separate capture bug. Both are now flattened onto the `reports`
+  row too (`compassHeadingDegrees`/`zoomRatio` REAL columns, folded into
+  the *same* v4 `MIGRATION_3_4` - the v4 schema never reached a device).
+  A retried or cellular-confirmed report now drops none of the four
+  fields. The pre-release stuck-reports caveat still stands.
   *(added 2026-08-03, updated 2026-08-04 to cover rotation_samples too,
-  confirmed in production 2026-08-05, fixed 2026-09-03)*
+  confirmed in production 2026-08-05, fixed 2026-09-03, widened to
+  compass/zoom 2026-09-04)*
 - **`Report.locationSamples`/`rotationSamples` round-trip a Kotlin `null`
   through the database as the literal 4-character text `"null"`, not a
   true SQL NULL - any code reading these columns must check for both.**

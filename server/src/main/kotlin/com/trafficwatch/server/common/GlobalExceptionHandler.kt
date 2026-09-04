@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.ResponseStatus
 import org.springframework.web.bind.annotation.RestControllerAdvice
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException
+import java.time.format.DateTimeParseException
 
 /**
  * App-wide mapping from exceptions to a uniform [ApiError]`{error, message}` response
@@ -113,4 +114,14 @@ class GlobalExceptionHandler {
     @ResponseStatus(HttpStatus.BAD_REQUEST)
     fun handleInvalidPagination(ex: InvalidPaginationException): ApiError =
         ApiError(error = "INVALID_PAGINATION", message = ex.message ?: "Invalid pagination parameters")
+
+    /**
+     * Thrown by ReportService.submit()'s recorded_at parse (legacy literal-Z or the
+     * marked real-UTC path) when the client sends an unparseable timestamp. Without this
+     * it falls through to a 500.
+     */
+    @ExceptionHandler(DateTimeParseException::class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    fun handleDateTimeParseError(ex: DateTimeParseException): ApiError =
+        ApiError(error = "INVALID_PARAMETER", message = "Invalid timestamp format for 'recorded_at'")
 }

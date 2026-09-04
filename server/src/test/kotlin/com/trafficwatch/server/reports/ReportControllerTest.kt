@@ -29,6 +29,7 @@ import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import java.math.BigDecimal
 import java.nio.file.Files
 import java.time.OffsetDateTime
+import java.time.format.DateTimeParseException
 import java.util.UUID
 
 /**
@@ -79,14 +80,18 @@ class ReportControllerTest {
             .param("bearing", "87.30")
             .param("speed", "12.40")
             .param("recorded_at", "2026-07-25T10:15:30Z")
+            .param("recorded_at_is_utc", "true")
             .param("duration_ms", "15000")
             .param("device_id", "device-123")
 
     @Test
     fun `submitReport with all parts and a valid token returns 201 with snake_case response shape`() {
         val reportId = UUID.randomUUID()
+        // Position 11 is recordedAtIsUtc, matched with eq(true) (not any()) so the stub only
+        // matches if the Retrofit @Part name "recorded_at_is_utc" actually binds to Spring's
+        // @RequestParam("recorded_at_is_utc") Boolean? and arrives as true.
         every {
-            reportService.submit(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+            reportService.submit(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), eq(true), any(), any(), any(), any())
         } returns SubmitReportResponse(
             reportId = reportId,
             status = ReportStatus.PENDING,
@@ -103,6 +108,37 @@ class ReportControllerTest {
             .andExpect(jsonPath("$.report_id").value(reportId.toString()))
             .andExpect(jsonPath("$.status").value("PENDING"))
             .andExpect(jsonPath("$.message").value("Report submitted successfully"))
+
+        verify {
+            reportService.submit(
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                recordedAtIsUtc = true,
+                compassHeadingDegrees = any(), zoomRatio = any(),
+                locationSamplesJson = any(), rotationSamplesJson = any(),
+            )
+        }
+    }
+
+    // GlobalExceptionHandler must map ReportService.submit()'s DateTimeParseException (an
+    // unparseable recorded_at, on either the legacy literal-Z or the marked real-UTC path)
+    // to a uniform 400 ApiError{error, message} - without the handler it falls through to a
+    // 500. Service is mocked to throw it exactly as the real parse would.
+    @Test
+    fun `submitReport with an unparseable recorded_at returns 400 with ApiError body`() {
+        every {
+            reportService.submit(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } throws DateTimeParseException("Text 'not-a-date' could not be parsed", "not-a-date", 0)
+
+        val video = MockMultipartFile("video", "clip.mp4", "video/mp4", byteArrayOf(1, 2, 3))
+
+        mockMvc.perform(
+            authorizedRequest(video)
+                .param("recorded_at", "not-a-date")
+                .header("Authorization", "Bearer ${bearerToken()}"),
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("INVALID_PARAMETER"))
+            .andExpect(jsonPath("$.message").exists())
     }
 
     @Test

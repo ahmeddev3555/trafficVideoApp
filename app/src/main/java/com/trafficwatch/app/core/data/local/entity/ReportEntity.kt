@@ -19,6 +19,8 @@ data class ReportEntity(
     val bearing: Float,
     val speed: Float,
     val locationCapturedAt: Long,
+    val compassHeadingDegrees: Float?,
+    val zoomRatio: Float?,
     // Report metadata
     val recordingStartedAt: Long,
     val durationMs: Long,
@@ -46,7 +48,9 @@ data class ReportEntity(
             altitude = altitude,
             bearing = bearing,
             speed = speed,
-            capturedAt = locationCapturedAt
+            capturedAt = locationCapturedAt,
+            compassHeadingDegrees = compassHeadingDegrees,
+            zoomRatio = zoomRatio
         ),
         recordingStartedAt = recordingStartedAt,
         durationMs = durationMs,
@@ -76,6 +80,8 @@ data class ReportEntity(
             bearing = report.location.bearing,
             speed = report.location.speed,
             locationCapturedAt = report.location.capturedAt,
+            compassHeadingDegrees = report.location.compassHeadingDegrees,
+            zoomRatio = report.location.zoomRatio,
             recordingStartedAt = report.recordingStartedAt,
             durationMs = report.durationMs,
             fileSizeBytes = report.fileSizeBytes,

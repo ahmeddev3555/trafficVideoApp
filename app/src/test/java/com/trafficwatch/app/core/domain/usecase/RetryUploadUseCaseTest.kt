@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.work.OneTimeWorkRequest
 import androidx.work.Operation
 import androidx.work.WorkManager
+import com.trafficwatch.app.core.data.local.entity.ReportEntity
 import com.trafficwatch.app.core.data.repository.ReportRepository
 import com.trafficwatch.app.core.domain.model.LocationData
 import com.trafficwatch.app.core.domain.model.Report
@@ -90,6 +91,33 @@ class RetryUploadUseCaseTest {
             input.getString(UploadWorker.KEY_ROTATION_SAMPLES_JSON),
         )
         assertEquals(RetryUploadResult.Enqueued(onWifi = true), result)
+    }
+
+    @Test
+    fun `retry carries the persisted compass heading and zoom ratio into the enqueued request`() = runTest {
+        // Round-trip through ReportEntity so this guards the whole persist -> reload -> retry
+        // path: before the v4 widening, ReportEntity.toDomain() dropped both fields and this
+        // enqueued request would omit the keys.
+        val report = ReportEntity.fromDomain(
+            baseReport.copy(location = location.copy(compassHeadingDegrees = 77.5f, zoomRatio = 1.8f)),
+        ).toDomain()
+
+        useCase.invoke(report)
+
+        val input = enqueuedRequest.captured.workSpec.input
+        assertEquals(77.5f, input.getFloat(UploadWorker.KEY_COMPASS_HEADING, -1f))
+        assertEquals(1.8f, input.getFloat(UploadWorker.KEY_ZOOM_RATIO, -1f))
+    }
+
+    @Test
+    fun `retry with no persisted compass heading or zoom ratio omits those keys`() = runTest {
+        val report = ReportEntity.fromDomain(baseReport).toDomain()
+
+        useCase.invoke(report)
+
+        val input = enqueuedRequest.captured.workSpec.input
+        assertEquals(-1f, input.getFloat(UploadWorker.KEY_COMPASS_HEADING, -1f))
+        assertEquals(-1f, input.getFloat(UploadWorker.KEY_ZOOM_RATIO, -1f))
     }
 
     @Test

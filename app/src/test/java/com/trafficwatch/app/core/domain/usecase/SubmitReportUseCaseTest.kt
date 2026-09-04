@@ -84,6 +84,19 @@ class SubmitReportUseCaseTest {
     }
 
     @Test
+    fun `invoke persists compass heading and zoom ratio from the recording snapshot`() = runTest {
+        val saved = slot<Report>()
+        coEvery { reportRepository.saveReport(capture(saved)) } just Runs
+        every { networkMonitor.isOnWifi() } returns true
+
+        val snapshot = location.copy(compassHeadingDegrees = 123.4f, zoomRatio = 1.5f)
+        useCase.invoke(File("/v.mp4"), snapshot, locationSamples, rotationSamples, 1_000L, 6_000L)
+
+        assertEquals(123.4f, saved.captured.location.compassHeadingDegrees)
+        assertEquals(1.5f, saved.captured.location.zoomRatio)
+    }
+
+    @Test
     fun `confirmCellular re-enqueues from the persisted row`() = runTest {
         coEvery { reportRepository.getReport("r1") } returns
             report.copy(locationSamplesJson = """[{"x":1}]""", rotationSamplesJson = null)

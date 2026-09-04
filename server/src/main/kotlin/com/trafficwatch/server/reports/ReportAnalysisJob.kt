@@ -498,6 +498,12 @@ class ReportAnalysisJob(
                 trackFrameFactor = best?.flowVehicle?.frameFactor,
                 trackDisplacementFactor = best?.flowVehicle?.displacementFactor,
                 trackBearingSourceFactor = best?.flowVehicle?.bearingSourceFactor,
+                // The candidate's own corridor_cohesion + bearing source, for post-hoc audit:
+                // corridor_cohesion no longer scores individual candidates (2026-09-04 design),
+                // so it is otherwise unrecoverable from a stored report and this project never
+                // re-analyses retroactively.
+                candidateCorridorCohesion = best?.flowVehicle?.corridorCohesion,
+                candidateBearingSource = best?.flowVehicle?.vehicle?.bearingSource,
                 detectionConfidence = best?.flowVehicle?.vehicle?.detectionConfidence,
                 bearingMatchScore = best?.bearingMatchScore,
                 finalScore = best?.finalScore,
@@ -575,6 +581,8 @@ internal data class EvidenceBreakdown(
     val trackFrameFactor: Double?,
     val trackDisplacementFactor: Double?,
     val trackBearingSourceFactor: Double?,
+    val candidateCorridorCohesion: Double?,
+    val candidateBearingSource: String?,
     val detectionConfidence: Double?,
     val bearingMatchScore: Double?,
     val finalScore: Double?,

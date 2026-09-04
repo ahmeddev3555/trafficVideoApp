@@ -69,6 +69,15 @@ class ClipFlowAnalyzer(
     private val properties: AnalysisProperties,
 ) {
 
+    init {
+        // A zero value makes displacementFactor's denominator 0.0 -> +Inf -> clamps to a
+        // silent 1.0 (the signal vanishes); a negative value makes displacementFactor
+        // negative -> negative candidateQuality -> corrupt scoring. Fail loud at startup.
+        require(properties.displacementTrustDiagonals > 0.0) {
+            "displacementTrustDiagonals must be > 0 (was ${properties.displacementTrustDiagonals})"
+        }
+    }
+
     /**
      * Vehicles usable for flow analysis: corridor-annotated, with a real bearing,
      * above the quality floor. Requires frame dimensions (null = older Python

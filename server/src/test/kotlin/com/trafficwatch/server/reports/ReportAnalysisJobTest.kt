@@ -446,6 +446,11 @@ class ReportAnalysisJobTest {
         assertThat(evidence.get("track_frame_factor").asDouble()).isEqualTo(1.0)
         assertThat(evidence.get("track_displacement_factor").asDouble()).isEqualTo(1.0)
         assertThat(evidence.get("track_bearing_source_factor").asDouble()).isEqualTo(1.0)
+        // The candidate's own corridor_cohesion + bearing source are also serialized, for
+        // post-hoc audit (corridor_cohesion no longer scores candidates and is otherwise
+        // unrecoverable). Default fixture: cohesion 1.0, legacy null bearing source.
+        assertThat(evidence.get("candidate_corridor_cohesion").asDouble()).isEqualTo(1.0)
+        assertThat(evidence.get("candidate_bearing_source").isNull).isTrue()
     }
 
     @Test
@@ -873,6 +878,10 @@ class ReportAnalysisJobTest {
         assertThat(evidence.get("candidate_quality").asDouble()).isEqualTo(1.0)
         assertThat(evidence.get("track_displacement_factor").asDouble()).isEqualTo(1.0)
         assertThat(evidence.get("track_bearing_source_factor").asDouble()).isEqualTo(1.0)
+        // The candidate's own cohesion (0.2) no longer scores it, but is still recorded for
+        // post-hoc audit since it is otherwise unrecoverable from the stored report.
+        assertThat(evidence.get("candidate_corridor_cohesion").asDouble()).isEqualTo(0.2)
+        assertThat(evidence.get("candidate_bearing_source").isNull).isTrue()
     }
 
     @Test

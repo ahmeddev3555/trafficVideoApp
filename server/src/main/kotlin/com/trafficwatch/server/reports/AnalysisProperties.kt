@@ -7,7 +7,8 @@ import org.springframework.stereotype.Component
  * Binds `app.analysis.*` configuration for [ReportAnalysisJob]. Includes direction validation
  * thresholds ([wrongWayToleranceDegrees], [agreementToleranceDegrees]), evidence-fusion
  * controls ([confirmationThreshold], [weakEvidenceFloor], [consensusMinResultantLength]),
- * track-quality gating ([minDisplacementFraction]), and learned-history maturity gates
+ * track-quality gating ([minDisplacementFraction]), per-candidate track-trust scoring
+ * ([displacementTrustDiagonals], [scaleBearingTrustFactor]), and learned-history maturity gates
  * ([historyMinObservations], [historyMinDistinctReporters], [historyMinResultantLength]).
  */
 @Component
@@ -33,6 +34,10 @@ data class AnalysisProperties(
     // bearing is dominated by real motion, not centroid jitter". corridor_cohesion is
     // deliberately NOT a factor here (it double-counts against clipConfidence and penalises
     // small/fast near-camera tracks - see the 2026-09-04 design).
+    // MUST stay well above minDisplacementFraction (0.15): the qualification gate already
+    // guarantees displacement >= minDisplacementFraction x diagonal, so any value <= 0.15 makes
+    // displacementFactor identically 1.0 for every qualifying vehicle - silently no-op-ing the
+    // signal. Must be > 0 (ClipFlowAnalyzer's init enforces this).
     var displacementTrustDiagonals: Double = 1.0,
     // Multiplier applied to trackQuality for a "scale"-sourced (bbox-diagonal fallback,
     // near-head-on) bearing. 1.0 = identity; a lever if "scale" bearings prove over-generous.

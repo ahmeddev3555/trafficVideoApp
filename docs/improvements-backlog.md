@@ -512,10 +512,24 @@ considered rather than forgotten.
   status:** `displacement-trust-diagonals: 1.0` is the ship default;
   whether both production reports confirm at that value is pending a
   production replay (plan Deploy section). `50bcc6` (179-frame, 475 px
-  travel) is expected to confirm comfortably; `71f78` (62-frame,
-  moving-camera) may need the knob lowered or may genuinely need the
-  deferred camera-translation work — entry stays OPEN until the replay
-  confirms both.
+  travel) confirms only if its largest-bbox diagonal is small enough:
+  `final_score &ge; 0.5` needs `displacementFactor &ge; 0.5 / (0.81 &times;
+  0.96) &asymp; 0.64`, i.e. diagonal `&le; 475 / 0.64 &asymp; 740 px` —
+  plausible for a close motorcycle pass in a 1920&times;1080 frame but not
+  certain. `71f78` has no travel figure on record and is also moving-camera;
+  it may need the knob lowered or the deferred camera-translation work.
+  Entry stays OPEN until the replay confirms both.
+
+  **New false-negative direction** (accepted, config-reversible): where
+  corridor cohesion was already `&asymp; 1.0` and net lateral travel is
+  under one largest-bbox diagonal, the score now DROPS — the
+  `displacementFactor` denominator is the track's largest-area frame, so a
+  vehicle that approached the camera (big final bbox, small net lateral
+  travel) takes a fresh discount. The branch may partly MOVE the
+  near-camera-motorcycle penalty from cohesion to
+  `displacement &divide; largest-bbox` rather than remove it. Traded against
+  the confirmed true-positive miss; reversible via
+  `displacement-trust-diagonals`.
   *(added 2026-08-30, priority raised same day after the second occurrence; addressed 2026-09-04 pending 71f78 replay)*
 
 - **Explored (not implemented): a vehicle-orientation (front vs rear)

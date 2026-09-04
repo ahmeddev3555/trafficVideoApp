@@ -374,11 +374,16 @@ git add docs/improvements-backlog.md && git commit -m "docs: mark corridor_cohes
 ## Deploy & calibration
 
 1. **Deploy the branch** to the VPS (`git archive <head>` → extract → `docker compose up -d --build server`). No DB migration; code + config only.
-2. **Production replay** — re-run `e4d53e59…71f78` and `91ce999b…50bcc6` through the deployed pipeline (throwaway-report method, per the divided-carriageway runbook). From each report's stored `direction_evidence`, read `candidate_quality`, `track_frame_factor`, `track_displacement_factor`, `track_bearing_source_factor`, `final_score`.
+2. **Production replay** — re-run through the deployed pipeline (throwaway-report method, per the divided-carriageway runbook). From each report's stored `direction_evidence`, read `candidate_quality`, `track_frame_factor`, `track_displacement_factor`, `track_bearing_source_factor`, `candidate_corridor_cohesion`, `candidate_bearing_source`, `final_score`. Replay set:
+   - `e4d53e59…71f78` and `91ce999b…50bcc6` — the two target true-positive misses; both must now confirm.
+   - `a6877462-0675-482e-a2a8-a8d096649b9a` (`649b9a`, the known bearing-path false positive — a plainly rear-facing vehicle confirmed at `wrong_way_confidence` 0.5711). Check whether its `final_score` **RISES** under the new scoring: removing `corridor_cohesion` must not make a bad confirm worse. If it rises materially, note it against the residual-risk watch.
+   - One previously-CONFIRMING bearing-path report from prod: `SELECT id FROM reports WHERE status='CONFIRMED' AND wrong_way_confidence IS NOT NULL AND direction_evidence LIKE '%CLIP_CONSENSUS%' ORDER BY created_at DESC LIMIT 3` — pick one and check it **still confirms** (regression guard on real data).
 3. **Calibrate `displacement-trust-diagonals`:**
    - Both reports `final_score ≥ ~0.6` → done, ship `1.0`.
    - `71f78` short of the bar → lower `displacement-trust-diagonals` (e.g. `0.5`) via config and re-run. A track that moved half a bbox diagonal is still real motion; `0.5` is defensible.
    - `71f78` still short at `0.3` → it is genuinely a small-lateral-displacement clip (moving camera). Record in the backlog, leave `50bcc6` confirmed, and defer `71f78` to the camera-translation work.
+
+   **Tuning `displacement-trust-diagonals` without a rebuild:** add `APP_ANALYSIS_DISPLACEMENT_TRUST_DIAGONALS: "0.5"` to the `server:` service's `environment:` block in `docker-compose.prod.yml` and `docker compose -f docker-compose.prod.yml up -d server` — Spring relaxed binding maps the env var onto `app.analysis.displacement-trust-diagonals`, no image rebuild. Editing `application.yml` itself needs a rebuild (it is baked into the jar).
 4. **Clean up** the throwaway reports/users/videos (per the runbook).
 5. Update the backlog entry with the final `displacement-trust-diagonals` value and which reports confirm.
 

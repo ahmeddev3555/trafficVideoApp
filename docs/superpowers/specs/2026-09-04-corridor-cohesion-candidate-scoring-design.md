@@ -206,23 +206,52 @@ far from its corridor-mates'. The two things that can cause:
 2. **The near-camera-motorcycle artifact** — small/fast/frame-edge. This is precisely the
    false negative this design fixes; the discount here was never protecting anything.
 
-**Retained protections after this change:** the `movesWith` gate (a candidate flowing with its
-corridor is never a violator); the lone-bearing guard; `clipConfidence`'s `meanCohesion` (a
-spatially-incoherent corridor still yields weaker consensus evidence → lower
-`fusion.directionConfidence`); `detectionConfidence` (a real YOLO signal, still a multiplier);
-`bearingMatchScore` (the bearing must actually point against the fused illegal direction within
-`wrongWayToleranceDegrees`); and the new `displacementFactor`, which discounts a track that
-barely moved — the class most likely to carry a corrupt bearing.
+**Retained protections after this change.** Two protections an earlier draft of this section
+claimed are not real, and are struck:
 
-**Accepted residual risk:** a fragmented / ID-swapped track that clears `frames ≥ 15` and the
-displacement floor, carries a `"centroid"` bearing that coincidentally points against the fused
-legal direction, and has high `detectionConfidence`. Such a track's motion is typically
-erratic (low `displacementFactor`) and its bearing unstable, and it must still survive the
-`movesWith` and peer-support gates — but the cohesion multiplier previously gave a second,
-independent haircut. Mitigation: log it (a watch memory, like
-`feedback_divided_carriageway_approach_watch.md`) — review production `CONFIRMED` reports whose
-`track_displacement_factor` is low or whose corridor consensus was weak, for the first weeks
-after deploy.
+- `clipConfidence`'s `meanCohesion` does **not** retain any discount on the candidate's own
+  cohesion. `meanCohesion` is computed with the candidate **excluded**
+  (`corridorConsensus(flowVehicles, corridorId, excluding = candidate)`), so the candidate's
+  own cohesion — the `0.28` / `0.19` in the two target reports — was never in `clipConfidence`.
+  The `× corridorCohesion` term in `candidateQuality` was the **only** place the candidate's
+  own cohesion entered scoring at all; after this change it appears nowhere.
+- `clipConfidence` does **not** reliably flow into `fusion.directionConfidence` and weaken the
+  score on the path these reports take. On a `OneWay` street `osmEvidence` is hardcoded
+  confidence `1.0` and fusion is noisy-OR, so `directionConfidence == 1.0` regardless of
+  `clipConfidence`. `71f78`, `50bcc6`, and the known false positive `649b9a` all took the
+  `OneWay` path.
+
+On the `OneWay` path the retained protections therefore reduce to: the `movesWith` gate (a
+candidate flowing with its corridor is never a violator); the `hasPeerSupport` lone-bearing
+guard; `bearingMatchScore` (the bearing must point against the fused illegal direction within
+`wrongWayToleranceDegrees`); `detectionConfidence` (a real YOLO signal, still a multiplier);
+and the new `frameFactor` / `displacementFactor`. Nothing cohesion-derived remains on this
+path. (On a street that resolves to `Unknown`, `clipConfidence` does still drive
+`directionConfidence` through the CLIP_CONSENSUS evidence entry — but that entry's confidence
+reflects the *other* corridor members' cohesion, never the candidate's.)
+
+**Accepted residual risk.** The realistic new false-positive shape is **not** "a track that
+barely moved" — a low `displacementFactor` still bites that case. It is a candidate with
+`displacementFactor` ≈ 1.0 **and** `frameFactor` ≈ 1.0 **and** low corridor cohesion: a
+vehicle turning out of a side street across the corridor; a two-vehicle ID swap across
+opposing lanes on an undivided road. Its path genuinely *is* a spatial outlier — exactly what
+cohesion measured — and nothing else in the score now substitutes for that. Note
+`displacement_pixels` is **net** first-to-last-frame displacement, not path length, so an
+ID-swapped track that jumps onto another vehicle has a *larger* net displacement →
+`displacementFactor` saturates to `1.0`, it does not fall.
+
+The change also has a new **false-negative** direction. Where cohesion was ≈ 1.0 (a tidy
+corridor) and net lateral travel is under one largest-bbox diagonal, the score now *drops*:
+the `displacementFactor` denominator is the track's **largest-area** frame, so a vehicle that
+approached the camera (big final bbox, small net lateral travel) takes a fresh discount it did
+not have before. This branch may partly **move** the near-camera-motorcycle penalty from
+cohesion to `displacement ÷ largest-bbox` rather than eliminate it. It is an accepted,
+config-reversible trade (`displacementTrustDiagonals`) against a confirmed true-positive miss.
+
+Mitigation: a watch memory (`feedback_cohesion_underconfirm_watch.md`) — review production
+`CONFIRMED` reports with `candidate_corridor_cohesion` low, `track_displacement_factor` high,
+and a weak/absent CLIP_CONSENSUS entry; and user-confirmed wrong-way reports that begin
+rejecting with a low `track_displacement_factor` — for the first weeks after deploy.
 
 ## Testing
 
@@ -279,6 +308,11 @@ camera was moving), record that in the backlog and leave it for the camera-trans
 - **The approach-path / divided-carriageway reports** (`759cd` / `24908` / `a5275`) — different
   mechanism, already handled.
 - **Removing `corridor_cohesion` from `clipConfidence`** — it is correct there.
+- **Reconciling `displacement_pixels` with the bearing window.** `displacement_pixels` is
+  unaveraged first-vs-last-frame endpoints, while the bearing it gates is a 12-frame-averaged
+  window — so single-frame endpoint occlusion perturbs the trust factor differently than it
+  perturbs the bearing. A Python-side averaged displacement would fix it; fold that into the
+  deferred bearing-stability signal above rather than doing it here.
 
 ## Open questions for review
 

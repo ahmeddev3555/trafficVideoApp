@@ -22,18 +22,28 @@ import org.springframework.web.multipart.MultipartFile
 import java.math.BigDecimal
 import java.nio.file.Path
 import java.time.LocalDateTime
+import java.time.OffsetDateTime
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.UUID
 
 /**
- * Matches the Android client's `recorded_at` format exactly, including its known bug:
- * the client appends a literal `"Z"` without actually converting the timestamp to UTC
- * first. Parsing with `LocalDateTime.parse` (not `Instant`/`OffsetDateTime`, which would
- * enforce real UTC semantics and either reject this format or silently reinterpret it) is
- * deliberate - it treats the trailing `Z` as a literal character, not a UTC offset marker,
- * matching `reports.recorded_at`'s intentionally timezone-less `TIMESTAMP` column.
+ * Legacy: pre-2026-09 Android clients appended a literal `"Z"` to `recorded_at` without
+ * actually converting the timestamp to UTC first, and the server stored that device-local
+ * wall-clock time as-is. Parsing with `LocalDateTime.parse` (not `Instant`/`OffsetDateTime`)
+ * is deliberate here - it treats the trailing `Z` as a literal character, not a UTC offset
+ * marker, matching `reports.recorded_at`'s intentionally timezone-less `TIMESTAMP` column.
+ * Used when the multipart marker `recorded_at_is_utc` is absent or false.
  */
-private val RECORDED_AT_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'")
+private val LEGACY_RECORDED_AT_FORMATTER: DateTimeFormatter =
+    DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'")
+
+/**
+ * Fixed clients (2026-09+) send `recorded_at_is_utc=true` alongside a real instant. Accept a
+ * literal `Z` or a real numeric offset (both are valid ISO offsets), normalize to UTC, and
+ * store the UTC wall clock - the column stays a timezone-less `TIMESTAMP`, now genuinely UTC.
+ */
+private val UTC_RECORDED_AT_FORMATTER: DateTimeFormatter = DateTimeFormatter.ISO_OFFSET_DATE_TIME
 
 /**
  * Silent cap on the number of entries persisted from a client-submitted `location_samples`
@@ -99,13 +109,27 @@ class ReportService(
         recordedAt: String,
         durationMs: Long,
         deviceId: String,
+        // Multipart marker from 2026-09+ clients: recorded_at is a true UTC instant. Absent
+        // (null) or false for older clients, whose recorded_at is device-local wall clock
+        // with a literal "Z" - parsed via the legacy formatter. Default keeps existing
+        // callers compiling.
+        recordedAtIsUtc: Boolean? = null,
         compassHeadingDegrees: BigDecimal?,
         zoomRatio: BigDecimal?,
         locationSamplesJson: String?,
         rotationSamplesJson: String?,
     ): SubmitReportResponse {
         val userId = CurrentUser.id()
-        val parsedRecordedAt = LocalDateTime.parse(recordedAt, RECORDED_AT_FORMATTER)
+        // A malformed recorded_at still throws (-> 400) on either path, unchanged.
+        val parsedRecordedAt =
+            if (recordedAtIsUtc == true) {
+                OffsetDateTime.parse(recordedAt, UTC_RECORDED_AT_FORMATTER)
+                    .withOffsetSameInstant(ZoneOffset.UTC)
+                    .toLocalDateTime()
+                    .withNano(0)
+            } else {
+                LocalDateTime.parse(recordedAt, LEGACY_RECORDED_AT_FORMATTER)
+            }
 
         // Malformed/unparseable input never blocks submission - logged and treated as
         // absent, same tolerance as every other optional client-submitted field here.

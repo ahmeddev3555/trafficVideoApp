@@ -180,6 +180,99 @@ class ReportServiceTest {
         assertThat(savedReport.recordedAt).isEqualTo(LocalDateTime.of(2026, 7, 25, 14, 30, 45))
     }
 
+    // A pre-2026-09 client (no recorded_at_is_utc marker) sent device-local wall clock with a
+    // literal "Z"; the server must keep parsing that literally, unchanged.
+    @Test
+    fun `unmarked recorded_at keeps the legacy literal-Z parse`() {
+        val fixedId = UUID.randomUUID()
+        stubSaveAssigningId(fixedId)
+        every { videoStorageService.store(any(), any()) } returns "$fixedId.mp4"
+        every { reportAnalysisJob.analyze(any()) } just runs
+
+        reportService.submit(
+            video = sampleVideo(),
+            latitude = BigDecimal.ONE,
+            longitude = BigDecimal.ONE,
+            accuracy = BigDecimal.ONE,
+            altitude = BigDecimal.ONE,
+            bearing = BigDecimal.ONE,
+            speed = BigDecimal.ONE,
+            recordedAt = "2025-08-29T14:52:37Z",
+            recordedAtIsUtc = null,
+            durationMs = 1000L,
+            deviceId = "device-x",
+            compassHeadingDegrees = null,
+            zoomRatio = null,
+            locationSamplesJson = null,
+            rotationSamplesJson = null,
+        )
+        simulateCommit()
+
+        assertThat(savedReport.recordedAt).isEqualTo(LocalDateTime.of(2025, 8, 29, 14, 52, 37))
+    }
+
+    // A fixed client (recorded_at_is_utc=true) sends a real UTC instant; the "Z" is a real
+    // offset and the stored wall clock is the UTC one.
+    @Test
+    fun `marked recorded_at is parsed as real UTC`() {
+        val fixedId = UUID.randomUUID()
+        stubSaveAssigningId(fixedId)
+        every { videoStorageService.store(any(), any()) } returns "$fixedId.mp4"
+        every { reportAnalysisJob.analyze(any()) } just runs
+
+        reportService.submit(
+            video = sampleVideo(),
+            latitude = BigDecimal.ONE,
+            longitude = BigDecimal.ONE,
+            accuracy = BigDecimal.ONE,
+            altitude = BigDecimal.ONE,
+            bearing = BigDecimal.ONE,
+            speed = BigDecimal.ONE,
+            recordedAt = "2025-08-29T14:52:37Z",
+            recordedAtIsUtc = true,
+            durationMs = 1000L,
+            deviceId = "device-x",
+            compassHeadingDegrees = null,
+            zoomRatio = null,
+            locationSamplesJson = null,
+            rotationSamplesJson = null,
+        )
+        simulateCommit()
+
+        assertThat(savedReport.recordedAt).isEqualTo(LocalDateTime.of(2025, 8, 29, 14, 52, 37))
+    }
+
+    // A fixed client in UTC+5 sends the instant with a real offset; the server normalizes it
+    // to UTC before storing the wall clock.
+    @Test
+    fun `marked recorded_at with a real offset is normalized to UTC`() {
+        val fixedId = UUID.randomUUID()
+        stubSaveAssigningId(fixedId)
+        every { videoStorageService.store(any(), any()) } returns "$fixedId.mp4"
+        every { reportAnalysisJob.analyze(any()) } just runs
+
+        reportService.submit(
+            video = sampleVideo(),
+            latitude = BigDecimal.ONE,
+            longitude = BigDecimal.ONE,
+            accuracy = BigDecimal.ONE,
+            altitude = BigDecimal.ONE,
+            bearing = BigDecimal.ONE,
+            speed = BigDecimal.ONE,
+            recordedAt = "2025-08-29T19:52:37+05:00",
+            recordedAtIsUtc = true,
+            durationMs = 1000L,
+            deviceId = "device-x",
+            compassHeadingDegrees = null,
+            zoomRatio = null,
+            locationSamplesJson = null,
+            rotationSamplesJson = null,
+        )
+        simulateCommit()
+
+        assertThat(savedReport.recordedAt).isEqualTo(LocalDateTime.of(2025, 8, 29, 14, 52, 37))
+    }
+
     // Reproduces the orphaned-file gap the finding described: the video is written to disk
     // successfully by `store()`, but the second `save()` (persisting the real video path)
     // then fails. `@Transactional` rolls back the DB insert, but never touches the

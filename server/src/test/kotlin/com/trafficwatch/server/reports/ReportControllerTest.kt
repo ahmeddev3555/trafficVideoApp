@@ -86,7 +86,7 @@ class ReportControllerTest {
     fun `submitReport with all parts and a valid token returns 201 with snake_case response shape`() {
         val reportId = UUID.randomUUID()
         every {
-            reportService.submit(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+            reportService.submit(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         } returns SubmitReportResponse(
             reportId = reportId,
             status = ReportStatus.PENDING,

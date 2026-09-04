@@ -42,9 +42,12 @@ class Report(
     @Column(nullable = false)
     var speed: BigDecimal,
 
-    // Intentionally a timezone-less TIMESTAMP (unlike createdAt/updatedAt below) - the
-    // Android client's recordedAt timestamp format quirk is handled at the parsing layer
-    // in a later task, not here.
+    // Intentionally a timezone-less TIMESTAMP (unlike createdAt/updatedAt below). Since the
+    // 2026-09-03 upload-metadata-fidelity change this holds UTC wall clock for submissions
+    // that carried the recorded_at_is_utc=true marker (ReportService normalizes any offset
+    // to UTC before storing). Rows from older clients hold device-local wall clock that was
+    // mislabelled with a literal "Z" and stored as-is. No historical migration was run - a
+    // dated seam by design (see docs/superpowers/specs/2026-09-03-upload-metadata-fidelity-design.md).
     @Column(name = "recorded_at", nullable = false)
     var recordedAt: LocalDateTime,
 

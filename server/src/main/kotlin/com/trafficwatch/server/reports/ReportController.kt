@@ -44,6 +44,10 @@ class ReportController(
         @RequestParam("recorded_at") recordedAt: String,
         @RequestParam("duration_ms") durationMs: Long,
         @RequestParam("device_id") deviceId: String,
+        // Marker sent by 2026-09+ clients that recorded_at is a true UTC instant. Absent on
+        // older clients (device-local wall clock with a literal "Z") - required = false so
+        // ReportService falls back to the legacy literal-Z parse.
+        @RequestParam("recorded_at_is_utc", required = false) recordedAtIsUtc: Boolean?,
         // Absent on submissions from app versions predating compass capture - required =
         // false rather than rejecting the request outright, so ReportAnalysisJob's "no
         // compass heading" rejection path handles it as an analysis outcome instead.
@@ -64,6 +68,7 @@ class ReportController(
             recordedAt = recordedAt,
             durationMs = durationMs,
             deviceId = deviceId,
+            recordedAtIsUtc = recordedAtIsUtc,
             compassHeadingDegrees = compassHeadingDegrees,
             zoomRatio = zoomRatio,
             locationSamplesJson = locationSamplesJson,

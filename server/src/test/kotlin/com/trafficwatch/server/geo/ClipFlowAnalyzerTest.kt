@@ -87,7 +87,76 @@ class ClipFlowAnalyzerTest {
         assertEquals(1.0, full[0].trackQuality, 1e-9)
 
         val partial = analyzer.qualifyVehicles(listOf(vehicle(1, 90.0, frames = 12, displacement = 500.0)), 0.0, 1920, 1080)
-        assertEquals(0.8, partial[0].trackQuality, 1e-9) // min(4/5, 1) * 1
+        assertEquals(0.8, partial[0].trackQuality, 1e-9) // min(12/15, 1) * 1 * 1
+    }
+
+    @Test
+    fun `frameFactor scales with track length and saturates`() {
+        fun q(frames: Int) = analyzer.qualifyVehicles(
+            listOf(vehicle(1, 90.0, frames = frames, displacement = 5000.0)), 0.0, 1920, 1080,
+        )[0]
+        assertEquals(9.0 / 15.0, q(9).frameFactor, 1e-9)
+        assertEquals(1.0, q(15).frameFactor, 1e-9)
+        assertEquals(1.0, q(40).frameFactor, 1e-9)
+    }
+
+    @Test
+    fun `displacementFactor ramps to one at displacementTrustDiagonals bbox diagonals`() {
+        // vehicle() bbox 50x50 -> diagonal 70.7107; displacementTrustDiagonals default 1.0
+        val diag = 70.71067811865476
+        fun q(disp: Double) = analyzer.qualifyVehicles(
+            listOf(vehicle(1, 90.0, frames = 30, displacement = disp)), 0.0, 1920, 1080,
+        )[0]
+        assertEquals(1.0, q(diag).displacementFactor, 1e-6)
+        assertEquals(0.5, q(diag / 2).displacementFactor, 1e-6)
+        assertEquals(1.0, q(diag * 4).displacementFactor, 1e-6) // clamps
+    }
+
+    @Test
+    fun `bearingSourceFactor penalises only a scale bearing`() {
+        val props = AnalysisProperties(scaleBearingTrustFactor = 0.5)
+        val a = ClipFlowAnalyzer(props)
+        // A "scale" bearing only qualifies with recording-speed corroboration: a location
+        // sample at the track midpoint whose speed is <= 1.0 m/s (same setup the existing
+        // scale-source qualification tests use).
+        val slowTimeline = OrientationTimeline(
+            locationSamples = listOf(
+                com.trafficwatch.server.reports.dto.LocationSampleDto(
+                    latitude = 0.0, longitude = 0.0, accuracy = 5.0, altitude = 0.0,
+                    bearing = 0.0, speed = 0.5, capturedAt = 1000L,
+                ),
+            ),
+            rotationSamples = emptyList(),
+        )
+        val scale = a.qualifyVehicles(
+            listOf(
+                vehicle(1, 90.0, frames = 30, displacement = 500.0, trackMidpointMs = 0L, bearingSource = "scale"),
+            ),
+            0.0, 1920, 1080, orientationTimeline = slowTimeline,
+        )
+        assertEquals(0.5, scale[0].bearingSourceFactor, 1e-9)
+
+        val centroid = a.qualifyVehicles(
+            listOf(vehicle(1, 90.0, frames = 30, displacement = 500.0, bearingSource = "centroid")), 0.0, 1920, 1080,
+        )
+        assertEquals(1.0, centroid[0].bearingSourceFactor, 1e-9)
+
+        val nullSource = a.qualifyVehicles(
+            listOf(vehicle(1, 90.0, frames = 30, displacement = 500.0)), 0.0, 1920, 1080,
+        )
+        assertEquals(1.0, nullSource[0].bearingSourceFactor, 1e-9)
+    }
+
+    @Test
+    fun `candidateQuality ignores corridor_cohesion`() {
+        val low = analyzer.qualifyVehicles(
+            listOf(vehicle(1, 90.0, frames = 30, displacement = 500.0, cohesion = 0.2)), 0.0, 1920, 1080,
+        )
+        val high = analyzer.qualifyVehicles(
+            listOf(vehicle(1, 90.0, frames = 30, displacement = 500.0, cohesion = 0.95)), 0.0, 1920, 1080,
+        )
+        assertEquals(low[0].candidateQuality, high[0].candidateQuality, 1e-9)
+        assertEquals(1.0, low[0].candidateQuality, 1e-9) // frames saturate, displacement saturates, centroid
     }
 
     @Test

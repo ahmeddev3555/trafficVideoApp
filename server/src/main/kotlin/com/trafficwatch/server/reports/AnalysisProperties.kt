@@ -27,6 +27,16 @@ data class AnalysisProperties(
     // apparent size so nearby (large-in-frame) and distant (small-in-frame) vehicles are
     // held to a comparable standard.
     var minDisplacementFraction: Double = 0.15,
+    // Per-candidate track-trust scoring (ClipFlowAnalyzer.FlowVehicle.trackQuality). The
+    // displacement-magnitude factor saturates to 1.0 when a track has translated this many of
+    // its own largest bounding-box diagonals - "moved one full vehicle-length in frame -> its
+    // bearing is dominated by real motion, not centroid jitter". corridor_cohesion is
+    // deliberately NOT a factor here (it double-counts against clipConfidence and penalises
+    // small/fast near-camera tracks - see the 2026-09-04 design).
+    var displacementTrustDiagonals: Double = 1.0,
+    // Multiplier applied to trackQuality for a "scale"-sourced (bbox-diagonal fallback,
+    // near-head-on) bearing. 1.0 = identity; a lever if "scale" bearings prove over-generous.
+    var scaleBearingTrustFactor: Double = 1.0,
     // Learned-history maturity gates - ALL must hold before history testifies.
     var historyMinObservations: Int = 5,
     var historyMinDistinctReporters: Int = 3,

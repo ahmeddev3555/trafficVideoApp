@@ -125,7 +125,11 @@ class ReportAnalysisJobTest {
         corridorId: Long? = 0L,
         corridorCohesion: Double? = 1.0,
         trackFrameCount: Int? = 30,
-        displacementPixels: Double? = 310.0,
+        // >= the default bbox's 2000px diagonal (1414x1414) so displacementFactor saturates to
+        // 1.0 - preserves the "trustworthy track" intent every outcome-based test here relies on
+        // (the old formula's displacement term was a dead 1.0; the 2026-09-04 track-trust score
+        // makes it real). Individual tests override this to exercise a low displacementFactor.
+        displacementPixels: Double? = 2100.0,
         trackMidpointMs: Long? = null,
         scaleTrend: String = "flat",
         scaleGrowthFraction: Double = 0.0,

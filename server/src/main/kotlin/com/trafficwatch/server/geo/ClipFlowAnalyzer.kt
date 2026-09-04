@@ -24,16 +24,25 @@ private const val TRACK_FRAMES_SATURATION = 15.0
  */
 private const val MAX_RECORDING_SPEED_FOR_SCALE_BEARING_MPS = 1.0
 
-/** A vehicle qualified for flow analysis: absolute bearing + quality facts. */
+/** A vehicle qualified for flow analysis: absolute bearing + track-trust facts. */
 data class FlowVehicle(
     val vehicle: VehicleAnalysisResult,
     val absoluteBearingDegrees: Double,
-    val trackQuality: Double,
+    /** min(frames / TRACK_FRAMES_SATURATION, 1.0). */
+    val frameFactor: Double,
+    /** min(displacementPixels / (displacementTrustDiagonals × largestBboxDiagonal), 1.0). */
+    val displacementFactor: Double,
+    /** [AnalysisProperties.scaleBearingTrustFactor] for a "scale" bearing; 1.0 for "centroid" or a null/legacy source. */
+    val bearingSourceFactor: Double,
     val corridorId: Long,
+    /** Retained: feeds CorridorConsensus.meanCohesion only. NOT in per-candidate scoring (2026-09-04 design). */
     val corridorCohesion: Double,
     val orientationSource: OrientationSource? = null,
 ) {
-    val candidateQuality: Double get() = trackQuality * corridorCohesion
+    val trackQuality: Double get() = frameFactor * displacementFactor * bearingSourceFactor
+
+    /** Retained for direction_evidence schema stability; identical to [trackQuality]. */
+    val candidateQuality: Double get() = trackQuality
 }
 
 /** One corridor's flow consensus (computed excluding any evaluated candidate). */
@@ -118,8 +127,12 @@ class ClipFlowAnalyzer(
             FlowVehicle(
                 vehicle = vehicle,
                 absoluteBearingDegrees = (orientationDegrees + frameBearing) % 360.0,
-                trackQuality = min(frames / TRACK_FRAMES_SATURATION, 1.0) *
-                    min(displacement / minDisplacement, 1.0).coerceAtMost(1.0),
+                frameFactor = min(frames / TRACK_FRAMES_SATURATION, 1.0),
+                displacementFactor = min(
+                    displacement / (properties.displacementTrustDiagonals * bboxDiagonal), 1.0,
+                ),
+                bearingSourceFactor =
+                    if (vehicle.bearingSource == "scale") properties.scaleBearingTrustFactor else 1.0,
                 corridorId = corridorId,
                 corridorCohesion = cohesion,
                 orientationSource = resolved?.source,

@@ -567,8 +567,18 @@ considered rather than forgotten.
   (a dated seam). Nothing consumes `recorded_at` that this seam breaks -
   `OrientationTimeline` deliberately keys off sample `captured_at` (epoch
   millis), which was always correct.
+
+  **Release status 2026-09-04**: server half deployed to prod
+  (`ReportService` dual-parse + a new `DateTimeParseException` &rarr; 400
+  handler in `GlobalExceptionHandler`, replacing an unhandled 500 on a
+  malformed `recorded_at`). It is **inert for live traffic** until an
+  Android release ships `recorded_at_is_utc=true` - every current client
+  still takes the unchanged legacy literal-`Z` path. Client change is on
+  `main`, **not in any released APK yet** - it goes out with the next app
+  build alongside the sibling retry-fidelity fix below.
   *(added 2026-08-03, found during continuous-GPS-heading-capture final
-  review; addressed 2026-09-03)*
+  review; addressed 2026-09-03, server deployed 2026-09-04, awaiting
+  Android release)*
 - **A report that fails its first upload attempt permanently loses its
   `location_samples`/`rotation_samples`.** `RetryUploadUseCase` re-enqueues
   from the persisted `Report` Room entity, which never gained
@@ -611,9 +621,20 @@ considered rather than forgotten.
   the *same* v4 `MIGRATION_3_4` - the v4 schema never reached a device).
   A retried or cellular-confirmed report now drops none of the four
   fields. The pre-release stuck-reports caveat still stands.
+
+  **Release status 2026-09-04**: entirely client-side - **on `main`, not
+  in any released APK**. Ships with the next Android build (same build as
+  the `recorded_at` UTC fix above). What to check on that release:
+  (1) `MIGRATION_3_4` (v3 &rarr; v4, four additive columns) runs cleanly
+  on a real device with a pre-existing v3 DB - there is no automated
+  migration test (no Robolectric/instrumented infra in the project), only
+  Room's first-open schema validation; (2) a report that fails its first
+  Wi-Fi attempt and is retried from History lands on the server with all
+  of `location_samples`, `rotation_samples`, `compass_heading_degrees`,
+  `zoom_ratio` populated. Nothing to deploy server-side for this half.
   *(added 2026-08-03, updated 2026-08-04 to cover rotation_samples too,
   confirmed in production 2026-08-05, fixed 2026-09-03, widened to
-  compass/zoom 2026-09-04)*
+  compass/zoom 2026-09-04, awaiting Android release)*
 - **`Report.locationSamples`/`rotationSamples` round-trip a Kotlin `null`
   through the database as the literal 4-character text `"null"`, not a
   true SQL NULL - any code reading these columns must check for both.**

@@ -602,6 +602,33 @@ considered rather than forgotten.
   displacement) - the ByteTrack-continuity gap is its own item.
   *(added 2026-08-30 during stationary-approach detection production replay)*
 
+- **Per-track OCR + frame-encoding waste on unqualifiable tracks - shipped
+  2026-09-05.** `AnalysisPipeline._summarize_track` ran up to
+  `OCR_CROPS_PER_TRACK` EasyOCR calls plus a JPEG+base64 encode for *every*
+  detected track, though the server only ever reads `plateText` /
+  `frameJpegBase64` off the single scored `best` candidate. A track under
+  `MIN_OBSERVATIONS` (12) frames gets `bearing_degrees = None` and
+  `scale_trend = "flat"`, so `ClipFlowAnalyzer.qualifyVehicles` (non-null
+  bearing gate) and the stationary-approach path (`scaleTrend` "growing" /
+  "shrinking" gates) both exclude it - the work was provably discarded.
+  Shipped: gate both calls behind `len(frames_sorted) >= MIN_OBSERVATIONS`
+  in `pipeline.py`; `bounding_box` still always populated; no schema/Kotlin
+  change (fields already `Optional`/nullable). This is a partial mitigation
+  of the intermittent 180 s video-analysis timeout (the `24908` /
+  `71f78` symptom, and the "separate perf issue" noted in the
+  divided-carriageway entry above) - it removes waste from short/noise
+  tracks but not from the qualifying long tracks that dominate a busy
+  clip's real cost. Root cause is also infra: the VPS is 2 vCPU / 3.7 GB
+  RAM and `video-analysis` idles at 2.47 GB (66 %). Deferred, ranked:
+  (1) defer-to-winner architecture (only OCR/encode the server's chosen
+  candidate, for every clip - needs a short-TTL per-track frame cache in
+  `video-analysis` + a second endpoint), (2) modest read-timeout bump,
+  (3) `imgsz` / `OCR_CROPS_PER_TRACK` reduction, (4) VPS resize. Also: a
+  future track-fragmentation investigation that needs a sub-12-frame
+  fragment's frame image must temporarily disable this gate to recover it.
+  See `docs/superpowers/specs/2026-09-05-video-analysis-cost-reduction-design.md`.
+  *(added and shipped 2026-09-05)*
+
 ## Upload reliability / data integrity
 
 **Area:** `app/src/main/java/com/trafficwatch/app/feature/upload/UploadWorker.kt`,

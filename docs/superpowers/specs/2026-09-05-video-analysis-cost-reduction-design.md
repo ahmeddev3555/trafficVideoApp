@@ -224,3 +224,13 @@ clip with many genuinely long-tracked vehicles.
   request eventually succeeds) rather than the cause, and lengthens how long a
   report sits `PENDING`. Not proposed here; if this fix's measured improvement is
   insufficient, a modest bump is a cheap next lever, but it's not this spec's job.
+
+## Note: diagnostic side effect
+
+A raw dump of the `video-analysis` response (the diagnostic re-run flow used for
+false-positive / false-negative investigations) no longer carries a frame image or
+plate for sub-`MIN_OBSERVATIONS` tracks. Production outcomes are unaffected — those
+tracks were never analyzed — but a future track-fragmentation investigation (e.g.
+confirming "same rider across two track IDs" where one fragment is only 8 frames,
+per the open backlog item) that needs the short fragment's frame image must
+temporarily disable this gate to recover it.

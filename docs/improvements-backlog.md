@@ -530,7 +530,32 @@ considered rather than forgotten.
   `displacement &divide; largest-bbox` rather than remove it. Traded against
   the confirmed true-positive miss; reversible via
   `displacement-trust-diagonals`.
-  *(added 2026-08-30, priority raised same day after the second occurrence; addressed 2026-09-04 pending 71f78 replay)*
+
+  **Update 2026-09-05 — production replay attempted, inconclusive.**
+  Deployed and re-submitted `71f78`, `50bcc6`, `649b9a`, and the
+  previously-CONFIRMED `be92dbec` as throwaway reports. All four hit a
+  confound *before* reaching candidate scoring, so none exercised the new
+  formula: `71f78` hit the known video-analysis 180s-timeout issue (no
+  result); `50bcc6` completed analysis but produced `sources: []` - no
+  OSM tag, no clip consensus, no history, so no candidate ever reached the
+  `candidateQuality` line this run; `649b9a` resolved to
+  `Unknown(DIVIDED_CARRIAGEWAY)` (the divided-carriageway fix working as
+  intended) and its clip consensus (0.33 confidence) found no candidate
+  within tolerance - **it did not confirm, so no regression toward a worse
+  false positive**; `be92dbec` resolved to `Unknown` this run instead of
+  its original `OneWay`, an OSM-resolution difference across submissions
+  unrelated to this change. Re-running throwaway submissions against a
+  live pipeline with two independently-flaky upstream dependencies
+  (video-analysis reliability, Overpass/OSM non-determinism across runs -
+  both their own backlog items) is not a reliable way to calibrate this
+  one parameter. **Decision:** leave `displacement-trust-diagonals` at the
+  `1.0` ship default rather than tune blind; let the new evidence fields
+  (`candidate_corridor_cohesion`, `track_displacement_factor`, etc.) do
+  the calibration on real future submissions instead, per the watch
+  memory. Entry stays OPEN - `71f78`/`50bcc6` still unconfirmed as of this
+  update; no report has yet exercised the new scoring formula end to end
+  in production.
+  *(added 2026-08-30, priority raised same day after the second occurrence; addressed 2026-09-04; production replay attempted and found inconclusive 2026-09-05, calibration deferred to real-world monitoring)*
 
 - **Explored (not implemented): a vehicle-orientation (front vs rear)
   cross-check as an additional guard against false-positive wrong-way

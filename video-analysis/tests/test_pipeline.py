@@ -6,6 +6,7 @@ import pytest
 from app.config import Settings
 from app.detection import TrackedFrame
 from app.pipeline import AnalysisPipeline
+import app.pipeline as pipeline_module
 
 
 class FakeDetector:
@@ -22,6 +23,18 @@ class FakeDetector:
 
 class FakePlateReader:
     def read_plate(self, crop):
+        return "ABC-123", 0.75
+
+
+class SpyPlateReader:
+    """Like FakePlateReader, but counts calls so a test can assert read_plate was never
+    invoked for a track this change is supposed to skip entirely."""
+
+    def __init__(self):
+        self.call_count = 0
+
+    def read_plate(self, crop):
+        self.call_count += 1
         return "ABC-123", 0.75
 
 
@@ -70,8 +83,10 @@ def test_summarize_track_attaches_bounding_box_and_frame_from_the_largest_bbox_f
     assert vehicle.bounding_box.y1 == 5.0
     assert vehicle.bounding_box.x2 == 30.0
     assert vehicle.bounding_box.y2 == 30.0
-    assert vehicle.frame_jpeg_base64 is not None
-    assert len(vehicle.frame_jpeg_base64) > 0
+    # This 2-frame track is below MIN_OBSERVATIONS (12), so frame-encoding (and OCR) is
+    # skipped entirely - see test_summarize_track_skips_ocr_and_frame_encoding_below_min_observations.
+    # bounding_box, however, stays populated regardless of track length (it's free).
+    assert vehicle.frame_jpeg_base64 is None
     assert vehicle.track_frame_count == 2
     assert vehicle.displacement_pixels > 0.0
 
@@ -317,3 +332,84 @@ def test_summarize_track_emits_flat_for_a_stable_size_vehicle():
     v = pipeline.analyze("unused.mp4").vehicles[0]
     assert v.scale_trend == "flat"
     assert v.scale_growth_fraction == 0.0
+
+
+def test_summarize_track_skips_ocr_and_frame_encoding_below_min_observations(monkeypatch):
+    # MIN_OBSERVATIONS is 12 - one frame short must skip both OCR and frame-encoding
+    # entirely, since such a track can never clear resolve_bearing's own MIN_OBSERVATIONS
+    # gate and therefore can never be scored or selected by the server.
+    frames = [
+        _make_frame(track_id=1, frame_index=i, bbox=(10.0, 10.0, 20.0, 20.0))
+        for i in range(11)
+    ]
+    spy_plate_reader = SpyPlateReader()
+
+    def _fail_if_called(frame):
+        raise AssertionError("encode_frame_to_base64_jpeg must not be called for a track below MIN_OBSERVATIONS")
+
+    monkeypatch.setattr(pipeline_module, "encode_frame_to_base64_jpeg", _fail_if_called)
+
+    pipeline = AnalysisPipeline(
+        settings=_fake_settings(), detector=FakeDetector(frames), plate_reader=spy_plate_reader
+    )
+
+    response = pipeline.analyze("unused.mp4")
+
+    vehicle = response.vehicles[0]
+    assert spy_plate_reader.call_count == 0
+    assert vehicle.plate_text is None
+    assert vehicle.plate_confidence is None
+    assert vehicle.frame_jpeg_base64 is None
+    # Cheap fields still populated regardless of track length.
+    assert vehicle.bounding_box is not None
+    assert vehicle.track_frame_count == 11
+
+
+def test_summarize_track_runs_ocr_and_frame_encoding_at_exactly_min_observations():
+    # Boundary case: exactly MIN_OBSERVATIONS (12) frames must still run OCR/encoding -
+    # this is an off-by-one check against the >= vs > choice in the gate.
+    frames = [
+        _make_frame(track_id=1, frame_index=i, bbox=(10.0, 10.0, 20.0, 20.0))
+        for i in range(12)
+    ]
+    spy_plate_reader = SpyPlateReader()
+
+    pipeline = AnalysisPipeline(
+        settings=_fake_settings(), detector=FakeDetector(frames), plate_reader=spy_plate_reader
+    )
+
+    response = pipeline.analyze("unused.mp4")
+
+    vehicle = response.vehicles[0]
+    assert spy_plate_reader.call_count > 0
+    assert vehicle.plate_text == "ABC-123"
+    assert vehicle.plate_confidence == 0.75
+    assert vehicle.frame_jpeg_base64 is not None
+    assert len(vehicle.frame_jpeg_base64) > 0
+
+
+def test_summarize_track_runs_ocr_and_frame_encoding_for_long_track_with_no_resolvable_bearing():
+    # A track that clears MIN_OBSERVATIONS but has neither lateral motion nor a bbox-scale
+    # change (a genuinely stationary detection) gets bearing_degrees=None from
+    # resolve_bearing - but the filter in this plan is frame-count only, NOT "has a
+    # bearing", so OCR/encoding must still run. A long stationary track can still matter to
+    # the server's approach-path scale-trend signal at >= approachMinFrames (30); this test
+    # only needs to clear MIN_OBSERVATIONS (12) to prove the frame-count gate alone lets it
+    # through.
+    frames = [
+        _make_frame(track_id=1, frame_index=i, bbox=(10.0, 10.0, 20.0, 20.0))
+        for i in range(15)
+    ]
+    spy_plate_reader = SpyPlateReader()
+
+    pipeline = AnalysisPipeline(
+        settings=_fake_settings(), detector=FakeDetector(frames), plate_reader=spy_plate_reader
+    )
+
+    response = pipeline.analyze("unused.mp4")
+
+    vehicle = response.vehicles[0]
+    assert vehicle.bearing_degrees is None
+    assert spy_plate_reader.call_count > 0
+    assert vehicle.plate_text == "ABC-123"
+    assert vehicle.frame_jpeg_base64 is not None

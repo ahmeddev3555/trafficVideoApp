@@ -10,6 +10,7 @@ from app.frame_encoding import encode_frame_to_base64_jpeg
 from app.schemas import AnalyzeResponse, BoundingBox, VehicleResult
 from app.tracking_bearing import (
     MIN_DISPLACEMENT_PIXELS,
+    MIN_OBSERVATIONS,
     bbox_diagonal,
     compute_displacement_pixels,
     compute_track_midpoint_ms,
@@ -137,12 +138,25 @@ class AnalysisPipeline:
         vehicle_type = frames_sorted[0].vehicle_type
         detection_confidence = max(f.confidence for f in frames_sorted)
 
-        plate_text, plate_confidence = self._read_best_plate(frames_sorted)
-
         representative_frame = max(frames_sorted, key=_bbox_area)
         x1, y1, x2, y2 = representative_frame.bbox
         bounding_box = BoundingBox(x1=x1, y1=y1, x2=x2, y2=y2)
-        frame_jpeg_base64 = encode_frame_to_base64_jpeg(representative_frame.frame)
+
+        # A track below MIN_OBSERVATIONS frames has bearing_degrees == None (resolve_bearing
+        # requires >= MIN_OBSERVATIONS observations; scale_trend does too) and can therefore
+        # never qualify as a FlowVehicle on the server - ClipFlowAnalyzer.qualifyVehicles's
+        # first line requires a non-null bearing. It also can't be an approach-path grower
+        # (that path additionally requires trackFrameCount >= approachMinFrames(30), well
+        # above MIN_OBSERVATIONS). Such a track can never be the server's `best` candidate,
+        # so its plate and frame are never read - skip the two most expensive per-track
+        # operations rather than compute and discard them. See the 2026-09-05
+        # video-analysis-cost-reduction design.
+        if len(frames_sorted) >= MIN_OBSERVATIONS:
+            plate_text, plate_confidence = self._read_best_plate(frames_sorted)
+            frame_jpeg_base64 = encode_frame_to_base64_jpeg(representative_frame.frame)
+        else:
+            plate_text, plate_confidence = None, None
+            frame_jpeg_base64 = None
 
         return VehicleResult(
             track_id=track_id,

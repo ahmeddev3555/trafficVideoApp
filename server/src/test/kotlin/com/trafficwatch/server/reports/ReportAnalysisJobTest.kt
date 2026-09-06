@@ -1066,8 +1066,8 @@ class ReportAnalysisJobTest {
     fun `approach path does not run on a two-way street`() {
         // Passes via the upstream TwoWay early return in determineOutcome (which rejects
         // before the approach-path branch guard is ever reached), not the branch guard
-        // itself - the branch guard's own "not OneWay" exclusion is covered by the
-        // "approach path does not run when the street is not resolved to a one-way" test.
+        // itself - the branch guard's own exclusion of NotFound / LookupFailed is covered by
+        // the "still does NOT run for a NotFound resolution" test.
         val report = sampleReport(locationSamples = stationaryLocationSamplesJson())
         every {
             streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
@@ -1162,8 +1162,10 @@ class ReportAnalysisJobTest {
                 vehicle(trackId = 1, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
                 vehicle(trackId = 2, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
                 vehicle(trackId = 3, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                // trackId 5: growth 0.5 < approachGrowthMin (0.8). trackId 6: only 15 tracked
+                // frames < approachMinFrames (20, relaxed from 30 on 2026-09-06). Both dropped.
                 vehicle(trackId = 5, bearingDegrees = 185.0, scaleTrend = "growing", scaleGrowthFraction = 0.5, trackFrameCount = 60),
-                vehicle(trackId = 6, bearingDegrees = 185.0, scaleTrend = "growing", scaleGrowthFraction = 1.4, trackFrameCount = 20),
+                vehicle(trackId = 6, bearingDegrees = 185.0, scaleTrend = "growing", scaleGrowthFraction = 1.4, trackFrameCount = 15),
             ),
         )
         every { reportRepository.save(any()) } answers { firstArg() }
@@ -1213,17 +1215,18 @@ class ReportAnalysisJobTest {
     }
 
     @Test
-    fun `approach path does not run when the street is not resolved to a one-way`() {
+    fun `approach path is REJECTED when the receding consensus is too small on a non-divided Unknown street`() {
         val report = sampleReport(locationSamples = stationaryLocationSamplesJson())
         every {
             streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
         } returns DirectionResolution.Unknown("Side Street", UnknownReason.NO_ONEWAY_TAG)
         // Same shape as the CONFIRMED-via-approach-path test: 4 shrinking + 1 strong grower
-        // on a verified-stationary camera. The only difference is the street resolves to
-        // Unknown, not OneWay - the branch guard must keep the approach path from running.
-        // DIVIDED_CARRIAGEWAY is now the one Unknown reason that reaches the approach path
-        // (with flow corroboration); every other Unknown reason - NO_ONEWAY_TAG here - is
-        // still excluded outright.
+        // on a verified-stationary camera, street resolving to Unknown(NO_ONEWAY_TAG). Every
+        // Unknown reason now reaches tryStationaryApproachDetection - eligibility is no longer
+        // restricted to DIVIDED_CARRIAGEWAY - so what rejects here is the corroboration gate:
+        // only 4 non-growing vehicles form the strongest consensus, and 4 < the 5-member
+        // approachCorroborationMinMembers minimum, so the gate returns null and the outcome
+        // stays REJECTED.
         every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
             listOf(
                 vehicle(trackId = 1, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
@@ -1280,6 +1283,78 @@ class ReportAnalysisJobTest {
         val evidence = objectMapper.readTree(report.directionEvidence)
         assertThat(evidence.get("corroboration_consensus_members").asInt()).isGreaterThanOrEqualTo(5)
         assertThat(evidence.get("corroboration_resultant_length").asDouble()).isGreaterThanOrEqualTo(0.9)
+    }
+
+    @Test
+    fun `stationary-approach confirms on an AMBIGUOUS_NEAREST_STREET Unknown resolution`() {
+        val report = sampleReport(locationSamples = stationaryLocationSamplesJson())
+        every { streetDirectionResolver.resolve(any(), any(), any()) } returns
+            DirectionResolution.Unknown("Khayaban-e-Jinnah", UnknownReason.AMBIGUOUS_NEAREST_STREET)
+        // Mirrors the DIVIDED_CARRIAGEWAY confirm test but with reason AMBIGUOUS_NEAREST_STREET:
+        // the widened approachEligible now lets every Unknown reason reach
+        // tryStationaryApproachDetection, and the corroboration gate (stationary camera, lone
+        // strong grower, >=5-member R>=0.9 non-growing consensus) is the safeguard. The grower
+        // sits alone in corridor 2 with only 24 tracked frames - which clears the relaxed
+        // approachMinFrames (20, was 30). The 5-vehicle non-growing stream (>=3 "shrinking",
+        // the rest "flat") all at 190.0 forms one tight corridor-1 consensus (R ~ 1.0).
+        every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
+            listOf(
+                vehicle(trackId = 1, corridorId = 1L, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 2, corridorId = 1L, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 3, corridorId = 1L, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 4, corridorId = 1L, bearingDegrees = 190.0, scaleTrend = "flat", trackFrameCount = 40),
+                vehicle(trackId = 6, corridorId = 1L, bearingDegrees = 190.0, scaleTrend = "flat", trackFrameCount = 40),
+                vehicle(
+                    trackId = 5, corridorId = 2L, bearingDegrees = 185.0, detectionConfidence = 0.9,
+                    plateText = "LEA-9999", plateConfidence = 0.7,
+                    scaleTrend = "growing", scaleGrowthFraction = 1.5, trackFrameCount = 24,
+                ),
+            ),
+        )
+        every { wrongWayFrameStorageService.store(any(), any()) } returns "frames/x.jpg"
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.CONFIRMED)
+        assertThat(report.licensePlate).isEqualTo("LEA-9999")
+        assertThat(report.analysisMessage).contains("approaching a stationary camera")
+        assertThat(report.directionEvidence).contains("stationary_approach")
+        val evidence = objectMapper.readTree(report.directionEvidence)
+        assertThat(evidence.get("resolution_state").asText()).isEqualTo("UNKNOWN_AMBIGUOUS_NEAREST_STREET")
+        assertThat(evidence.get("corroboration_consensus_members").asInt()).isGreaterThanOrEqualTo(5)
+        assertThat(evidence.get("corroboration_resultant_length").asDouble()).isGreaterThanOrEqualTo(0.9)
+    }
+
+    @Test
+    fun `stationary-approach still does NOT run for a NotFound resolution`() {
+        val report = sampleReport(locationSamples = stationaryLocationSamplesJson())
+        every { streetDirectionResolver.resolve(any(), any(), any()) } returns DirectionResolution.NotFound
+        // Identical fixture to the AMBIGUOUS_NEAREST_STREET confirm test - a fixture that WOULD
+        // satisfy the corroboration gate - but NotFound means we have no confidence we are on a
+        // mapped road at all, so approachEligible stays false and the path never runs -> REJECTED.
+        every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
+            listOf(
+                vehicle(trackId = 1, corridorId = 1L, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 2, corridorId = 1L, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 3, corridorId = 1L, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),
+                vehicle(trackId = 4, corridorId = 1L, bearingDegrees = 190.0, scaleTrend = "flat", trackFrameCount = 40),
+                vehicle(trackId = 6, corridorId = 1L, bearingDegrees = 190.0, scaleTrend = "flat", trackFrameCount = 40),
+                vehicle(
+                    trackId = 5, corridorId = 2L, bearingDegrees = 185.0, detectionConfidence = 0.9,
+                    plateText = "LEA-9999", plateConfidence = 0.7,
+                    scaleTrend = "growing", scaleGrowthFraction = 1.5, trackFrameCount = 24,
+                ),
+            ),
+        )
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
+        assertThat(report.licensePlate).isNull()
+        assertThat(report.wrongWayConfidence).isNull()
+        assertThat(report.directionEvidence).doesNotContain("stationary_approach")
     }
 
     @Test
@@ -1428,10 +1503,13 @@ class ReportAnalysisJobTest {
     }
 
     @Test
-    fun `stationary approach does NOT run on a NO_ONEWAY_TAG Unknown street`() {
+    fun `stationary approach on a NO_ONEWAY_TAG Unknown street is REJECTED without a large receding consensus`() {
         val report = sampleReport(locationSamples = stationaryLocationSamplesJson())
         every { streetDirectionResolver.resolve(any(), any(), any()) } returns
             DirectionResolution.Unknown("Side Street", UnknownReason.NO_ONEWAY_TAG)
+        // tryStationaryApproachDetection now runs for any Unknown reason, but only 3 non-growing
+        // vehicles form the consensus - 3 < approachCorroborationMinMembers (5) - so the
+        // corroboration gate returns null and the outcome stays REJECTED.
         every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
             listOf(
                 vehicle(trackId = 1, bearingDegrees = 190.0, scaleTrend = "shrinking", trackFrameCount = 40),

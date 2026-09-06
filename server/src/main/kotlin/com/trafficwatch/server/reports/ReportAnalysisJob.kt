@@ -14,7 +14,6 @@ import com.trafficwatch.server.geo.FlowVehicle
 import com.trafficwatch.server.geo.FusionResult
 import com.trafficwatch.server.geo.OrientationTimeline
 import com.trafficwatch.server.geo.StreetDirectionResolver
-import com.trafficwatch.server.geo.UnknownReason
 import com.trafficwatch.server.reports.dto.LocationSampleDto
 import com.trafficwatch.server.reports.dto.RotationSampleDto
 import com.trafficwatch.server.storage.VideoStorageService
@@ -188,15 +187,21 @@ class ReportAnalysisJob(
             // box is growing is a potential violator and must never corroborate the flow it opposes.
             val corroborationConsensus =
                 strongestFlowConsensus(flowVehicles.filterNot { it.vehicle.scaleTrend == "growing" })
+            // Every Unknown reason is eligible, not just DIVIDED_CARRIAGEWAY: the strong
+            // corroboration gate inside tryStationaryApproachDetection (stationary camera,
+            // exactly one strong grower, >=5-member R>=0.9 non-growing consensus) is the real
+            // safeguard against a false confirm, not the reason restriction. NotFound /
+            // LookupFailed stay ineligible - with no matched OSM way we have no confidence we
+            // are on a mapped road at all. TwoWay is handled by an upstream early return.
             val approachEligible = when (resolution) {
                 is DirectionResolution.OneWay -> true
-                is DirectionResolution.Unknown -> resolution.reason == UnknownReason.DIVIDED_CARRIAGEWAY
+                is DirectionResolution.Unknown -> true
                 else -> false
             }
             if (approachEligible) {
                 tryStationaryApproachDetection(
                     report, analysis, orientationTimeline, streetName, resolution,
-                    // Consulted only on the DIVIDED_CARRIAGEWAY branch; null on OneWay.
+                    // Consulted only on the Unknown branch; null on OneWay.
                     corroboration = (resolution as? DirectionResolution.Unknown)?.let { corroborationConsensus },
                 )?.let { return it }
             }

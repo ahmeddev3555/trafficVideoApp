@@ -64,7 +64,7 @@ app:
     history-min-distinct-reporters: 3
     history-min-resultant-length: 0.8
     approach-growth-min: 0.8
-    approach-min-frames: 30
+    approach-min-frames: 20
     approach-min-detection: 0.5
     approach-corroboration-min-members: 5
     approach-corroboration-min-resultant-length: 0.9

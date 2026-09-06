@@ -52,7 +52,10 @@ data class AnalysisProperties(
     // confidence. Calibrated 2026-08-30 against five real reports (see the design spec's
     // Appendix): real violators grew 0.93-2.24; every non-violator grower topped out at 0.44.
     var approachGrowthMin: Double = 0.8,
-    var approachMinFrames: Int = 30,
+    // Frame floor relaxed 30 -> 20 on 2026-09-06: the corroboration gate (stationary camera,
+    // lone strong grower, >=5-member R>=0.9 receding consensus), not the tracked-frame count,
+    // is the safeguard against a false stationary-approach confirm.
+    var approachMinFrames: Int = 20,
     var approachMinDetection: Double = 0.5,
     // Stationary-approach on a DIVIDED_CARRIAGEWAY Unknown street additionally requires the
     // non-growing receding traffic to form one LARGE, TIGHTLY-COHERENT stream and the grower

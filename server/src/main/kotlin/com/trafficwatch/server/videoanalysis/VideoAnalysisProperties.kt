@@ -20,5 +20,9 @@ import org.springframework.stereotype.Component
 data class VideoAnalysisProperties(
     var baseUrl: String = "http://localhost:8000",
     var connectTimeoutMs: Int = 5000,
-    var readTimeoutMs: Int = 180_000,
+    // One clip's analysis (YOLOv8 + ByteTrack + EasyOCR, CPU-only) runs ~150s on the prod
+    // box, and a busy 50-vehicle clip legitimately runs longer. The analysisExecutor is
+    // single-threaded (see AsyncConfig) so requests never overlap - this only needs
+    // headroom for one clip's worst case, not for contention.
+    var readTimeoutMs: Int = 300_000,
 )

@@ -47,7 +47,10 @@ app:
   video-analysis:
     base-url: "http://localhost:8000"
     connect-timeout-ms: 5000
-    read-timeout-ms: 180000
+    # Headroom for one clip's worst-case analysis time. Requests are serialised by the
+    # single-threaded analysisExecutor (see AsyncConfig), so this never has to cover
+    # concurrent analyses - only the slowest single clip.
+    read-timeout-ms: 300000
   analysis:
     wrong-way-tolerance-degrees: 60
     confirmation-threshold: 0.5

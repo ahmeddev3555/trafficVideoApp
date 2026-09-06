@@ -117,8 +117,13 @@ class VehicleDetector:
         detections = sv.Detections.from_ultralytics(result)
 
         vehicle_mask = np.isin(detections.class_id, list(VEHICLE_CLASS_IDS.keys()))
-        confidence_mask = detections.confidence >= self._settings.min_detection_confidence
-        detections = detections[vehicle_mask & confidence_mask]
+        is_motorcycle = detections.class_id == MOTORCYCLE_CLASS_ID
+        floor = np.where(
+            is_motorcycle,
+            self._settings.motorcycle_min_confidence,
+            self._settings.min_detection_confidence,
+        )
+        detections = detections[vehicle_mask & (detections.confidence >= floor)]
 
         moto_mask = detections.class_id == MOTORCYCLE_CLASS_ID
         moto_detections = self._moto_tracker.update_with_detections(detections[moto_mask])

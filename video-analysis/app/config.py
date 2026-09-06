@@ -28,6 +28,15 @@ class Settings(BaseSettings):
 
     min_detection_confidence: float = 0.4
 
+    # A head-on / near-camera motorcycle is mostly occluded by its rider and reads at
+    # ~0.25-0.45 confidence (a wrong-way rider approaching a stationary camera is the
+    # motivating case - see the 2026-09-06 counter-flow spec). Car/bus/truck stay at
+    # min_detection_confidence. The extra low-confidence motorcycle tracks this admits
+    # are filtered downstream by ByteTrack track confirmation and the server's
+    # MIN_TRACK_FRAMES / MIN_OBSERVATIONS gates, and sub-12-frame tracks skip OCR since
+    # the 2026-09-05 change, so they are cheap.
+    motorcycle_min_confidence: float = 0.25
+
     # Floor below which an OCR read is discarded rather than returned as a guess.
     plate_confidence_floor: float = 0.3
 

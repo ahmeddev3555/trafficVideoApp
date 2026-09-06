@@ -274,3 +274,67 @@ def test_both_trackers_reset_at_start_of_each_video(mock_video_capture, mock_yol
     # The trackers' internal state should be clean (lost_tracks should be empty after reset).
     assert len(detector._tracker.lost_tracks) == 0, "car tracker should have no lost tracks after reset"
     assert len(detector._moto_tracker.lost_tracks) == 0, "moto tracker should have no lost tracks after reset"
+
+
+@patch("app.detection.YOLO")
+@patch("app.detection.cv2.VideoCapture")
+def test_motorcycle_uses_lower_confidence_floor_than_cars(mock_video_capture, mock_yolo):
+    """A head-on / near-camera motorcycle is mostly occluded by its rider and reads at
+    ~0.25-0.45 confidence, so the motorcycle class (COCO id 3) gets a lower 0.25 floor
+    while car/bus/truck keep 0.4: a motorcycle at 0.3 reaches the tracker, a car (id 2)
+    at 0.3 does not, and both are admitted at 0.5.
+
+    Asserts on the detections handed to the trackers - that is exactly the output of the
+    per-class confidence floor in _detect_frame. ByteTrack's own internal new-track score
+    gate (activation_threshold + 0.1) would otherwise swallow a 0.3 detection before it
+    surfaced as a TrackedFrame, so the trackers are stubbed to record their input."""
+    dummy_frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    mock_capture = MagicMock()
+    mock_capture.read.side_effect = [(True, dummy_frame), (False, None)]
+    mock_video_capture.return_value = mock_capture
+
+    def fake_model_call(frame, **kwargs):
+        return ["one_frame"]  # content unused - from_ultralytics is faked below
+
+    mock_yolo.return_value = MagicMock(side_effect=fake_model_call)
+
+    def fake_from_ultralytics(result):
+        # moto@0.3, car@0.3, moto@0.5, car@0.5
+        return sv.Detections(
+            xyxy=np.array(
+                [[10, 10, 30, 30], [40, 40, 60, 60], [70, 10, 90, 30], [10, 70, 30, 90]],
+                dtype=np.float32,
+            ),
+            confidence=np.array([0.3, 0.3, 0.5, 0.5], dtype=np.float32),
+            class_id=np.array([3, 2, 3, 2]),
+        )
+
+    from app.detection import VehicleDetector
+
+    settings = _fake_settings()
+    settings.frame_stride = 1
+
+    seen: dict[str, sv.Detections] = {}
+
+    def record(key):
+        def _stub(detections):
+            seen[key] = detections
+            return sv.Detections.empty()  # nothing to yield downstream
+
+        return _stub
+
+    with patch("app.detection.sv.Detections.from_ultralytics", side_effect=fake_from_ultralytics):
+        detector = VehicleDetector(settings)
+        detector._moto_tracker.update_with_detections = record("moto")
+        detector._tracker.update_with_detections = record("other")
+        list(detector.track_video("irrelevant.mp4"))
+
+    moto_confidences = sorted(round(c, 2) for c in seen["moto"].confidence.tolist())
+    other_confidences = sorted(round(c, 2) for c in seen["other"].confidence.tolist())
+
+    assert moto_confidences == [0.3, 0.5], (
+        f"both motorcycles should clear the lower 0.25 floor, got {moto_confidences}"
+    )
+    assert other_confidences == [0.5], (
+        f"the 0.3 car should be dropped by the 0.4 floor, got {other_confidences}"
+    )

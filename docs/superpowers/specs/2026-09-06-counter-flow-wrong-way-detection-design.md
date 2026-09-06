@@ -1,6 +1,6 @@
 # Counter-Flow Wrong-Way Detection (head-on / near-camera approach) — Design
 
-**Status:** draft for review
+**Status:** implemented 2026-09-06 (commits 1f3ab8e..17b9d52)
 
 ## Problem
 

@@ -205,6 +205,9 @@ class ReportAnalysisJob(
                     corroboration = (resolution as? DirectionResolution.Unknown)?.let { corroborationConsensus },
                 )?.let { return it }
             }
+            // Deliberately outside the approachEligible block: counter-flow has no
+            // stationary-camera requirement. Its own eligibility check gates OneWay / Unknown.
+            tryCounterFlowDetection(report, analysis, streetName, resolution)?.let { return it }
         }
 
         return outcome
@@ -341,6 +344,85 @@ class ReportAnalysisJob(
         )
     } catch (ex: Exception) {
         logger.warn("ReportAnalysisJob: failed to serialize approach evidence breakdown", ex)
+        null
+    }
+
+    /**
+     * Additive fallback (2026-09-06 counter-flow spec): a vehicle whose frame-space
+     * velocity opposes the clip's own dominant traffic flow is driving the wrong way -
+     * perspective-immune, needs no compass / OSM legal bearing / stationary camera. Fires
+     * only when the clip has a large (>= counterFlowMinWithFlow), coherent
+     * (flowCoherence >= counterFlowMinCoherence) forward stream AND exactly one vehicle,
+     * tracked >= counterFlowMinFrames and detected >= confirmationThreshold, with
+     * flowAlignment <= counterFlowMaxAlignment. Only upgrades REJECTED -> CONFIRMED.
+     */
+    private fun tryCounterFlowDetection(
+        report: Report,
+        analysis: VideoAnalysisResponse,
+        streetName: String?,
+        resolution: DirectionResolution,
+    ): AnalysisOutcome? {
+        val eligible = resolution is DirectionResolution.OneWay || resolution is DirectionResolution.Unknown
+        if (!eligible) return null
+
+        val coherence = analysis.flowCoherence ?: return null
+        if (coherence < analysisProperties.counterFlowMinCoherence) return null
+
+        val minTrackFrames = 9 // == ClipFlowAnalyzer.MIN_TRACK_FRAMES (file-private, not importable)
+        val forwardStream = analysis.vehicles.count {
+            // An unset flowAlignment means the track has no resolvable direction - it is
+            // not part of the forward stream.
+            (it.flowAlignment ?: return@count false) >= 0.5 &&
+                (it.trackFrameCount ?: 0) >= minTrackFrames
+        }
+        if (forwardStream < analysisProperties.counterFlowMinWithFlow) return null
+
+        val candidates = analysis.vehicles.filter {
+            // An unset flowAlignment (?: 1.0) makes a candidate decisively non-counter-flowing.
+            (it.flowAlignment ?: 1.0) <= analysisProperties.counterFlowMaxAlignment &&
+                (it.trackFrameCount ?: 0) >= analysisProperties.counterFlowMinFrames &&
+                it.detectionConfidence >= analysisProperties.confirmationThreshold
+        }
+        if (candidates.size != 1) return null
+        val best = candidates.single()
+
+        return AnalysisOutcome(
+            status = ReportStatus.CONFIRMED,
+            licensePlate = best.plateText,
+            confidence = best.plateConfidence?.let { BigDecimal.valueOf(it) },
+            message = "Wrong-way vehicle moving against traffic on ${streetName ?: "this street"}",
+            streetName = streetName,
+            wrongWayConfidence = BigDecimal.valueOf(best.detectionConfidence),
+            wrongWayFramePath = annotateAndStoreFrame(
+                best, requireNotNull(report.id) { "Report must have a generated id before analysis" },
+            ),
+            directionEvidenceJson = counterFlowBreakdownJson(best, forwardStream, coherence, resolution),
+        )
+    }
+
+    private fun counterFlowBreakdownJson(
+        best: VehicleAnalysisResult,
+        forwardStreamCount: Int,
+        flowCoherence: Double,
+        resolution: DirectionResolution,
+    ): String? = try {
+        objectMapper.writeValueAsString(
+            CounterFlowEvidenceBreakdown(
+                resolutionState = when (resolution) {
+                    is DirectionResolution.Unknown -> "UNKNOWN_${resolution.reason.name}"
+                    is DirectionResolution.OneWay -> "ONE_WAY"
+                    else -> "OTHER"
+                },
+                counterFlowAlignment = best.flowAlignment ?: 0.0,
+                flowCoherence = flowCoherence,
+                forwardStreamCount = forwardStreamCount,
+                trackFrames = best.trackFrameCount ?: 0,
+                detectionConfidence = best.detectionConfidence,
+                confirmationThreshold = analysisProperties.confirmationThreshold,
+            ),
+        )
+    } catch (ex: Exception) {
+        logger.warn("ReportAnalysisJob: failed to serialize counter-flow evidence breakdown", ex)
         null
     }
 
@@ -608,6 +690,22 @@ internal data class ApproachEvidenceBreakdown(
     val corroborationConsensusMembers: Int?,
     val corroborationResultantLength: Double? = null,
     val growthFraction: Double,
+    val trackFrames: Int,
+    val detectionConfidence: Double,
+    val confirmationThreshold: Double,
+)
+
+/**
+ * Serialized (snake_case) into reports.direction_evidence when a report is confirmed by
+ * the counter-flow path. `method` is the discriminator (see EvidenceBreakdown /
+ * ApproachEvidenceBreakdown).
+ */
+internal data class CounterFlowEvidenceBreakdown(
+    val method: String = "counter_flow",
+    val resolutionState: String,
+    val counterFlowAlignment: Double,
+    val flowCoherence: Double,
+    val forwardStreamCount: Int,
     val trackFrames: Int,
     val detectionConfidence: Double,
     val confirmationThreshold: Double,

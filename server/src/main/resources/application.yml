@@ -68,3 +68,7 @@ app:
     approach-min-detection: 0.5
     approach-corroboration-min-members: 5
     approach-corroboration-min-resultant-length: 0.9
+    counter-flow-min-coherence: 0.6
+    counter-flow-max-alignment: -0.6
+    counter-flow-min-frames: 12
+    counter-flow-min-with-flow: 5

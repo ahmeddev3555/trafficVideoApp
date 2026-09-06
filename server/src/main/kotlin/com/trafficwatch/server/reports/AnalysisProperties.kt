@@ -69,4 +69,14 @@ data class AnalysisProperties(
     var approachCorroborationMinMembers: Int = 5,
     // Minimum mean resultant length R for that receding consensus (see above).
     var approachCorroborationMinResultantLength: Double = 0.9,
+    // Counter-flow detection (2026-09-06 spec): a lone, well-detected vehicle whose
+    // frame-space flow_alignment is strongly negative against a large, coherent forward
+    // stream is driving the wrong way - a signal that needs no compass, OSM bearing, or
+    // stationary camera. Fires only for OneWay / any Unknown resolution.
+    // counterFlowMinCoherence matches consensus-min-resultant-length (0.6): flow_coherence
+    // is R over ALL directional tracks, so an N-forward / 1-counter split is R=(N-1)/(N+1).
+    var counterFlowMinCoherence: Double = 0.6,
+    var counterFlowMaxAlignment: Double = -0.6,
+    var counterFlowMinFrames: Int = 12,
+    var counterFlowMinWithFlow: Int = 5,
 )

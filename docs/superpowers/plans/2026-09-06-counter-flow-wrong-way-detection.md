@@ -16,7 +16,7 @@
 - `bearing_degrees`, `bearing_source`, `resolve_bearing`, `scale_trend`, corridor logic: **unchanged**. `flow_alignment` is purely additive.
 - The counter-flow path and the stationary-approach path **only ever upgrade an already-REJECTED outcome to CONFIRMED**; they never downgrade or alter a CONFIRMED/REJECTED reached by the main path. Both return `null` to leave the outcome untouched.
 - Counter-flow and widened-approach eligibility: `OneWay` and **all** `DirectionResolution.Unknown` reasons. `NotFound` / `LookupFailed` / `TwoWay` stay ineligible.
-- Exact new config values (spec §Layer 2, §Layer 3b): `motorcycle_min_confidence = 0.25`, `approach_min_frames` 30 → `20`, `counter_flow_min_coherence = 0.75`, `counter_flow_max_alignment = -0.6`, `counter_flow_min_frames = 12`, `counter_flow_min_with_flow = 5`.
+- Exact new config values (spec §Layer 2, §Layer 3b): `motorcycle_min_confidence = 0.25`, `approach_min_frames` 30 → `20`, `counter_flow_min_coherence = 0.60` (**controller ruling 2026-09-06**, revised down from the spec's 0.75: `flow_coherence` is the mean resultant length R over *all* directional tracks, so an N-forward / 1-counter split gives R = (N−1)/(N+1) — 0.75 would need ~8 forward tracks; 0.60 matches the project's existing `analysis.consensus-min-resultant-length` "coherent directional stream" bar and still lets a quiet-road 5-forward + 1-wrong-way case (R ≈ 0.667) fire, while a genuine two-way head-on split (R ≈ 0) still never fires), `counter_flow_max_alignment = -0.6`, `counter_flow_min_frames = 12`, `counter_flow_min_with_flow = 5`.
 - `video-analysis` tests run under `video-analysis/.venv` (Python 3.11); system Python lacks `ultralytics`.
 - No change to `frame_stride` (1), `detection_imgsz` (960), the `analysisExecutor` single-thread pinning, or `read-timeout-ms` (300000).
 - Commit trailers: `Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>` / `Claude-Session: https://claude.ai/code/session_01Cvu9QTCTbr7Cbvu6PxzPvh`.
@@ -611,9 +611,14 @@ Claude-Session: https://claude.ai/code/session_01Cvu9QTCTbr7Cbvu6PxzPvh"
 `ReportAnalysisJobTest.kt` — five cases (fill in against the existing `applyOutcome` / mock fixtures; the counter-flow candidate needs `flowAlignment`, `trackFrameCount`, `detectionConfidence` set on the `VehicleAnalysisResult`s, and `flowCoherence` on the `VideoAnalysisResponse`):
 
 ```kotlin
+    // NOTE: these are server tests - flowCoherence / flowAlignment are set directly on
+    // the mocked VideoAnalysisResponse / VehicleAnalysisResult, NOT computed. Use the
+    // literal values below. Gate: counterFlowMinCoherence 0.6, counterFlowMaxAlignment
+    // -0.6, counterFlowMinFrames 12, counterFlowMinWithFlow 5.
+
     @Test
     fun `counter-flow confirms a lone vehicle moving against a coherent forward stream`() {
-        // resolution = Unknown(AMBIGUOUS_NEAREST_STREET); flowCoherence 0.85.
+        // resolution = Unknown(AMBIGUOUS_NEAREST_STREET); flowCoherence = 0.85.
         // 1 vehicle: flowAlignment -0.85, trackFrameCount 14, detectionConfidence 0.8.
         // 6 vehicles: flowAlignment 0.9, trackFrameCount 20, detectionConfidence 0.7.
         // Main path REJECTS (no OSM). Expected: CONFIRMED, message contains
@@ -623,7 +628,8 @@ Claude-Session: https://claude.ai/code/session_01Cvu9QTCTbr7Cbvu6PxzPvh"
 
     @Test
     fun `counter-flow does not fire when flow_coherence is weak`() {
-        // Same as above but flowCoherence 0.6. Expected: stays REJECTED.
+        // Same as above but flowCoherence = 0.5 (below counterFlowMinCoherence 0.6).
+        // Expected: stays REJECTED.
     }
 
     @Test
@@ -663,7 +669,9 @@ Run → FAIL (`tryCounterFlowDetection` doesn't exist).
     // frame-space flow_alignment is strongly negative against a large, coherent forward
     // stream is driving the wrong way - a signal that needs no compass, OSM bearing, or
     // stationary camera. Fires only for OneWay / any Unknown resolution.
-    var counterFlowMinCoherence: Double = 0.75,
+    // counterFlowMinCoherence matches consensus-min-resultant-length (0.6): flow_coherence
+    // is R over ALL directional tracks, so an N-forward / 1-counter split is R=(N-1)/(N+1).
+    var counterFlowMinCoherence: Double = 0.6,
     var counterFlowMaxAlignment: Double = -0.6,
     var counterFlowMinFrames: Int = 12,
     var counterFlowMinWithFlow: Int = 5,
@@ -672,7 +680,7 @@ Run → FAIL (`tryCounterFlowDetection` doesn't exist).
 `application.yml` under `analysis:`:
 
 ```yaml
-    counter-flow-min-coherence: 0.75
+    counter-flow-min-coherence: 0.6
     counter-flow-max-alignment: -0.6
     counter-flow-min-frames: 12
     counter-flow-min-with-flow: 5

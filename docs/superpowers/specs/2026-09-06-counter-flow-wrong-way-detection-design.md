@@ -190,6 +190,17 @@ New `AnalysisProperties` (all with `application.yml` entries):
 `counterFlowMinCoherence = 0.75`, `counterFlowMaxAlignment = -0.6`,
 `counterFlowMinFrames = 12`, `counterFlowMinWithFlow = 5`.
 
+> **Amendment 2026-09-06 (implementation ruling):** `counterFlowMinCoherence`
+> revised `0.75 → 0.60`. `flow_coherence` is the mean resultant length R over
+> *all* directional tracks, so an N-forward / 1-counter split gives
+> R = (N−1)/(N+1) — 0.75 would require ~8 forward tracks before the gate could
+> ever fire. 0.60 matches the project's existing `consensus-min-resultant-length`
+> and still fires on a quiet-road 5-forward + 1-wrong-way clip (R ≈ 0.667), while
+> a genuine two-way head-on split (R ≈ 0) still never fires. The
+> lone-anomaly / ≥5-forward-stream / ≥12-frame / ≥0.5-detection gates carry the
+> FP protection; coherence is the secondary "is there a flow to be counter to"
+> check. Production FP-watch tunes it further.
+
 **Why this is safe:** it fires only when the clip contains a large (≥5),
 coherent (R ≥ 0.75) forward stream AND exactly one vehicle, tracked ≥12 frames
 and detected ≥0.5, moving strongly against it (alignment ≤ −0.6). A legally

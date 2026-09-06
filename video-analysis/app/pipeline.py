@@ -16,6 +16,7 @@ from app.tracking_bearing import (
     compute_track_midpoint_ms,
     resolve_bearing,
     scale_trend,
+    windowed_velocity,
 )
 
 if TYPE_CHECKING:
@@ -48,6 +49,48 @@ def _subsample_path(points: list, max_points: int) -> list:
 def _bbox_area(frame: "TrackedFrame") -> float:
     x1, y1, x2, y2 = frame.bbox
     return max(0.0, x2 - x1) * max(0.0, y2 - y1)
+
+
+def _dominant_flow(velocities) -> tuple[tuple[float, float] | None, float]:
+    """The clip's dominant traffic-flow direction and how tightly its moving vehicles
+    agree on it, from every track that has a resolvable windowed velocity.
+
+    `velocities` is an iterable of `windowed_velocity` results - each either
+    `((vx, vy), displacement)` or None. Returns `(unit_flow, coherence)`:
+
+    - `unit_flow` is the displacement-weighted circular mean of the per-track unit
+      velocities: the direction maximising `sum(disp_i * (v_i . F))`. Weighting by each
+      track's own windowed displacement lets a long, decisive run outvote a track that
+      barely cleared the motion floor.
+    - `coherence` is the mean resultant length R (0..1) of that same weighted sum -
+      `|sum(disp_i * v_i)| / sum(disp_i)`. 1.0 = every track points the same way, ~0.0 =
+      evenly opposed. The Kotlin server reads this as `flow_coherence`.
+
+    `(None, 0.0)` when fewer than two tracks have a direction, or when the weighted
+    vectors cancel exactly (no meaningful dominant direction).
+    """
+    directional = [item for item in velocities if item is not None]
+    if len(directional) < 2:
+        return None, 0.0
+
+    sx = sum(uv[0] * disp for uv, disp in directional)
+    sy = sum(uv[1] * disp for uv, disp in directional)
+    total = sum(disp for _, disp in directional)
+    resultant = math.hypot(sx, sy)
+    if total <= 0.0 or resultant == 0.0:
+        return None, 0.0
+    return (sx / resultant, sy / resultant), resultant / total
+
+
+def _alignment(track_velocity, dominant_flow) -> float | None:
+    """This track's windowed unit velocity dotted with the clip's dominant-flow unit
+    vector, clamped to [-1, 1]: +1 = moving with the clip's traffic, -1 = straight
+    against it, 0 = perpendicular. None when this track has no resolvable direction or
+    the clip has no dominant flow. Becomes `VehicleResult.flow_alignment`."""
+    if track_velocity is None or dominant_flow is None:
+        return None
+    uv, _ = track_velocity
+    return max(-1.0, min(1.0, uv[0] * dominant_flow[0] + uv[1] * dominant_flow[1]))
 
 
 class AnalysisPipeline:
@@ -99,6 +142,26 @@ class AnalysisPipeline:
         # lateral-motion-vs-noise floor in tracking_bearing.py.
         min_displacement_pixels = MIN_DISPLACEMENT_PIXELS * effective_zoom_ratio
 
+        # Per-track frame-space velocity over each track's most-distant (smallest-bbox)
+        # window, and the clip's own displacement-weighted dominant flow direction.
+        # Computed here rather than inside _summarize_track because the dominant flow
+        # needs EVERY track's velocity before any single vehicle can be scored against it.
+        # Uses the same full, un-subsampled sorted frame data as resolve_bearing (not the
+        # capped `paths` above).
+        sorted_frames = {
+            track_id: sorted(frames, key=lambda f: f.frame_index)
+            for track_id, frames in tracks.items()
+        }
+        per_track_velocity = {
+            track_id: windowed_velocity(
+                [f.centroid for f in frames_sorted],
+                [f.bbox for f in frames_sorted],
+                min_displacement_pixels=min_displacement_pixels,
+            )
+            for track_id, frames_sorted in sorted_frames.items()
+        }
+        dominant_flow, flow_coherence = _dominant_flow(per_track_velocity.values())
+
         vehicles = [
             self._summarize_track(
                 track_id,
@@ -107,10 +170,23 @@ class AnalysisPipeline:
                 cohesion=corridor_cohesion(track_id, paths, assignments, threshold_px),
                 fps=fps,
                 min_displacement_pixels=min_displacement_pixels,
+                flow_alignment=_alignment(per_track_velocity.get(track_id), dominant_flow),
             )
             for track_id, frames in tracks.items()
         ]
-        return AnalyzeResponse(vehicles=vehicles, frame_width=frame_width, frame_height=frame_height)
+        return AnalyzeResponse(
+            vehicles=vehicles,
+            frame_width=frame_width,
+            frame_height=frame_height,
+            # atan2(x, -y): frame-up (negative pixel y) is 0 deg, frame-right is 90 deg -
+            # the same clockwise-from-up convention as bearing_degrees.
+            dominant_flow_degrees=(
+                None
+                if dominant_flow is None
+                else math.degrees(math.atan2(dominant_flow[0], -dominant_flow[1])) % 360.0
+            ),
+            flow_coherence=flow_coherence,
+        )
 
     def _summarize_track(
         self,
@@ -120,6 +196,7 @@ class AnalysisPipeline:
         cohesion: float,
         fps: float | None,
         min_displacement_pixels: float,
+        flow_alignment: float | None,
     ) -> VehicleResult:
         frames_sorted = sorted(frames, key=lambda f: f.frame_index)
         centroids = [f.centroid for f in frames_sorted]
@@ -175,6 +252,7 @@ class AnalysisPipeline:
             track_midpoint_ms=track_midpoint_ms,
             scale_trend=trend,
             scale_growth_fraction=growth_fraction,
+            flow_alignment=flow_alignment,
         )
 
     def _read_best_plate(self, frames_sorted: list["TrackedFrame"]) -> tuple[str | None, float | None]:

@@ -53,6 +53,12 @@ class VehicleResult(BaseModel):
     # (ReportAnalysisJob) uses these; harmless to ignore otherwise.
     scale_trend: str = "flat"
     scale_growth_fraction: float = 0.0
+    # Frame-space velocity of this track (over its most-distant window) dotted against the
+    # clip's dominant traffic-flow direction: +1 = with the flow, -1 = straight against it,
+    # 0 = perpendicular / no clear motion. None when the track has too little motion to
+    # have a direction. Perspective-immune (all relative, no compass) - the Kotlin server's
+    # counter-flow detection path uses it. See the 2026-09-06 counter-flow spec.
+    flow_alignment: float | None = None
 
 
 class AnalyzeResponse(BaseModel):
@@ -63,6 +69,11 @@ class AnalyzeResponse(BaseModel):
     # diagonal. 0 x 0 when the video had no frames.
     frame_width: int = 0
     frame_height: int = 0
+    # The clip's own dominant traffic direction, degrees clockwise from frame-up, and how
+    # tightly the moving vehicles agree on it (mean resultant length R, 0..1). None / 0.0
+    # when fewer than two vehicles have a resolvable direction.
+    dominant_flow_degrees: float | None = None
+    flow_coherence: float = 0.0
 
 
 class HealthResponse(BaseModel):

@@ -150,6 +150,45 @@ def resolve_bearing(
     return (180.0, "scale") if late_diagonal > early_diagonal else (0.0, "scale")
 
 
+def windowed_velocity(
+    centroids: Sequence[Tuple[float, float]],
+    bboxes: Sequence[Tuple[float, float, float, float]],
+    min_displacement_pixels: float = MIN_DISPLACEMENT_PIXELS,
+) -> Tuple[Tuple[float, float], float] | None:
+    """Unit frame-space velocity (x, y; y increases downward) of a track over the frames
+    where it is FARTHEST from the camera - the smallest 40% of its bbox diagonals - plus
+    that window's net pixel displacement. None when the window has < 4 frames or its net
+    displacement is below `min_displacement_pixels`.
+
+    Gating on the smallest-bbox frames (rather than the first N) keeps perspective
+    distortion minimal and, for a vehicle that swerves past a near camera, measures its
+    approach direction rather than the swerve. A track only ever seen mid-pass still has
+    a smallest-40% window - its own earliest, least-swept frames - which is the best
+    estimate available. Used by pipeline.py to compute each vehicle's flow_alignment.
+    """
+    n = len(centroids)
+    if n < 4 or len(bboxes) != n:
+        return None
+
+    order = sorted(range(n), key=lambda i: bbox_diagonal(bboxes[i]))
+    k = max(4, math.ceil(n * 0.4))
+    window = sorted(order[:k])  # indices of the smallest-diagonal frames, back in time order
+
+    half = max(1, len(window) // 2)
+    early = window[:half]
+    late = window[-half:]
+    ex = sum(centroids[i][0] for i in early) / len(early)
+    ey = sum(centroids[i][1] for i in early) / len(early)
+    lx = sum(centroids[i][0] for i in late) / len(late)
+    ly = sum(centroids[i][1] for i in late) / len(late)
+
+    dx, dy = lx - ex, ly - ey
+    disp = math.hypot(dx, dy)
+    if disp < min_displacement_pixels:
+        return None
+    return (dx / disp, dy / disp), disp
+
+
 def compute_bearing_degrees(
     centroids: Sequence[Tuple[float, float]],
     bboxes: Sequence[Tuple[float, float, float, float]] | None = None,

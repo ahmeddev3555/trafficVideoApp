@@ -413,3 +413,43 @@ def test_summarize_track_runs_ocr_and_frame_encoding_for_long_track_with_no_reso
     assert spy_plate_reader.call_count > 0
     assert vehicle.plate_text == "ABC-123"
     assert vehicle.frame_jpeg_base64 is not None
+
+
+def test_analyze_reports_dominant_flow_and_per_vehicle_alignment():
+    # 12 tracks drifting frame-right (x grows), 1 track drifting frame-left - the odd one
+    # out is counter-flow. All get >= 12 frames and clear the displacement floor. The
+    # coherence R of an N-with / 1-against split is (N-1)/(N+1), so a realistic clip
+    # (spec: "dozens of tracks") lands well above the server's 0.75 gate; 12 keeps this
+    # fixture comfortably over 0.8 without being unwieldy.
+    with_flow_ids = list(range(12))
+    frames = []
+    for tid in with_flow_ids:
+        for i in range(16):
+            x = 100.0 + tid * 20 + 6.0 * i
+            frames.append(_make_frame(track_id=tid, frame_index=i, bbox=(x, 200.0, x + 20, 220.0)))
+    for i in range(16):
+        x = 500.0 - 6.0 * i
+        frames.append(_make_frame(track_id=99, frame_index=i, bbox=(x, 300.0, x + 20, 320.0)))
+
+    pipeline = AnalysisPipeline(
+        settings=_fake_settings(), detector=FakeDetector(frames), plate_reader=FakePlateReader()
+    )
+    resp = pipeline.analyze("unused.mp4")
+
+    assert resp.dominant_flow_degrees is not None
+    assert resp.flow_coherence > 0.8
+    by_id = {v.track_id: v for v in resp.vehicles}
+    assert by_id[99].flow_alignment is not None and by_id[99].flow_alignment < -0.8
+    for tid in with_flow_ids:
+        assert by_id[tid].flow_alignment is not None and by_id[tid].flow_alignment > 0.8
+
+
+def test_analyze_flow_fields_are_null_when_nothing_moves_enough():
+    frames = [_make_frame(track_id=1, frame_index=i, bbox=(10.0, 10.0, 20.0, 20.0)) for i in range(16)]
+    pipeline = AnalysisPipeline(
+        settings=_fake_settings(), detector=FakeDetector(frames), plate_reader=FakePlateReader()
+    )
+    resp = pipeline.analyze("unused.mp4")
+    assert resp.dominant_flow_degrees is None
+    assert resp.flow_coherence == 0.0
+    assert resp.vehicles[0].flow_alignment is None

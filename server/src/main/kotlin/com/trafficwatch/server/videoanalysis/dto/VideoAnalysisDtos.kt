@@ -11,6 +11,12 @@ data class VideoAnalysisResponse(
     // in which case corridor/flow analysis is skipped entirely.
     val frameWidth: Int? = null,
     val frameHeight: Int? = null,
+    // The clip's own dominant traffic direction (deg clockwise from frame-up) and how
+    // tightly its moving vehicles agree (mean resultant length R). Null from a service
+    // version predating the 2026-09-06 counter-flow signal, or when < 2 vehicles have a
+    // resolvable direction.
+    val dominantFlowDegrees: Double? = null,
+    val flowCoherence: Double? = null,
 )
 
 data class BoundingBox(
@@ -55,4 +61,9 @@ data class VehicleAnalysisResult(
     // field. Consumed only by ReportAnalysisJob's stationary-approach detection path.
     val scaleTrend: String = "flat",
     val scaleGrowthFraction: Double = 0.0,
+    // This track's frame-space velocity (over its most-distant window) dotted against
+    // dominantFlowDegrees: +1 with the flow, -1 straight against it, 0 perpendicular.
+    // Null from an older service version or when the track had too little motion.
+    // ReportAnalysisJob's counter-flow detection path consumes it.
+    val flowAlignment: Double? = null,
 )

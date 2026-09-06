@@ -199,4 +199,34 @@ class VideoAnalysisClientTest {
         assertThatThrownBy { client.analyze(fakeVideoPath, UUID.randomUUID(), zoomRatio = null) }
             .isInstanceOf(VideoAnalysisException::class.java)
     }
+
+    @Test
+    fun `analyze reads flow_alignment and clip flow fields, tolerating their absence`() {
+        mockServer.expect(requestTo("http://video-analysis.test/v1/analyze"))
+            .andRespond(
+                withSuccess(
+                    """
+                    {
+                      "dominant_flow_degrees": 137.5,
+                      "flow_coherence": 0.82,
+                      "vehicles": [
+                        { "track_id": 1, "vehicle_type": "motorcycle", "detection_confidence": 0.7,
+                          "plate_text": null, "plate_confidence": null, "flow_alignment": -0.83 },
+                        { "track_id": 2, "vehicle_type": "car", "detection_confidence": 0.9,
+                          "plate_text": null, "plate_confidence": null }
+                      ]
+                    }
+                    """.trimIndent(),
+                    MediaType.APPLICATION_JSON,
+                ),
+            )
+
+        val resp = client.analyze(fakeVideoPath, UUID.randomUUID(), zoomRatio = null)
+
+        assertThat(resp.dominantFlowDegrees).isEqualTo(137.5)
+        assertThat(resp.flowCoherence).isEqualTo(0.82)
+        assertThat(resp.vehicles[0].flowAlignment).isEqualTo(-0.83)
+        assertThat(resp.vehicles[1].flowAlignment).isNull()   // absent → null, no throw
+        mockServer.verify()
+    }
 }

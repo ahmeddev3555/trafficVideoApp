@@ -629,6 +629,27 @@ considered rather than forgotten.
   See `docs/superpowers/specs/2026-09-05-video-analysis-cost-reduction-design.md`.
   *(added and shipped 2026-09-05)*
 
+- **Concurrent analyses thrash the single-CPU `video-analysis` service -
+  shipped 2026-09-06.** `AsyncConfig.analysisExecutor` ran `corePoolSize=2`
+  / `maxPoolSize=8`, so a burst of near-simultaneous submissions fired 2-8
+  `/analyze` calls at once. The Python service is one process on a 2-vCPU
+  box; one clip already takes ~150 s, so N concurrent clips all missed the
+  180 s read timeout, and `ReportAnalysisJob` turns a `VideoAnalysisException`
+  straight into a permanent `REJECTED`. On 2026-09-05 four reports submitted
+  within a minute (`14872a1a`, `d17d21e9`, `b6cb5e2d`, `d9437ae3`): three
+  wrongly REJECTED as "service unavailable", one stranded `PENDING` by the
+  separate persist race. Shipped: pin the pool to one thread
+  (`corePoolSize=maxPoolSize=1`, `queueCapacity=100` so bursts wait), add
+  wait-for-in-flight-task on shutdown; `app.video-analysis.read-timeout-ms`
+  180 000 &rarr; 300 000 (headroom for one busy clip now that requests never
+  overlap). `14872a1a` was manually re-analysed (REJECTED / low confidence)
+  and its row corrected. **Deferred (design item 3, not shipped):** on
+  `VideoAnalysisException`, re-enqueue with bounded retries instead of an
+  immediate `REJECTED` - a transient infra failure should not discard a
+  report. Needs Spring self-invocation for the re-`@Async` call + an attempt
+  counter.
+  *(added and shipped 2026-09-06)*
+
 ## Upload reliability / data integrity
 
 **Area:** `app/src/main/java/com/trafficwatch/app/feature/upload/UploadWorker.kt`,

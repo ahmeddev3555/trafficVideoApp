@@ -53,10 +53,17 @@ def _bbox_area(frame: "TrackedFrame") -> float:
 
 def _dominant_flow(velocities) -> tuple[tuple[float, float] | None, float]:
     """The clip's dominant traffic-flow direction and how tightly its moving vehicles
-    agree on it, from every track that has a resolvable windowed velocity.
+    agree on it.
 
     `velocities` is an iterable of `windowed_velocity` results - each either
-    `((vx, vy), displacement)` or None. Returns `(unit_flow, coherence)`:
+    `((vx, vy), displacement)` or None - fed ONLY for tracks of at least
+    `MIN_OBSERVATIONS` frames (the caller filters). Short fragments (4-11 frames) are
+    excluded from both R and the dominant-direction computation: 12 is the same floor
+    `flow_alignment` needs to be trustworthy and matches the server's `counter_flow_min_frames`
+    and its forward-stream frame gate, so a scrap of short one-directional fragments can no
+    longer inflate `flow_coherence` past the counter-flow gate with fewer than the required
+    real forward tracks. A short track still gets its own `flow_alignment` value against this
+    flow - it just doesn't get a vote in defining it. Returns `(unit_flow, coherence)`:
 
     - `unit_flow` is the displacement-weighted circular mean of the per-track unit
       velocities: the direction maximising `sum(disp_i * (v_i . F))`. Weighting by each
@@ -160,7 +167,16 @@ class AnalysisPipeline:
             )
             for track_id, frames_sorted in sorted_frames.items()
         }
-        dominant_flow, flow_coherence = _dominant_flow(per_track_velocity.values())
+        # Only tracks of >= MIN_OBSERVATIONS frames get a vote in defining the dominant
+        # flow and its coherence R - consistent with the server's forward-stream count and
+        # the floor flow_alignment itself needs. per_track_velocity still holds every
+        # track's velocity: a short fragment is scored against the flow (_alignment below),
+        # it just doesn't help define it.
+        dominant_flow, flow_coherence = _dominant_flow(
+            velocity
+            for track_id, velocity in per_track_velocity.items()
+            if len(sorted_frames[track_id]) >= MIN_OBSERVATIONS
+        )
 
         vehicles = [
             self._summarize_track(
@@ -223,8 +239,10 @@ class AnalysisPipeline:
         # requires >= MIN_OBSERVATIONS observations; scale_trend does too) and can therefore
         # never qualify as a FlowVehicle on the server - ClipFlowAnalyzer.qualifyVehicles's
         # first line requires a non-null bearing. It also can't be an approach-path grower
-        # (that path additionally requires trackFrameCount >= approachMinFrames(30), well
-        # above MIN_OBSERVATIONS). Such a track can never be the server's `best` candidate,
+        # (that path additionally requires trackFrameCount >= approachMinFrames(20), still
+        # above MIN_OBSERVATIONS), nor a counter-flow candidate (counter_flow_min_frames is
+        # also 12, so a sub-12 track would produce a plate-less, frame-less counter-flow
+        # confirm via the OCR/frame-encoding skip below). Such a track can never be the server's `best` candidate,
         # so its plate and frame are never read - skip the two most expensive per-track
         # operations rather than compute and discard them. See the 2026-09-05
         # video-analysis-cost-reduction design.

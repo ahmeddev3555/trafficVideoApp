@@ -14,7 +14,9 @@ data class VideoAnalysisResponse(
     // The clip's own dominant traffic direction (deg clockwise from frame-up) and how
     // tightly its moving vehicles agree (mean resultant length R). Null from a service
     // version predating the 2026-09-06 counter-flow signal, or when < 2 vehicles have a
-    // resolvable direction.
+    // resolvable direction. flowCoherence gates the counter-flow confirm path;
+    // dominantFlowDegrees is surfaced in that path's CounterFlowEvidenceBreakdown as a
+    // diagnostic for false-positive triage.
     val dominantFlowDegrees: Double? = null,
     val flowCoherence: Double? = null,
 )

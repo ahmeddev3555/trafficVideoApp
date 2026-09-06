@@ -72,3 +72,5 @@ app:
     counter-flow-max-alignment: -0.6
     counter-flow-min-frames: 12
     counter-flow-min-with-flow: 5
+    counter-flow-strong-coherence: 0.85
+    counter-flow-strong-min-with-flow: 8

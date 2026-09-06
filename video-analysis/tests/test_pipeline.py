@@ -419,8 +419,9 @@ def test_analyze_reports_dominant_flow_and_per_vehicle_alignment():
     # 12 tracks drifting frame-right (x grows), 1 track drifting frame-left - the odd one
     # out is counter-flow. All get >= 12 frames and clear the displacement floor. The
     # coherence R of an N-with / 1-against split is (N-1)/(N+1), so a realistic clip
-    # (spec: "dozens of tracks") lands well above the server's 0.75 gate; 12 keeps this
-    # fixture comfortably over 0.8 without being unwieldy.
+    # (spec: "dozens of tracks") lands well above the server's 0.6 base gate (and the
+    # 0.85 strong gate for a non-one-way Unknown resolution); 12 keeps this fixture
+    # comfortably over 0.8 without being unwieldy.
     with_flow_ids = list(range(12))
     frames = []
     for tid in with_flow_ids:
@@ -442,6 +443,37 @@ def test_analyze_reports_dominant_flow_and_per_vehicle_alignment():
     assert by_id[99].flow_alignment is not None and by_id[99].flow_alignment < -0.8
     for tid in with_flow_ids:
         assert by_id[tid].flow_alignment is not None and by_id[tid].flow_alignment > 0.8
+
+
+def test_short_fragments_do_not_sway_the_dominant_flow_or_inflate_coherence():
+    # Two long (>= MIN_OBSERVATIONS = 12) tracks moving frame-right define the flow.
+    # Three SHORT 6-frame fragments moving frame-left must NOT get a vote: they're below
+    # the 12-frame floor that flow_alignment itself needs to be trustworthy (== the
+    # server's counter_flow_min_frames). Fed into _dominant_flow they would flip the
+    # dominant direction to frame-left and collapse coherence from ~1.0 to ~0.11.
+    frames = []
+    for tid in (1, 2):
+        for i in range(16):
+            x = 100.0 + tid * 40 + 6.0 * i
+            frames.append(_make_frame(track_id=tid, frame_index=i, bbox=(x, 200.0, x + 20.0, 220.0)))
+    for tid in (10, 11, 12):
+        for i in range(6):
+            x = 400.0 - 10.0 * i
+            frames.append(_make_frame(track_id=tid, frame_index=i, bbox=(x, 300.0, x + 20.0, 320.0)))
+
+    pipeline = AnalysisPipeline(
+        settings=_fake_settings(), detector=FakeDetector(frames), plate_reader=FakePlateReader()
+    )
+    resp = pipeline.analyze("unused.mp4")
+
+    by_id = {v.track_id: v for v in resp.vehicles}
+    # Flow is defined by the long rightward tracks only -> tight coherence, points frame-right.
+    assert resp.flow_coherence > 0.95
+    assert resp.dominant_flow_degrees == pytest.approx(90.0, abs=1.0)
+    assert by_id[1].flow_alignment > 0.9 and by_id[2].flow_alignment > 0.9
+    # A short fragment still gets its own alignment value against that flow (it just didn't
+    # help define it) - here strongly negative, since it moves against the long tracks.
+    assert by_id[10].flow_alignment is not None and by_id[10].flow_alignment < -0.9
 
 
 def test_analyze_flow_fields_are_null_when_nothing_moves_enough():

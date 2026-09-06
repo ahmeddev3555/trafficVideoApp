@@ -162,11 +162,13 @@ class ReportAnalysisJobTest {
         frameWidth: Int? = 1920,
         frameHeight: Int? = 1080,
         flowCoherence: Double? = null,
+        dominantFlowDegrees: Double? = null,
     ) = VideoAnalysisResponse(
         vehicles = vehicles,
         frameWidth = frameWidth,
         frameHeight = frameHeight,
         flowCoherence = flowCoherence,
+        dominantFlowDegrees = dominantFlowDegrees,
     )
 
     @Test
@@ -1566,12 +1568,17 @@ class ReportAnalysisJobTest {
         assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
     }
 
-    // ---- Counter-flow confirm path (2026-09-06 spec) ----
+    // ---- Counter-flow confirm path (2026-09-06 spec; C1/C2 whole-branch review) ----
     //
     // NOTE: these are server tests - flowCoherence / flowAlignment are set directly on the
     // mocked VideoAnalysisResponse / VehicleAnalysisResult, NOT computed. The literal values
-    // below are what the gate sees. Gate: counterFlowMinCoherence 0.6, counterFlowMaxAlignment
-    // -0.6, counterFlowMinFrames 12, counterFlowMinWithFlow 5.
+    // below are what the gate sees. Base gate (OneWay / Unknown(DIVIDED_CARRIAGEWAY)):
+    // counterFlowMinCoherence 0.6, counterFlowMaxAlignment -0.6, counterFlowMinFrames 12,
+    // counterFlowMinWithFlow 5, plus displacementPixels >= minDisplacementFraction (0.15) *
+    // bbox diagonal (C2). Strong gate (every OTHER Unknown reason - two-way in OSM):
+    // additionally counterFlowStrongCoherence 0.85 AND counterFlowStrongMinWithFlow 8 (C1).
+    // The default vehicle() bbox is 1414x1414 (diagonal 2000) so the C2 floor is ~300px;
+    // the default displacementPixels 2100 clears it.
 
     /** 1 lone counter-flower (align -0.85, 14 frames, det 0.8) + 6 forward vehicles. */
     private fun counterFlowVehicles() = listOf(
@@ -1588,9 +1595,9 @@ class ReportAnalysisJobTest {
         val report = sampleReport()
         every {
             streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
-        } returns DirectionResolution.Unknown("Khayaban-e-Jinnah", UnknownReason.AMBIGUOUS_NEAREST_STREET)
+        } returns DirectionResolution.Unknown("Khayaban-e-Jinnah", UnknownReason.DIVIDED_CARRIAGEWAY)
         every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
-            counterFlowVehicles(), flowCoherence = 0.85,
+            counterFlowVehicles(), flowCoherence = 0.85, dominantFlowDegrees = 135.0,
         )
         every { reportRepository.save(any()) } answers { firstArg() }
 
@@ -1604,7 +1611,168 @@ class ReportAnalysisJobTest {
         assertThat(evidence.get("method").asText()).isEqualTo("counter_flow")
         assertThat(evidence.get("counter_flow_alignment").asDouble()).isEqualTo(-0.85)
         assertThat(evidence.get("forward_stream_count").asInt()).isEqualTo(6)
+        assertThat(evidence.get("resolution_state").asText()).isEqualTo("UNKNOWN_DIVIDED_CARRIAGEWAY")
+        // FIX 5: dominant_flow_degrees is surfaced in the breakdown for FP triage.
+        assertThat(evidence.get("dominant_flow_degrees").asDouble()).isEqualTo(135.0)
+    }
+
+    @Test
+    fun `counter-flow needs the strong gate for a non-one-way Unknown reason - thin forward stream`() {
+        // AMBIGUOUS_NEAREST_STREET is two-way in OSM: the base-gate fixture (coherence 0.85,
+        // 6 forward tracks) is NOT enough - the strong gate needs forwardStream >= 8.
+        val report = sampleReport()
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
+        } returns DirectionResolution.Unknown("Khayaban-e-Jinnah", UnknownReason.AMBIGUOUS_NEAREST_STREET)
+        every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
+            counterFlowVehicles(), flowCoherence = 0.85,
+        )
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
+        assertThat(report.directionEvidence ?: "").doesNotContain("counter_flow")
+    }
+
+    @Test
+    fun `counter-flow needs the strong gate for a non-one-way Unknown reason - coherence below strong floor`() {
+        // 8 forward tracks (clears counterFlowStrongMinWithFlow) but coherence 0.8 < 0.85.
+        val report = sampleReport()
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
+        } returns DirectionResolution.Unknown("Khayaban-e-Jinnah", UnknownReason.NO_ONEWAY_TAG)
+        val vehicles = listOf(
+            vehicle(trackId = 1, detectionConfidence = 0.8, trackFrameCount = 14, flowAlignment = -0.85),
+        ) + (2L..9L).map { vehicle(trackId = it, trackFrameCount = 20, flowAlignment = 0.9) }
+        every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
+            vehicles, flowCoherence = 0.8,
+        )
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
+        assertThat(report.directionEvidence ?: "").doesNotContain("counter_flow")
+    }
+
+    @Test
+    fun `counter-flow confirms a non-one-way Unknown reason once the strong gate is cleared`() {
+        // The 14872a1a shape: Unknown(AMBIGUOUS_NEAREST_STREET), overwhelmingly one-directional
+        // scene - coherence 0.9 >= 0.85 AND 9 forward tracks >= 8.
+        val report = sampleReport()
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
+        } returns DirectionResolution.Unknown("Jinnah Avenue", UnknownReason.AMBIGUOUS_NEAREST_STREET)
+        val vehicles = listOf(
+            vehicle(
+                trackId = 1, plateText = "LEA-7777", plateConfidence = 0.8,
+                detectionConfidence = 0.8, trackFrameCount = 14, flowAlignment = -0.85,
+            ),
+        ) + (2L..10L).map { vehicle(trackId = it, trackFrameCount = 20, flowAlignment = 0.9) }
+        every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
+            vehicles, flowCoherence = 0.9,
+        )
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.CONFIRMED)
+        assertThat(report.licensePlate).isEqualTo("LEA-7777")
+        val evidence = objectMapper.readTree(report.directionEvidence)
+        assertThat(evidence.get("method").asText()).isEqualTo("counter_flow")
         assertThat(evidence.get("resolution_state").asText()).isEqualTo("UNKNOWN_AMBIGUOUS_NEAREST_STREET")
+        assertThat(evidence.get("forward_stream_count").asInt()).isEqualTo(9)
+    }
+
+    @Test
+    fun `counter-flow rejects a candidate whose alignment does not clear the magnitude gate`() {
+        // Lone would-be counter-flower at align -0.5 - between 0 and counterFlowMaxAlignment
+        // (-0.6). The candidate filter drops it, so candidates.size == 0.
+        val report = sampleReport()
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
+        } returns DirectionResolution.Unknown("Khayaban-e-Jinnah", UnknownReason.DIVIDED_CARRIAGEWAY)
+        val vehicles = listOf(
+            vehicle(trackId = 1, detectionConfidence = 0.8, trackFrameCount = 14, flowAlignment = -0.5),
+        ) + (2L..7L).map { vehicle(trackId = it, trackFrameCount = 20, flowAlignment = 0.9) }
+        every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
+            vehicles, flowCoherence = 0.85,
+        )
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
+        assertThat(report.directionEvidence ?: "").doesNotContain("counter_flow")
+    }
+
+    @Test
+    fun `counter-flow rejects a counter-flower below the detection floor`() {
+        // Lone counter-flower at detectionConfidence 0.4 < confirmationThreshold (0.5).
+        val report = sampleReport()
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
+        } returns DirectionResolution.Unknown("Khayaban-e-Jinnah", UnknownReason.DIVIDED_CARRIAGEWAY)
+        val vehicles = listOf(
+            vehicle(trackId = 1, detectionConfidence = 0.4, trackFrameCount = 14, flowAlignment = -0.85),
+        ) + (2L..7L).map { vehicle(trackId = it, trackFrameCount = 20, flowAlignment = 0.9) }
+        every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
+            vehicles, flowCoherence = 0.85,
+        )
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
+        assertThat(report.directionEvidence ?: "").doesNotContain("counter_flow")
+    }
+
+    @Test
+    fun `counter-flow does not count short forward tracks toward the forward stream`() {
+        // The "forward" vehicles have flowAlignment 0.9 but only 8 tracked frames (< the
+        // 9-frame MIN_TRACK_FRAMES sub-gate), so forwardStream == 0 < counterFlowMinWithFlow.
+        val report = sampleReport()
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
+        } returns DirectionResolution.Unknown("Khayaban-e-Jinnah", UnknownReason.DIVIDED_CARRIAGEWAY)
+        val vehicles = listOf(
+            vehicle(trackId = 1, detectionConfidence = 0.8, trackFrameCount = 14, flowAlignment = -0.85),
+        ) + (2L..7L).map { vehicle(trackId = it, trackFrameCount = 8, flowAlignment = 0.9) }
+        every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
+            vehicles, flowCoherence = 0.85,
+        )
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
+        assertThat(report.directionEvidence ?: "").doesNotContain("counter_flow")
+    }
+
+    @Test
+    fun `counter-flow rejects a counter-flower whose displacement is below the size-relative floor`() {
+        // C2: displacementPixels 50 < minDisplacementFraction (0.15) * bbox diagonal (2000) =
+        // 300 - an 8px reverse/creep must not qualify as counter-flow motion.
+        val report = sampleReport()
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
+        } returns DirectionResolution.Unknown("Khayaban-e-Jinnah", UnknownReason.DIVIDED_CARRIAGEWAY)
+        val vehicles = listOf(
+            vehicle(
+                trackId = 1, detectionConfidence = 0.8, trackFrameCount = 14,
+                flowAlignment = -0.85, displacementPixels = 50.0,
+            ),
+        ) + (2L..7L).map { vehicle(trackId = it, trackFrameCount = 20, flowAlignment = 0.9) }
+        every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
+            vehicles, flowCoherence = 0.85,
+        )
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
+        assertThat(report.directionEvidence ?: "").doesNotContain("counter_flow")
     }
 
     @Test
@@ -1612,8 +1780,8 @@ class ReportAnalysisJobTest {
         val report = sampleReport()
         every {
             streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
-        } returns DirectionResolution.Unknown("Khayaban-e-Jinnah", UnknownReason.AMBIGUOUS_NEAREST_STREET)
-        // flowCoherence 0.5 < counterFlowMinCoherence 0.6.
+        } returns DirectionResolution.Unknown("Khayaban-e-Jinnah", UnknownReason.DIVIDED_CARRIAGEWAY)
+        // flowCoherence 0.5 < counterFlowMinCoherence 0.6 (base gate).
         every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
             counterFlowVehicles(), flowCoherence = 0.5,
         )
@@ -1630,7 +1798,7 @@ class ReportAnalysisJobTest {
         val report = sampleReport()
         every {
             streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
-        } returns DirectionResolution.Unknown("Khayaban-e-Jinnah", UnknownReason.AMBIGUOUS_NEAREST_STREET)
+        } returns DirectionResolution.Unknown("Khayaban-e-Jinnah", UnknownReason.DIVIDED_CARRIAGEWAY)
         // Two vehicles at align -0.7 (both >= 12 frames, det >= 0.5) - not a lone anomaly.
         val vehicles = listOf(
             vehicle(trackId = 1, detectionConfidence = 0.8, trackFrameCount = 14, flowAlignment = -0.7),
@@ -1652,7 +1820,7 @@ class ReportAnalysisJobTest {
         val report = sampleReport()
         every {
             streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
-        } returns DirectionResolution.Unknown("Khayaban-e-Jinnah", UnknownReason.AMBIGUOUS_NEAREST_STREET)
+        } returns DirectionResolution.Unknown("Khayaban-e-Jinnah", UnknownReason.DIVIDED_CARRIAGEWAY)
         // Lone counter-flower is fine, but only 3 forward vehicles (< counterFlowMinWithFlow 5).
         val vehicles = listOf(
             vehicle(trackId = 1, detectionConfidence = 0.8, trackFrameCount = 14, flowAlignment = -0.85),
@@ -1673,7 +1841,7 @@ class ReportAnalysisJobTest {
         val report = sampleReport()
         every {
             streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
-        } returns DirectionResolution.Unknown("Khayaban-e-Jinnah", UnknownReason.AMBIGUOUS_NEAREST_STREET)
+        } returns DirectionResolution.Unknown("Khayaban-e-Jinnah", UnknownReason.DIVIDED_CARRIAGEWAY)
         // Lone counter-flower at align -0.9 but only 9 tracked frames (< counterFlowMinFrames 12).
         val vehicles = listOf(
             vehicle(trackId = 1, detectionConfidence = 0.8, trackFrameCount = 9, flowAlignment = -0.9),

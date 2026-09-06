@@ -604,7 +604,7 @@ Claude-Session: https://claude.ai/code/session_01Cvu9QTCTbr7Cbvu6PxzPvh"
 
 **Interfaces:**
 - Consumes: `VideoAnalysisResponse.flowCoherence`, `VehicleAnalysisResult.flowAlignment` / `trackFrameCount` / `detectionConfidence` (Task 3); `ClipFlowAnalyzer.MIN_TRACK_FRAMES` (== 9); `analysisProperties.confirmationThreshold`.
-- Produces: `AnalysisProperties.counterFlowMinCoherence: Double = 0.75`, `counterFlowMaxAlignment: Double = -0.6`, `counterFlowMinFrames: Int = 12`, `counterFlowMinWithFlow: Int = 5`; `ReportAnalysisJob.tryCounterFlowDetection(...)` (private, returns `AnalysisOutcome?`); `CounterFlowEvidenceBreakdown` (internal data class).
+- Produces: `AnalysisProperties.counterFlowMinCoherence: Double = 0.6`, `counterFlowMaxAlignment: Double = -0.6`, `counterFlowMinFrames: Int = 12`, `counterFlowMinWithFlow: Int = 5`, plus the C1 strong-gate props `counterFlowStrongCoherence: Double = 0.85` / `counterFlowStrongMinWithFlow: Int = 8` (non-one-way `Unknown` reasons only); `ReportAnalysisJob.tryCounterFlowDetection(...)` (private, returns `AnalysisOutcome?`); `CounterFlowEvidenceBreakdown` (internal data class).
 
 - [ ] **Step 1: Write the failing tests**
 

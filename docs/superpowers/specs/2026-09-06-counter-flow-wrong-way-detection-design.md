@@ -160,12 +160,17 @@ block, a third parallel fallback that only ever upgrades REJECTED → CONFIRMED,
 
 ```
 gate:
-  - analysis.flowCoherence != null && >= counterFlowMinCoherence (0.75)
+  - resolution eligible: OneWay OR Unknown(DIVIDED_CARRIAGEWAY) use the base gate below;
+    every other Unknown reason (two-way in OSM) needs the strong gate:
+      flowCoherence >= counterFlowStrongCoherence (0.85)
+      && forwardStream >= counterFlowStrongMinWithFlow (8)
+  - analysis.flowCoherence != null && >= counterFlowMinCoherence (0.60)
   - candidates = vehicles where
       flowAlignment != null
       && flowAlignment <= counterFlowMaxAlignment (-0.6)
       && (trackFrameCount ?: 0) >= counterFlowMinFrames (12)
       && detectionConfidence >= confirmationThreshold (0.5)
+      && displacementPixels >= minDisplacementFraction (0.15) * bbox diagonal
   - candidates.size == 1                      // lone counter-flowing anomaly
   - count(vehicles with flowAlignment != null && flowAlignment >= 0.5
           && (trackFrameCount ?: 0) >= MIN_TRACK_FRAMES) >= counterFlowMinWithFlow (5)
@@ -187,27 +192,46 @@ counter-flows even harder (closing speed = camera speed + its own). `NotFound` /
 `LookupFailed` excluded, as in Layer 2.
 
 New `AnalysisProperties` (all with `application.yml` entries):
-`counterFlowMinCoherence = 0.75`, `counterFlowMaxAlignment = -0.6`,
-`counterFlowMinFrames = 12`, `counterFlowMinWithFlow = 5`.
+`counterFlowMinCoherence = 0.60`, `counterFlowMaxAlignment = -0.6`,
+`counterFlowMinFrames = 12`, `counterFlowMinWithFlow = 5`,
+`counterFlowStrongCoherence = 0.85`, `counterFlowStrongMinWithFlow = 8`.
 
 > **Amendment 2026-09-06 (implementation ruling):** `counterFlowMinCoherence`
-> revised `0.75 → 0.60`. `flow_coherence` is the mean resultant length R over
-> *all* directional tracks, so an N-forward / 1-counter split gives
-> R = (N−1)/(N+1) — 0.75 would require ~8 forward tracks before the gate could
-> ever fire. 0.60 matches the project's existing `consensus-min-resultant-length`
-> and still fires on a quiet-road 5-forward + 1-wrong-way clip (R ≈ 0.667), while
-> a genuine two-way head-on split (R ≈ 0) still never fires. The
-> lone-anomaly / ≥5-forward-stream / ≥12-frame / ≥0.5-detection gates carry the
-> FP protection; coherence is the secondary "is there a flow to be counter to"
-> check. Production FP-watch tunes it further.
+> revised `0.75 → 0.60`. `flow_coherence` is the mean resultant length R over the
+> ≥ `MIN_OBSERVATIONS` (12) directional tracks, so an N-forward / 1-counter split
+> gives R = (N−1)/(N+1) — 0.75 would require ~8 forward tracks before the gate
+> could ever fire. 0.60 matches the project's existing
+> `consensus-min-resultant-length` and still fires on a quiet-road 5-forward +
+> 1-wrong-way clip (R ≈ 0.667), while a genuine two-way head-on split (R ≈ 0)
+> still never fires. The lone-anomaly / ≥5-forward-stream / ≥12-frame /
+> ≥0.5-detection gates carry the FP protection; coherence is the secondary "is
+> there a flow to be counter to" check. Production FP-watch tunes it further.
+
+> **Amendment 2026-09-06 (whole-branch review, C1):** counter-flow eligibility is
+> split by resolution. `OneWay` and `Unknown(DIVIDED_CARRIAGEWAY)` assert
+> one-wayness (explicitly, or structurally via a divided road) and keep the base
+> gate above. Every *other* `Unknown` reason — `NO_ONEWAY_TAG`,
+> `AMBIGUOUS_NEAREST_STREET`, `NOT_CROSS_CHECKED` — is **two-way in OSM
+> semantics**: "5 forward + 1 oncoming" is legal two-way traffic and
+> `flow_alignment` cannot tell it apart from a violation. Those reasons are
+> eligible only behind a strong gate — `flow_coherence ≥ 0.85` (needs ~9+ coherent
+> forward tracks) **and** `forwardStream ≥ 8` — i.e. a genuinely busy,
+> overwhelmingly one-directional scene. The candidate filter also gained a
+> size-relative displacement gate (`displacementPixels ≥ 0.15 × bbox diagonal`,
+> reusing `minDisplacementFraction`), matching every other confirm path, so an
+> 8-pixel reverse/creep no longer qualifies.
 
 **Why this is safe:** it fires only when the clip contains a large (≥5),
-coherent (R ≥ 0.75) forward stream AND exactly one vehicle, tracked ≥12 frames
-and detected ≥0.5, moving strongly against it (alignment ≤ −0.6). A legally
-turning vehicle briefly opposes the flow but (a) rarely reaches −0.6 over its
-distance-gated window, (b) is usually not alone if it's a turn lane, (c) its
-detection often doesn't clear 0.5 through the turn. Cross-traffic at a junction
-is perpendicular (alignment ≈ 0), not ≤ −0.6.
+coherent (R ≥ 0.60 base; R ≥ 0.85 for a non-one-way `Unknown`) forward stream AND
+exactly one vehicle, tracked ≥12 frames, detected ≥0.5 and displaced ≥15 % of its
+own bbox diagonal, moving strongly against it (alignment ≤ −0.6). On a resolution
+that does not assert one-wayness (`NO_ONEWAY_TAG` / `AMBIGUOUS_NEAREST_STREET` /
+`NOT_CROSS_CHECKED`) the strong gate (R ≥ 0.85 **and** ≥8 forward tracks) is what
+keeps legal two-way traffic from confirming. A legally turning vehicle briefly
+opposes the flow but (a) rarely reaches −0.6 over its distance-gated window, (b)
+is usually not alone if it's a turn lane, (c) its detection often doesn't clear
+0.5 through the turn. Cross-traffic at a junction is perpendicular (alignment ≈
+0), not ≤ −0.6.
 
 ## `14872a1a` walk-through (expected)
 
@@ -219,9 +243,12 @@ is perpendicular (alignment ≈ 0), not ≤ −0.6.
   the up-left vanishing point), `flow_coherence` high (one straight one-way
   carriageway, dozens of tracks). `flow_alignment` ≈ (0.94)(−0.7) +
   (0.34)(−0.7) ≈ **−0.9**.
-- Layer 3b: `flow_coherence` ≥ 0.75 ✓; one candidate with alignment −0.9,
-  16 ≥ 12 frames, detection ≥ 0.5 ✓; ≥5 forward-stream tracks ✓; lone anomaly ✓
-  → **CONFIRMED**, "Wrong-way vehicle moving against traffic".
+- Layer 3b: `14872a1a` resolves to `Unknown(AMBIGUOUS_NEAREST_STREET)` — a
+  non-one-way `Unknown`, so the **strong gate** applies. `flow_coherence` ≥ 0.85
+  ✓ (one straight one-way carriageway, dozens of tracks); ≥8 forward-stream
+  tracks ✓; one candidate with alignment −0.9, 16 ≥ 12 frames, detection ≥ 0.5,
+  displacement ≥ 15 % of its bbox diagonal ✓; lone anomaly ✓ → **CONFIRMED**,
+  "Wrong-way vehicle moving against traffic".
 
 If tracking ever does yield a ≥20-frame growing fragment, Layer 2's widened
 stationary-approach path confirms it too, as a second route.
@@ -246,22 +273,33 @@ stationary-approach path confirms it too, as a second route.
   `test_head_on_approaching_track_gets_a_real_bearing...` → its
   `flow_alignment` is computed from the smallest-bbox window, not the whole
   track.
+- Short (< `MIN_OBSERVATIONS`) one-directional fragments do NOT define or sway
+  the dominant flow, nor inflate `flow_coherence` — only tracks of ≥ 12 frames
+  get a vote; a short track still receives its own `flow_alignment` value
+  against that flow. (C1/C2 arithmetic fix, whole-branch review.)
 
 ### server (`./gradlew test`)
 
 `ReportAnalysisJobTest`:
-- **Confirm:** `Unknown(AMBIGUOUS_NEAREST_STREET)`, `flow_coherence` 0.85, one
-  vehicle `flow_alignment` −0.85 / 14 frames / det 0.8, six vehicles
-  `flow_alignment` +0.9 / 20 frames → CONFIRMED via counter-flow, message and
-  `directionEvidence` asserted.
-- **No confirm — weak coherence:** same but `flow_coherence` 0.6 → stays
-  REJECTED.
+- **Confirm (base gate):** `Unknown(DIVIDED_CARRIAGEWAY)`, `flow_coherence` 0.85,
+  one vehicle `flow_alignment` −0.85 / 14 frames / det 0.8, six vehicles
+  `flow_alignment` +0.9 / 20 frames → CONFIRMED via counter-flow, message,
+  `directionEvidence` (incl. `dominant_flow_degrees`) asserted.
+- **Strong gate (non-one-way `Unknown`):** `Unknown(AMBIGUOUS_NEAREST_STREET)`
+  needs `flow_coherence ≥ 0.85` AND ≥8 forward tracks; the base-gate fixture
+  (0.85 / 6 forward) → stays REJECTED; a 0.8 / 8-forward fixture → stays
+  REJECTED; a 0.9 / 9-forward fixture (the `14872a1a` shape) → CONFIRMED.
+- **No confirm — weak coherence:** base-gate fixture but `flow_coherence` 0.5 →
+  stays REJECTED.
 - **No confirm — two counter-flowers:** two vehicles at −0.7 → stays REJECTED
   (not a lone anomaly).
 - **No confirm — thin forward stream:** only three forward tracks → stays
   REJECTED.
 - **No confirm — short fragment:** the counter-flower has 9 frames → stays
   REJECTED.
+- **No confirm — alignment magnitude / detection floor / short forward tracks /
+  sub-diagonal displacement:** each of the four candidate-filter sub-gates pinned
+  by a fixture that clears every other gate → stays REJECTED.
 - **Layer 2:** `Unknown(AMBIGUOUS_NEAREST_STREET)` + stationary camera + one
   grower 22 frames / growth 1.5 / det 0.9 + five-member R 0.95 receding
   consensus → CONFIRMED via the (now-eligible) stationary-approach path.

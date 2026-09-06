@@ -24,8 +24,17 @@ sealed class DirectionResolution {
 
 /**
  * Why [DirectionResolution.Unknown] was returned. Only [DIVIDED_CARRIAGEWAY] means "the
- * street IS one-way, we just can't tell which carriageway" - the one case where
- * ReportAnalysisJob's stationary-approach path may still fire (see the 2026-08-31 design).
+ * street IS one-way, we just can't tell which carriageway"; the others are two-way in OSM
+ * semantics ("no oneway tag" is not "legally one-way").
+ *
+ * How ReportAnalysisJob's additive fallbacks treat these:
+ * - stationary-approach fires for ANY [DirectionResolution.Unknown] reason (2026-09-06
+ *   widening) - its own corroboration gate (stationary camera, lone strong grower,
+ *   >=5-member R>=0.9 receding consensus) is the safeguard, not the reason restriction.
+ * - counter-flow fires for [DirectionResolution.OneWay] and [DIVIDED_CARRIAGEWAY] at the
+ *   base gate (flow_coherence >= 0.6, forwardStream >= 5); every OTHER `Unknown` reason
+ *   only clears eligibility behind the strong gate (flow_coherence >= 0.85 AND
+ *   forwardStream >= 8), since "N forward + 1 oncoming" is legal two-way traffic there.
  *
  * [NOT_CROSS_CHECKED] is, like [DirectionResolution.LookupFailed], an artifact of the
  * lookup moment rather than a fact about the street (fewer than two Overpass mirrors

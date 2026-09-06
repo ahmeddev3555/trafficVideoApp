@@ -14,6 +14,7 @@ import com.trafficwatch.server.geo.FlowVehicle
 import com.trafficwatch.server.geo.FusionResult
 import com.trafficwatch.server.geo.OrientationTimeline
 import com.trafficwatch.server.geo.StreetDirectionResolver
+import com.trafficwatch.server.geo.UnknownReason
 import com.trafficwatch.server.reports.dto.LocationSampleDto
 import com.trafficwatch.server.reports.dto.RotationSampleDto
 import com.trafficwatch.server.storage.VideoStorageService
@@ -29,6 +30,7 @@ import java.math.BigDecimal
 import java.time.OffsetDateTime
 import java.util.Base64
 import java.util.UUID
+import kotlin.math.hypot
 
 /**
  * Real analysis pipeline: identifies the street a report's video was taken on and its legal
@@ -353,8 +355,20 @@ class ReportAnalysisJob(
      * perspective-immune, needs no compass / OSM legal bearing / stationary camera. Fires
      * only when the clip has a large (>= counterFlowMinWithFlow), coherent
      * (flowCoherence >= counterFlowMinCoherence) forward stream AND exactly one vehicle,
-     * tracked >= counterFlowMinFrames and detected >= confirmationThreshold, with
+     * tracked >= counterFlowMinFrames, detected >= confirmationThreshold and translated
+     * >= minDisplacementFraction of its own bbox diagonal, with
      * flowAlignment <= counterFlowMaxAlignment. Only upgrades REJECTED -> CONFIRMED.
+     *
+     * Eligibility split (C1, whole-branch review): [DirectionResolution.OneWay] and
+     * [UnknownReason.DIVIDED_CARRIAGEWAY] assert one-wayness (explicitly, or structurally
+     * via a divided road) so a vehicle opposing the dominant flow there is genuinely
+     * wrong-way at the base gate. Every OTHER [DirectionResolution.Unknown] reason
+     * (NO_ONEWAY_TAG / AMBIGUOUS_NEAREST_STREET / NOT_CROSS_CHECKED) is two-way in OSM
+     * semantics - "5 forward + 1 oncoming" is legal two-way traffic and flow_alignment
+     * cannot distinguish it - so it is trusted only behind the strong gate:
+     * coherence >= counterFlowStrongCoherence (0.85, needs ~9+ coherent forward tracks)
+     * AND forwardStream >= counterFlowStrongMinWithFlow (8). NotFound / LookupFailed /
+     * TwoWay stay ineligible.
      */
     private fun tryCounterFlowDetection(
         report: Report,
@@ -362,8 +376,11 @@ class ReportAnalysisJob(
         streetName: String?,
         resolution: DirectionResolution,
     ): AnalysisOutcome? {
-        val eligible = resolution is DirectionResolution.OneWay || resolution is DirectionResolution.Unknown
+        val unknownReason = (resolution as? DirectionResolution.Unknown)?.reason
+        val eligible = resolution is DirectionResolution.OneWay || unknownReason != null
         if (!eligible) return null
+        // A non-one-way Unknown reason is two-way in OSM semantics; it needs the strong gate.
+        val strongGateRequired = unknownReason != null && unknownReason != UnknownReason.DIVIDED_CARRIAGEWAY
 
         val coherence = analysis.flowCoherence ?: return null
         if (coherence < analysisProperties.counterFlowMinCoherence) return null
@@ -376,12 +393,25 @@ class ReportAnalysisJob(
                 (it.trackFrameCount ?: 0) >= minTrackFrames
         }
         if (forwardStream < analysisProperties.counterFlowMinWithFlow) return null
+        if (strongGateRequired &&
+            (coherence < analysisProperties.counterFlowStrongCoherence ||
+                forwardStream < analysisProperties.counterFlowStrongMinWithFlow)
+        ) {
+            return null
+        }
 
-        val candidates = analysis.vehicles.filter {
+        val candidates = analysis.vehicles.filter { v ->
             // An unset flowAlignment (?: 1.0) makes a candidate decisively non-counter-flowing.
-            (it.flowAlignment ?: 1.0) <= analysisProperties.counterFlowMaxAlignment &&
-                (it.trackFrameCount ?: 0) >= analysisProperties.counterFlowMinFrames &&
-                it.detectionConfidence >= analysisProperties.confirmationThreshold
+            if ((v.flowAlignment ?: 1.0) > analysisProperties.counterFlowMaxAlignment) return@filter false
+            if ((v.trackFrameCount ?: 0) < analysisProperties.counterFlowMinFrames) return@filter false
+            if (v.detectionConfidence < analysisProperties.confirmationThreshold) return@filter false
+            // Size-relative displacement gate (C2), mirroring ClipFlowAnalyzer.qualifyVehicles:
+            // an 8px reverse/creep must not qualify as counter-flow motion. A null bbox or a
+            // null displacement disqualifies.
+            val bbox = v.boundingBox ?: return@filter false
+            val displacement = v.displacementPixels ?: return@filter false
+            displacement >= analysisProperties.minDisplacementFraction *
+                hypot(bbox.x2 - bbox.x1, bbox.y2 - bbox.y1)
         }
         if (candidates.size != 1) return null
         val best = candidates.single()
@@ -396,7 +426,9 @@ class ReportAnalysisJob(
             wrongWayFramePath = annotateAndStoreFrame(
                 best, requireNotNull(report.id) { "Report must have a generated id before analysis" },
             ),
-            directionEvidenceJson = counterFlowBreakdownJson(best, forwardStream, coherence, resolution),
+            directionEvidenceJson = counterFlowBreakdownJson(
+                best, forwardStream, coherence, analysis.dominantFlowDegrees, resolution,
+            ),
         )
     }
 
@@ -404,6 +436,7 @@ class ReportAnalysisJob(
         best: VehicleAnalysisResult,
         forwardStreamCount: Int,
         flowCoherence: Double,
+        dominantFlowDegrees: Double?,
         resolution: DirectionResolution,
     ): String? = try {
         objectMapper.writeValueAsString(
@@ -413,8 +446,13 @@ class ReportAnalysisJob(
                     is DirectionResolution.OneWay -> "ONE_WAY"
                     else -> "OTHER"
                 },
-                counterFlowAlignment = best.flowAlignment ?: 0.0,
+                // Nullable, passed straight through: `best` already cleared
+                // `(flowAlignment ?: 1.0) <= counterFlowMaxAlignment` so it is non-null in
+                // practice - a null here is a broken invariant, surfaced rather than
+                // masked as a legal-looking 0.0.
+                counterFlowAlignment = best.flowAlignment,
                 flowCoherence = flowCoherence,
+                dominantFlowDegrees = dominantFlowDegrees,
                 forwardStreamCount = forwardStreamCount,
                 trackFrames = best.trackFrameCount ?: 0,
                 detectionConfidence = best.detectionConfidence,
@@ -703,8 +741,11 @@ internal data class ApproachEvidenceBreakdown(
 internal data class CounterFlowEvidenceBreakdown(
     val method: String = "counter_flow",
     val resolutionState: String,
-    val counterFlowAlignment: Double,
+    val counterFlowAlignment: Double?,
     val flowCoherence: Double,
+    // The clip's dominant traffic direction (deg clockwise from frame-up), straight from
+    // VideoAnalysisResponse.dominantFlowDegrees - a diagnostic for counter-flow FP triage.
+    val dominantFlowDegrees: Double? = null,
     val forwardStreamCount: Int,
     val trackFrames: Int,
     val detectionConfidence: Double,

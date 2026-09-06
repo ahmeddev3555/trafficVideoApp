@@ -74,9 +74,19 @@ data class AnalysisProperties(
     // stream is driving the wrong way - a signal that needs no compass, OSM bearing, or
     // stationary camera. Fires only for OneWay / any Unknown resolution.
     // counterFlowMinCoherence matches consensus-min-resultant-length (0.6): flow_coherence
-    // is R over ALL directional tracks, so an N-forward / 1-counter split is R=(N-1)/(N+1).
+    // is R over the >= MIN_OBSERVATIONS directional tracks, so an N-forward / 1-counter
+    // split is R=(N-1)/(N+1).
     var counterFlowMinCoherence: Double = 0.6,
     var counterFlowMaxAlignment: Double = -0.6,
     var counterFlowMinFrames: Int = 12,
     var counterFlowMinWithFlow: Int = 5,
+    // Strong eligibility gate (2026-09-06 whole-branch review, C1) for a counter-flow
+    // confirm on a non-one-way Unknown resolution (NO_ONEWAY_TAG / AMBIGUOUS_NEAREST_STREET
+    // / NOT_CROSS_CHECKED): those are two-way in OSM semantics, so "5 forward + 1 oncoming"
+    // is legal two-way traffic that flow_alignment cannot distinguish from a violation.
+    // Only a genuinely busy, overwhelmingly one-directional scene is trusted there without
+    // a one-wayness assertion: flow_coherence >= 0.85 (needs ~9+ coherent forward tracks)
+    // AND forwardStream >= 8. OneWay and Unknown(DIVIDED_CARRIAGEWAY) keep the base gate.
+    var counterFlowStrongCoherence: Double = 0.85,
+    var counterFlowStrongMinWithFlow: Int = 8,
 )

@@ -516,6 +516,29 @@ class StreetDirectionResolverTest @Autowired constructor(
     }
 
     @Test
+    fun `does not treat different-named anti-parallel oneway ways as a divided carriageway`() {
+        // Same geometry as `downgrades to Unknown when a nearby anti-parallel oneway way
+        // signals a divided carriageway` (gap ~16.7m, inside the 30m carriageway cap;
+        // anti-parallel; both oneway=yes) but the two carriageways carry DIFFERENT names.
+        // hasAntiParallelOneWayNeighbor requires a matching name tag, so this is the
+        // deliberate degradation branch (Fix A): the divided-carriageway signature is NOT
+        // recognised and the result falls back to today's OneWay / AMBIGUOUS behaviour -
+        // never Unknown(DIVIDED_CARRIAGEWAY).
+        stubOverpass(
+            twoWayOverpassResponseJson(
+                wayAId = 361, wayAName = "North Carriageway", wayAOneway = "yes", wayALatOffsetDegrees = 0.000100, wayAWestToEast = true,
+                wayBId = 362, wayBName = "South Carriageway", wayBOneway = "yes", wayBLatOffsetDegrees = 0.000250, wayBWestToEast = false,
+                baseLat = 69.000000, baseLon = 69.000000,
+            ),
+        )
+
+        val result = streetDirectionResolver.resolve(BigDecimal("69.000000"), BigDecimal("69.000000"), accuracyMeters = 5.0)
+
+        val reason = (result as? DirectionResolution.Unknown)?.reason
+        assertThat(reason).isNotEqualTo(UnknownReason.DIVIDED_CARRIAGEWAY)
+    }
+
+    @Test
     fun `union across a full mirror and a trimmed mirror still downgrades a divided carriageway`() {
         overpassA.stubFor(post(urlMatching(".*"))
             .willReturn(okJson(readFixture("overpass-khayaban-e-jinnah-report-649b9a.json"))))

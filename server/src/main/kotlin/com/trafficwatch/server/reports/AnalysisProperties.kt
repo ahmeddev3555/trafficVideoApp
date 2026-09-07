@@ -89,4 +89,9 @@ data class AnalysisProperties(
     // AND forwardStream >= 8. OneWay and Unknown(DIVIDED_CARRIAGEWAY) keep the base gate.
     var counterFlowStrongCoherence: Double = 0.85,
     var counterFlowStrongMinWithFlow: Int = 8,
+    // A real wrong-way vehicle approaching THIS carriageway grows and drops toward the
+    // bottom of the frame; legal traffic on the far carriageway of a divided road stays
+    // small and near the horizon. The counter-flow candidate's representative bbox bottom
+    // edge must be at least this fraction of the way down the frame.
+    var counterFlowMinNearness: Double = 0.65,
 )

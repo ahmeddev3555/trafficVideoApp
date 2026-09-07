@@ -74,3 +74,4 @@ app:
     counter-flow-min-with-flow: 5
     counter-flow-strong-coherence: 0.85
     counter-flow-strong-min-with-flow: 8
+    counter-flow-min-nearness: 0.65

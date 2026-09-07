@@ -1898,5 +1898,33 @@ class ReportAnalysisJobTest {
         assertThat(reportB.analysisMessage).contains("Wrong-way vehicle detected on")
         assertThat(reportB.directionEvidence ?: "").doesNotContain("counter_flow")
     }
+
+    @Test
+    fun `counter-flow does not fire for a candidate that never approached the camera`() {
+        // Fix B (2026-09-07): the lone counter-flower clears every other gate, but its
+        // representative bbox sits high in the frame (y2 = 0.4 * frameHeight, below the
+        // 0.65 * frameHeight near-camera floor) - the shape of legal traffic on the far
+        // carriageway of a divided road, not a wrong-way vehicle approaching this one. The
+        // near-camera gate drops it -> candidates.size == 0 -> stays REJECTED.
+        val report = sampleReport()
+        every {
+            streetDirectionResolver.resolve(report.latitude, report.longitude, report.accuracy.toDouble())
+        } returns DirectionResolution.Unknown("Khayaban-e-Jinnah", UnknownReason.DIVIDED_CARRIAGEWAY)
+        val vehicles = listOf(
+            vehicle(
+                trackId = 1, detectionConfidence = 0.8, trackFrameCount = 14, flowAlignment = -0.85,
+                boundingBox = BoundingBox(x1 = 800.0, y1 = 380.0, x2 = 880.0, y2 = 432.0),
+            ),
+        ) + (2L..7L).map { vehicle(trackId = it, trackFrameCount = 20, flowAlignment = 0.9) }
+        every { videoAnalysisClient.analyze(fakeVideoPath, any(), any()) } returns analysisResponse(
+            vehicles, flowCoherence = 0.85,
+        )
+        every { reportRepository.save(any()) } answers { firstArg() }
+
+        job.applyOutcome(report)
+
+        assertThat(report.status).isEqualTo(ReportStatus.REJECTED)
+        assertThat(report.directionEvidence ?: "").doesNotContain("counter_flow")
+    }
 }
 

@@ -359,6 +359,13 @@ class ReportAnalysisJob(
      * >= minDisplacementFraction of its own bbox diagonal, with
      * flowAlignment <= counterFlowMaxAlignment. Only upgrades REJECTED -> CONFIRMED.
      *
+     * Near-camera gate (Fix B, 2026-09-07): the candidate must additionally have approached
+     * THIS carriageway - its representative bbox bottom edge sits at least
+     * [AnalysisProperties.counterFlowMinNearness] of the way down the frame. Legal traffic
+     * on the far carriageway of a divided road stays small and near the horizon and is
+     * dropped from candidates. A null / non-positive frameHeight fails the whole path closed
+     * (the gate cannot be applied, and it doubles as a "was a real frame analysed" check).
+     *
      * Eligibility split (C1, whole-branch review): [DirectionResolution.OneWay] and
      * [UnknownReason.DIVIDED_CARRIAGEWAY] assert one-wayness (explicitly, or structurally
      * via a divided road) so a vehicle opposing the dominant flow there is genuinely
@@ -379,6 +386,11 @@ class ReportAnalysisJob(
         val unknownReason = (resolution as? DirectionResolution.Unknown)?.reason
         val eligible = resolution is DirectionResolution.OneWay || unknownReason != null
         if (!eligible) return null
+        // Fail closed without real frame geometry: the near-camera gate below needs a true
+        // frameHeight, and this mirrors the stationary-approach path's "was a real frame
+        // analysed" check.
+        val frameHeight = analysis.frameHeight
+        if (frameHeight == null || frameHeight <= 0) return null
         // A non-one-way Unknown reason is two-way in OSM semantics; it needs the strong gate.
         val strongGateRequired = unknownReason != null && unknownReason != UnknownReason.DIVIDED_CARRIAGEWAY
 
@@ -410,8 +422,16 @@ class ReportAnalysisJob(
             // null displacement disqualifies.
             val bbox = v.boundingBox ?: return@filter false
             val displacement = v.displacementPixels ?: return@filter false
-            displacement >= analysisProperties.minDisplacementFraction *
+            if (displacement < analysisProperties.minDisplacementFraction *
                 hypot(bbox.x2 - bbox.x1, bbox.y2 - bbox.y1)
+            ) {
+                return@filter false
+            }
+            // Near-camera gate (Fix B, 2026-09-07): the candidate must have approached this
+            // carriageway - its representative bbox bottom edge is low in the frame. Legal
+            // traffic on the far carriageway of a divided road stays near the horizon.
+            if (bbox.y2 < analysisProperties.counterFlowMinNearness * frameHeight) return@filter false
+            true
         }
         if (candidates.size != 1) return null
         val best = candidates.single()

@@ -1,6 +1,60 @@
 # Counter-Flow Wrong-Way Detection (head-on / near-camera approach) — Design
 
-**Status:** implemented 2026-09-06 (commits 1f3ab8e..17b9d52)
+**Status:** implemented 2026-09-06 (commits 1f3ab8e..17b9d52); amended 2026-09-07 (see "Amendment 2026-09-07" below)
+
+## Amendment 2026-09-07 — post-deploy: `14872a1a` still REJECTED, two follow-on fixes
+
+The first production re-run of `14872a1a` (the motivating report) stayed REJECTED.
+Diagnosis (deployed pipeline, run locally):
+
+- `14872a1a` resolves to `Unknown(AMBIGUOUS_NEAREST_STREET)`, so counter-flow needs
+  the **strong** gate (`flow_coherence ≥ 0.85`). Actual `flow_coherence` = **0.736**.
+- Two vehicles clear the candidate filter, not one: the wrong-way rider
+  (`flow_alignment −0.98`, ends **low + huge**, y2 ≈ 1450 / 1920) **and** a car
+  (`−0.97`, 32 frames) that stays **high + small** near the horizon (y2 ≈ 900) —
+  legal traffic on the **opposing carriageway of the divided road**. Both drag
+  coherence down and `candidates.size == 2` blocks the confirm.
+
+Root cause of the first point: خیبان جناح at that point is **two parallel
+`oneway=yes` OSM ways with the same name** (`23815272`, `178294168`) — a textbook
+divided carriageway. `StreetDirectionResolver.resolveFresh` returns
+`AMBIGUOUS_NEAREST_STREET` because it checks for a nearby *differently-named*
+street (an unnamed residential side street is within the accuracy radius) and
+returns **before** the anti-parallel-one-way-neighbour (`DIVIDED_CARRIAGEWAY`)
+check ever runs.
+
+### Fix A — resolver ordering (`StreetDirectionResolver.kt`)
+
+Run the `DIVIDED_CARRIAGEWAY` detection **before** the
+`AMBIGUOUS_NEAREST_STREET` early return. The divided-carriageway signature — two
+**same-name** (`best`'s `name` tag == the neighbour's, both non-null),
+anti-parallel (within 45° of exactly opposed), `oneway`-tagged ways whose
+segments are within `DIVIDED_CARRIAGEWAY_MAX_DISTANCE_GAP_METERS` (30 m) — is
+strong and specific; a differently-named side street nearby must not mask it.
+`hasAntiParallelOneWayNeighbor` gains the same-name requirement (a divided road
+whose carriageways are tagged with mismatched names, or one unnamed, is not
+caught — it degrades to today's `AMBIGUOUS`/`OneWay` behaviour, no worse than
+now). Effect: `14872a1a` → `Unknown(DIVIDED_CARRIAGEWAY)` → counter-flow uses the
+**base** gate (`flow_coherence ≥ 0.60`; 0.736 clears it).
+
+### Fix B — near-camera candidate gate (`ReportAnalysisJob.kt`)
+
+The counter-flow candidate filter additionally requires the vehicle's
+representative bounding box to sit in the near part of the frame:
+`boundingBox.y2 ≥ counterFlowMinNearness × frameHeight`, `counterFlowMinNearness
+= 0.65` (new `AnalysisProperties` + `application.yml` key). A real wrong-way
+vehicle approaching *this* carriageway grows and drops toward the bottom of the
+frame; legal traffic on the far carriageway of a divided road stays small and
+near the horizon. `frameHeight` null / ≤ 0 → `return null` (fail closed — the
+gate cannot be applied), which also supplies the "was a real frame analysed"
+check the stationary-approach path already performs. Effect on `14872a1a`: the
+far-carriageway car (y2 ≈ 900 < 0.65 × 1920 = 1248) is dropped;
+`candidates.size == 1`.
+
+With both: `14872a1a` → `DIVIDED_CARRIAGEWAY` → base gate, `flow_coherence` 0.736
+≥ 0.60, forward-stream 20 ≥ 5, one candidate → **CONFIRMED via `counter_flow`**.
+
+Everything below is the original 2026-09-06 design.
 
 ## Problem
 

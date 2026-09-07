@@ -92,15 +92,6 @@ class StreetDirectionResolver(
         val best = candidates.firstOrNull() ?: return DirectionResolution.NotFound
         val streetName = best.way.tags?.get("name") ?: reverseGeocodeStreetName(lat, lon)
 
-        val bestNameTag = best.way.tags?.get("name")
-        val nearestDifferentStreet = candidates.drop(1).firstOrNull { candidate ->
-            val nameTag = candidate.way.tags?.get("name")
-            !(bestNameTag != null && nameTag != null && bestNameTag == nameTag)
-        }
-        if (nearestDifferentStreet != null && (nearestDifferentStreet.distanceMeters - best.distanceMeters) < accuracyMeters) {
-            return DirectionResolution.Unknown(streetName, UnknownReason.AMBIGUOUS_NEAREST_STREET)
-        }
-
         val resolution = when (best.way.tags?.get("oneway")) {
             in ONEWAY_FORWARD_VALUES -> DirectionResolution.OneWay(
                 streetName,
@@ -117,8 +108,23 @@ class StreetDirectionResolver(
             else -> DirectionResolution.Unknown(streetName, UnknownReason.NO_ONEWAY_TAG)
         }
 
+        // DIVIDED_CARRIAGEWAY is checked BEFORE the AMBIGUOUS_NEAREST_STREET block below:
+        // two same-name anti-parallel `oneway` ways are a strong, specific signature, and a
+        // nearby differently-named side street (common alongside a divided arterial) must not
+        // mask it. AMBIGUOUS forces a strict downstream gate; DIVIDED_CARRIAGEWAY lets the
+        // counter-flow path use its lenient one. See the 2026-09-07 amendment (Fix A) in
+        // docs/superpowers/specs/2026-09-06-counter-flow-wrong-way-detection-design.md.
         if (resolution is DirectionResolution.OneWay && hasAntiParallelOneWayNeighbor(best, candidates)) {
             return DirectionResolution.Unknown(streetName, UnknownReason.DIVIDED_CARRIAGEWAY)
+        }
+
+        val bestNameTag = best.way.tags?.get("name")
+        val nearestDifferentStreet = candidates.drop(1).firstOrNull { candidate ->
+            val nameTag = candidate.way.tags?.get("name")
+            !(bestNameTag != null && nameTag != null && bestNameTag == nameTag)
+        }
+        if (nearestDifferentStreet != null && (nearestDifferentStreet.distanceMeters - best.distanceMeters) < accuracyMeters) {
+            return DirectionResolution.Unknown(streetName, UnknownReason.AMBIGUOUS_NEAREST_STREET)
         }
 
         if (resolution is DirectionResolution.OneWay && overpass.sourceCount < 2) {
@@ -132,11 +138,17 @@ class StreetDirectionResolver(
     }
 
     /**
-     * True when another candidate way, also tagged `oneway`, has a legal bearing anti-parallel
-     * to [best]'s (within [DIVIDED_CARRIAGEWAY_ANTI_PARALLEL_TOLERANCE_DEGREES] of exactly
-     * 180 degrees apart) and sits within [DIVIDED_CARRIAGEWAY_MAX_DISTANCE_GAP_METERS] of
-     * [best]'s own distance to the point - the physical signature of a divided road's two
-     * separately-tagged, oppositely-legal carriageways.
+     * True when another candidate way, sharing [best]'s `name` tag (both non-null and equal)
+     * and also tagged `oneway`, has a legal bearing anti-parallel to [best]'s (within
+     * [DIVIDED_CARRIAGEWAY_ANTI_PARALLEL_TOLERANCE_DEGREES] of exactly 180 degrees apart) and
+     * sits within [DIVIDED_CARRIAGEWAY_MAX_DISTANCE_GAP_METERS] of [best]'s own distance to
+     * the point - the physical signature of a divided road's two separately-tagged,
+     * oppositely-legal carriageways.
+     *
+     * The same-name requirement is deliberate: a divided road whose carriageways are tagged
+     * with mismatched names, or one of them left unnamed, is NOT caught here - it degrades to
+     * the [UnknownReason.AMBIGUOUS_NEAREST_STREET] / [DirectionResolution.OneWay] behaviour
+     * that would apply anyway, which is no worse than not having this check.
      */
     private fun hasAntiParallelOneWayNeighbor(best: WayCandidate, candidates: List<WayCandidate>): Boolean {
         fun legalBearing(candidate: WayCandidate): Double = when (candidate.way.tags?.get("oneway")) {
@@ -144,9 +156,11 @@ class StreetDirectionResolver(
             else -> BearingMath.initialBearingDegrees(candidate.nodes[candidate.segmentIndex], candidate.nodes[candidate.segmentIndex + 1])
         }
         val bestBearing = legalBearing(best)
+        val bestName = best.way.tags?.get("name")
 
         return candidates.any { other ->
             other !== best &&
+                bestName != null && other.way.tags?.get("name") == bestName &&
                 other.way.tags?.get("oneway") in (ONEWAY_FORWARD_VALUES + ONEWAY_REVERSE_VALUES) &&
                 BearingMath.distanceToSegmentMeters(segmentMidpoint(best), other.nodes[other.segmentIndex], other.nodes[other.segmentIndex + 1]) <= DIVIDED_CARRIAGEWAY_MAX_DISTANCE_GAP_METERS &&
                 BearingMath.angularDifferenceDegrees(legalBearing(other), bestBearing) > (180.0 - DIVIDED_CARRIAGEWAY_ANTI_PARALLEL_TOLERANCE_DEGREES)

@@ -262,11 +262,12 @@ class StreetDirectionResolverTest @Autowired constructor(
     fun `downgrades to Unknown when a nearby anti-parallel oneway way signals a divided carriageway`() {
         // Way A ~11.1m away bearing ~90 deg (east); Way B ~27.8m away bearing ~270 deg (west,
         // anti-parallel). Gap ~16.7m: bigger than the 5.0m accuracy below (so the ambiguity
-        // check does NOT fire), smaller than the 30m divided-carriageway proximity cap.
+        // check does NOT fire), smaller than the 30m divided-carriageway proximity cap. Both
+        // carriageways share a name - required since hasAntiParallelOneWayNeighbor now demands it.
         stubOverpass(
             twoWayOverpassResponseJson(
-                wayAId = 305, wayAName = "Ring Road North", wayAOneway = "yes", wayALatOffsetDegrees = 0.000100, wayAWestToEast = true,
-                wayBId = 306, wayBName = "Ring Road South", wayBOneway = "yes", wayBLatOffsetDegrees = 0.000250, wayBWestToEast = false,
+                wayAId = 305, wayAName = "Ring Road", wayAOneway = "yes", wayALatOffsetDegrees = 0.000100, wayAWestToEast = true,
+                wayBId = 306, wayBName = "Ring Road", wayBOneway = "yes", wayBLatOffsetDegrees = 0.000250, wayBWestToEast = false,
                 baseLat = 63.000000, baseLon = 63.000000,
             ),
         )
@@ -274,17 +275,19 @@ class StreetDirectionResolverTest @Autowired constructor(
         val result = streetDirectionResolver.resolve(BigDecimal("63.000000"), BigDecimal("63.000000"), accuracyMeters = 5.0)
 
         assertThat(result).isInstanceOf(DirectionResolution.Unknown::class.java)
-        assertThat((result as DirectionResolution.Unknown).streetName).isEqualTo("Ring Road North")
+        assertThat((result as DirectionResolution.Unknown).streetName).isEqualTo("Ring Road")
     }
 
     @Test
     fun `does not downgrade for a distant anti-parallel oneway way outside the carriageway proximity cap`() {
         // Way A ~11.1m away bearing ~90 deg; Way B ~55.6m away bearing ~270 deg (anti-parallel,
-        // but the ~44.5m gap exceeds the 30m divided-carriageway proximity cap).
+        // but the ~44.5m gap exceeds the 30m divided-carriageway proximity cap). Both share a
+        // name, so the proximity cap - not the same-name rule - is the sole reason no downgrade
+        // fires; the shared name also exempts Way B from the ambiguity check.
         stubOverpass(
             twoWayOverpassResponseJson(
-                wayAId = 307, wayAName = "Avenue A", wayAOneway = "yes", wayALatOffsetDegrees = 0.000100, wayAWestToEast = true,
-                wayBId = 308, wayBName = "Avenue B", wayBOneway = "yes", wayBLatOffsetDegrees = 0.000500, wayBWestToEast = false,
+                wayAId = 307, wayAName = "Avenue", wayAOneway = "yes", wayALatOffsetDegrees = 0.000100, wayAWestToEast = true,
+                wayBId = 308, wayBName = "Avenue", wayBOneway = "yes", wayBLatOffsetDegrees = 0.000500, wayBWestToEast = false,
                 baseLat = 64.000000, baseLon = 64.000000,
             ),
         )
@@ -292,7 +295,7 @@ class StreetDirectionResolverTest @Autowired constructor(
         val result = streetDirectionResolver.resolve(BigDecimal("64.000000"), BigDecimal("64.000000"), accuracyMeters = 5.0)
 
         assertThat(result).isInstanceOf(DirectionResolution.OneWay::class.java)
-        assertThat((result as DirectionResolution.OneWay).streetName).isEqualTo("Avenue A")
+        assertThat((result as DirectionResolution.OneWay).streetName).isEqualTo("Avenue")
     }
 
     @Test
@@ -480,6 +483,36 @@ class StreetDirectionResolverTest @Autowired constructor(
 
         assertThat(result).isInstanceOf(DirectionResolution.Unknown::class.java)
         assertThat((result as DirectionResolution.Unknown).reason).isEqualTo(UnknownReason.AMBIGUOUS_NEAREST_STREET)
+    }
+
+    @Test
+    fun `DIVIDED_CARRIAGEWAY wins over AMBIGUOUS_NEAREST_STREET when a same-name anti-parallel oneway neighbour is present`() {
+        // Report 14872a1a shape: two same-name anti-parallel oneway carriageways of
+        // خیبان جناح, plus an unnamed/residential side street ("Street 14") that falls
+        // within the accuracy radius of the nearer carriageway. Pre-fix, the
+        // AMBIGUOUS_NEAREST_STREET early-return fired first and masked the divided road.
+        //   way 601 (best): "Jinnah Ave", oneway=yes, W->E, ~11.1m north of the point.
+        //   way 603:        "Street 14", no oneway, ~22.2m south - a different name, and
+        //                   its ~11.1m gap from best is < the 15.0m accuracy -> old ambiguity trigger.
+        //   way 602:        "Jinnah Ave", oneway=yes, E->W (anti-parallel to 601), ~27.8m
+        //                   north - ~16.7m from best's segment, inside the 30m carriageway cap.
+        val responseJson = """
+            {"elements": [
+              {"type": "way", "id": 601, "tags": {"name": "Jinnah Ave", "oneway": "yes"},
+               "geometry": [{"lat": 71.000100, "lon": 70.999000}, {"lat": 71.000100, "lon": 71.001000}]},
+              {"type": "way", "id": 602, "tags": {"name": "Jinnah Ave", "oneway": "yes"},
+               "geometry": [{"lat": 71.000250, "lon": 71.001000}, {"lat": 71.000250, "lon": 70.999000}]},
+              {"type": "way", "id": 603, "tags": {"name": "Street 14"},
+               "geometry": [{"lat": 70.999800, "lon": 70.999000}, {"lat": 70.999800, "lon": 71.001000}]}
+            ]}
+        """.trimIndent()
+        stubOverpass(responseJson)
+
+        val result = streetDirectionResolver.resolve(BigDecimal("71.000000"), BigDecimal("71.000000"), accuracyMeters = 15.0)
+
+        assertThat(result).isInstanceOf(DirectionResolution.Unknown::class.java)
+        assertThat((result as DirectionResolution.Unknown).reason).isEqualTo(UnknownReason.DIVIDED_CARRIAGEWAY)
+        assertThat(result.streetName).isEqualTo("Jinnah Ave")
     }
 
     @Test

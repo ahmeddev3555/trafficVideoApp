@@ -450,7 +450,69 @@ considered rather than forgotten.
   would need another diagnostic-logging deploy to pin the exact gate, or the
   "B" clip-flow-relative bearing design; not pursued 2026-09-02. `50bcc6`
   and `71f78` remain out of scope (still the "B" design).
-  *(added 2026-08-30 while building per-report vehicle readouts; approach-detection note added 2026-08-30; approach-gate scope + divided-carriageway follow-up 2026-08-31; co-membership added f981177 then dropped for a stream-strength gate 2026-09-02; production verification 2026-09-02: 759cd + a5275 confirm, 24908 still rejected)*
+
+  **Update 2026-09-08 — SHIPPED, `14872a1a` CONFIRMS** (spec
+  `docs/superpowers/specs/2026-09-06-counter-flow-wrong-way-detection-design.md`,
+  commits `1f3ab8e`..`42a7a3e`). The "B" (clip-flow-relative bearing) idea
+  landed as **counter-flow detection** — a lone, well-detected vehicle
+  moving against the clip's *own* dominant traffic flow, measured entirely
+  in frame space so it survives the perspective problem:
+  - `video-analysis`: motorcycle `min_detection_confidence` 0.4 &rarr; **0.25**
+    (`motorcycle_min_confidence`) so the head-on rider stays in the stream;
+    new per-track `flow_alignment` &isin; [&minus;1, 1] = the track's
+    distance-gated (smallest-40%-bbox window) frame velocity dotted against
+    the displacement-weighted dominant flow, plus clip
+    `dominant_flow_degrees` / `flow_coherence` (R over &ge; `MIN_OBSERVATIONS`
+    tracks).
+  - `server` `ReportAnalysisJob.tryCounterFlowDetection` — a third
+    REJECTED&rarr;CONFIRMED fallback after the bearing and stationary-approach
+    paths. Fires for `OneWay` / any `Unknown` when `flow_coherence &ge;
+    counter-flow-min-coherence` (**0.6**) AND a forward stream of
+    `&ge; counter-flow-min-with-flow` (**5**) tracks AND exactly one candidate
+    (`flow_alignment &le; counter-flow-max-alignment` **&minus;0.6**,
+    `&ge; counter-flow-min-frames` **12**, det `&ge; 0.5`, displacement
+    `&ge; minDisplacementFraction &times; own bbox diagonal`, and
+    `bbox.y2 &ge; counter-flow-min-nearness` **0.65** &times; frameHeight).
+    No stationary-camera requirement. `NotFound` / `LookupFailed` / `TwoWay`
+    ineligible.
+  - Whole-branch-review Criticals fixed before ship: (C1) `NO_ONEWAY_TAG` /
+    `AMBIGUOUS_NEAREST_STREET` are two-way in OSM, so those Unknown reasons
+    need a **strong gate** (`counter-flow-strong-coherence` **0.85** AND
+    `counter-flow-strong-min-with-flow` **8**); `OneWay` /
+    `DIVIDED_CARRIAGEWAY` keep the base gate. (C2) the size-relative
+    displacement gate above.
+  - `StreetDirectionResolver` (Fix A): `DIVIDED_CARRIAGEWAY` detection now
+    runs **before** the `AMBIGUOUS_NEAREST_STREET` early return, and
+    `hasAntiParallelOneWayNeighbor` requires the anti-parallel one-way to
+    **share `best`'s name tag**. خیبان جناح at this point is two same-name
+    `oneway=yes` ways plus an unnamed side street within the accuracy radius,
+    so it was mis-resolving `AMBIGUOUS_NEAREST_STREET` and forcing the strong
+    gate it couldn't clear. Now &rarr; `DIVIDED_CARRIAGEWAY` &rarr; base gate.
+
+  Production result (`14872a1a`, re-run 2026-09-07 on the deployed stack):
+  **CONFIRMED via `counter_flow`**, `resolution_state
+  UNKNOWN_DIVIDED_CARRIAGEWAY`, `flow_coherence` 0.736, `forward_stream_count`
+  20, `counter_flow_alignment` &minus;0.976 (the rider's 16-frame swerve
+  fragment), `wrong_way_confidence` 0.815. The far-carriageway legal car
+  (`flow_alignment` &minus;0.97, y2 &asymp; 893 &lt; 0.65&times;1920) is
+  dropped by the near-camera gate, leaving one candidate.
+
+  **Deploy gotcha:** a resolver behaviour change needs the `osm_lookup_cache`
+  flushed (`TRUNCATE`, as the divided-carriageway migration did) — Fix A
+  shipped without one, so the stale `AMBIGUOUS_NEAREST_STREET` bucket kept
+  being served until manually cleared. Add a `TRUNCATE osm_lookup_cache` step
+  to any future `StreetDirectionResolver` deploy, or ship it in a Flyway
+  migration.
+
+  **Parked follow-ups** (whole-branch review, not blocking): (I4) verify a
+  real head-on motorcycle track's `max`-over-frames `detection_confidence`
+  actually clears 0.5 — `14872a1a`'s does (0.815); (M8) promote the hardcoded
+  0.5 forward-stream `flow_alignment` threshold to a property; (M9) a
+  dedicated `counterFlowMinDetection` instead of reusing `confirmationThreshold`
+  as a detection floor; (M10) tighten off-by-one test fixture values;
+  (M11) a `OneWay` counter-flow CONFIRM test; (M12/M13) minor comment /
+  symmetry nits.
+  *(added 2026-08-30 while building per-report vehicle readouts; approach-detection note added 2026-08-30; approach-gate scope + divided-carriageway follow-up 2026-08-31; co-membership added f981177 then dropped for a stream-strength gate 2026-09-02; production verification 2026-09-02: 759cd + a5275 confirm, 24908 still rejected; counter-flow detection shipped 2026-09-08, 14872a1a CONFIRMS)*
 
 - **[PRIORITY RAISED 2026-08-30 - recurred] A long, cleanly-detected
   wrong-way vehicle can be denied confirmation purely by low

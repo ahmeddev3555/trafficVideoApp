@@ -502,7 +502,47 @@ considered rather than forgotten.
   shipped without one, so the stale `AMBIGUOUS_NEAREST_STREET` bucket kept
   being served until manually cleared. Add a `TRUNCATE osm_lookup_cache` step
   to any future `StreetDirectionResolver` deploy, or ship it in a Flyway
-  migration.
+  migration. (The 2026-09-08 resolver fix below also shipped without one — the
+  خیبان جناح bucket was cleared by hand; a broad flush is still pending a
+  healthy Overpass window.)
+
+  **Update 2026-09-08 (b) — resolver + memory, commits `67a8524` / `d637951`.**
+  Two follow-ons after `14872a1a`'s first post-deploy re-run stayed REJECTED:
+  - **`StreetDirectionResolver` prefers a major highway over a
+    marginally-closer minor way.** GPS accuracy (~a few m) had the *nearest*
+    OSM way to `14872a1a`'s point be an unnamed `highway=residential` 3.3 m
+    out, not the خیبان جناح `secondary` carriageway at 6.5 m — so `best` was
+    the side street, `resolution` was never `OneWay`, and Fix A's reordered
+    `DIVIDED_CARRIAGEWAY` check never ran &rarr; `AMBIGUOUS_NEAREST_STREET`.
+    Now: if the nearest candidate is not a major class
+    (`motorway`/`trunk`/`primary`/`secondary`/`tertiary` + `_link`s) and a
+    major-class candidate sits within `accuracyMeters` of it, take the nearest
+    such major as `best`. The AMBIGUOUS check's `candidates.drop(1)` also
+    became `filterNot { it === best }` since `best` is no longer always
+    `candidates[0]`. This is the actual fix that gets `14872a1a` to
+    `DIVIDED_CARRIAGEWAY`; Fix A's reorder was necessary but insufficient.
+    Review minors (not done): DRY the twice-written major-class check into a
+    `WayCandidate.isMajorHighway()`; add a test pinning "promote + no
+    same-name partner &rarr; still `AMBIGUOUS`" (not a regression, just
+    surprising); consider `--index-url` over `--extra-index-url` for the
+    torch pin.
+  - **CPU-only torch.** The last `video-analysis` rebuild pulled `torch` with
+    ~1.5 GB of CUDA libraries, unused on the CPU-only 2-vCPU / 3.7 GB VPS —
+    the container was OOM-restarting (`restarts=2` mid-batch, which killed the
+    `d17d21e9` / `b6cb5e2d` re-runs). `torch==2.4.1+cpu` /
+    `torchvision==0.19.1+cpu` via the PyTorch CPU index. Result: image
+    10.3 GB &rarr; 2.69 GB, idle RSS 2.5 GB &rarr; ~50 MB, **system RAM
+    available 136 MB &rarr; 2.4 GB.** This is the real mitigation for the
+    intermittent `video-analysis` timeouts (better than the 2026-09-06
+    serialisation + sub-12-frame OCR skip, which addressed contention and
+    per-track waste but not the resident-model footprint).
+
+  **Still REJECTED as of 2026-09-08:** `24908` (never re-run on the
+  counter-flow stack), `50bcc6` / `71f78` (moving camera — counter-flow has
+  no stationary-camera requirement, so worth a re-run), `d17d21e9` /
+  `b6cb5e2d` (OOM'd mid-re-run pre the torch fix; retry now that RAM is
+  healthy). `d9437ae3` CONFIRMS via the widened stationary-approach path
+  (`67 fr`, growth 2.35, 5-member R=0.99 receding consensus).
 
   **Parked follow-ups** (whole-branch review, not blocking): (I4) verify a
   real head-on motorcycle track's `max`-over-frames `detection_confidence`

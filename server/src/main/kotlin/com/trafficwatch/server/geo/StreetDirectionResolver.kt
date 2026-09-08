@@ -14,6 +14,14 @@ private const val DIVIDED_CARRIAGEWAY_MAX_DISTANCE_GAP_METERS = 30.0
 private val ONEWAY_FORWARD_VALUES = setOf("yes", "true", "1")
 private val ONEWAY_REVERSE_VALUES = setOf("-1", "reverse")
 
+// OSM `highway` classes that carry through-traffic. A dashcam report is almost always ON
+// one of these, not on a parallel service/residential lane that GPS noise placed slightly
+// closer - see the nearest-candidate selection in resolveFresh.
+private val MAJOR_HIGHWAY_CLASSES = setOf(
+    "motorway", "trunk", "primary", "secondary", "tertiary",
+    "motorway_link", "trunk_link", "primary_link", "secondary_link", "tertiary_link",
+)
+
 private data class WayCandidate(
     val way: OverpassElement,
     val nodes: List<GeoPoint>,
@@ -89,7 +97,22 @@ class StreetDirectionResolver(
             WayCandidate(way, nodes, segmentIndex, distance)
         }.sortedBy { it.distanceMeters }
 
-        val best = candidates.firstOrNull() ?: return DirectionResolution.NotFound
+        val nearest = candidates.firstOrNull() ?: return DirectionResolution.NotFound
+        // A dashcam records from a car ON the roadway of the road being driven. GPS accuracy
+        // (a few metres) routinely places an unnamed residential/service way marginally
+        // closer to the point than the arterial the vehicle is actually on. When the nearest
+        // way is a minor class but a major-class way (motorway..tertiary) sits within
+        // accuracyMeters of it, take the nearest such major way as `best` - the vehicle is on
+        // the arterial, not the parallel service lane. (Same accuracyMeters slack the
+        // AMBIGUOUS_NEAREST_STREET check below uses.)
+        val best = if (nearest.way.tags?.get("highway") !in MAJOR_HIGHWAY_CLASSES) {
+            candidates.firstOrNull {
+                it.way.tags?.get("highway") in MAJOR_HIGHWAY_CLASSES &&
+                    it.distanceMeters - nearest.distanceMeters < accuracyMeters
+            } ?: nearest
+        } else {
+            nearest
+        }
         val streetName = best.way.tags?.get("name") ?: reverseGeocodeStreetName(lat, lon)
 
         val resolution = when (best.way.tags?.get("oneway")) {
@@ -119,7 +142,9 @@ class StreetDirectionResolver(
         }
 
         val bestNameTag = best.way.tags?.get("name")
-        val nearestDifferentStreet = candidates.drop(1).firstOrNull { candidate ->
+        // `best` is not necessarily candidates[0] (see the major-highway preference above),
+        // so exclude it by identity rather than dropping the first element.
+        val nearestDifferentStreet = candidates.filterNot { it === best }.firstOrNull { candidate ->
             val nameTag = candidate.way.tags?.get("name")
             !(bestNameTag != null && nameTag != null && bestNameTag == nameTag)
         }

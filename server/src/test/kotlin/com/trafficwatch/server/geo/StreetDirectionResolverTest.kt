@@ -539,6 +539,59 @@ class StreetDirectionResolverTest @Autowired constructor(
     }
 
     @Test
+    fun `prefers a major highway over a marginally-closer minor way within the accuracy radius`() {
+        // Report 14872a1a shape: an unnamed highway=residential way sits ~3.3m from the
+        // point - closer than the highway=secondary arterial the car is actually on
+        // (~6.5m). Pre-fix, `best` = the residential (no oneway) and the DIVIDED_CARRIAGEWAY
+        // check (needs `best is OneWay`) never ran -> AMBIGUOUS_NEAREST_STREET. With the
+        // major-highway preference, `best` jumps to the secondary (gap 3.1m < 5.0m
+        // accuracy), which has a same-name anti-parallel oneway partner -> DIVIDED_CARRIAGEWAY.
+        //   way 701: highway=residential, no name, no oneway, lat +(-0.000030) -> ~3.3m.
+        //   way 702: highway=secondary "Jinnah Ave" oneway W->E, lat +0.000058 -> ~6.5m.
+        //   way 703: highway=secondary "Jinnah Ave" oneway E->W (anti-parallel), lat +0.000200
+        //            -> ~15.8m from 702's segment midpoint, inside the 30m carriageway cap.
+        val responseJson = """
+            {"elements": [
+              {"type": "way", "id": 701, "tags": {"highway": "residential"},
+               "geometry": [{"lat": 70.999970, "lon": 70.999000}, {"lat": 70.999970, "lon": 71.001000}]},
+              {"type": "way", "id": 702, "tags": {"highway": "secondary", "name": "Jinnah Ave", "oneway": "yes"},
+               "geometry": [{"lat": 71.000058, "lon": 70.999000}, {"lat": 71.000058, "lon": 71.001000}]},
+              {"type": "way", "id": 703, "tags": {"highway": "secondary", "name": "Jinnah Ave", "oneway": "yes"},
+               "geometry": [{"lat": 71.000200, "lon": 71.001000}, {"lat": 71.000200, "lon": 70.999000}]}
+            ]}
+        """.trimIndent()
+        stubOverpass(responseJson)
+
+        val result = streetDirectionResolver.resolve(BigDecimal("71.000000"), BigDecimal("71.000000"), accuracyMeters = 5.0)
+
+        assertThat(result).isInstanceOf(DirectionResolution.Unknown::class.java)
+        assertThat((result as DirectionResolution.Unknown).reason).isEqualTo(UnknownReason.DIVIDED_CARRIAGEWAY)
+        assertThat(result.streetName).isEqualTo("Jinnah Ave")
+    }
+
+    @Test
+    fun `does not prefer a major highway that is outside the accuracy radius`() {
+        // A residential way ~3.3m from the point, a secondary "Main Rd" ~20m away. Gap
+        // ~16.7m > the 5.0m accuracy, so `best` stays the residential and the result is
+        // resolved on the residential's own tags (no oneway -> NO_ONEWAY_TAG), NOT bumped
+        // to the far arterial.
+        val responseJson = """
+            {"elements": [
+              {"type": "way", "id": 711, "tags": {"highway": "residential"},
+               "geometry": [{"lat": 71.999970, "lon": 71.999000}, {"lat": 71.999970, "lon": 72.001000}]},
+              {"type": "way", "id": 712, "tags": {"highway": "secondary", "name": "Main Rd", "oneway": "yes"},
+               "geometry": [{"lat": 72.000180, "lon": 71.999000}, {"lat": 72.000180, "lon": 72.001000}]}
+            ]}
+        """.trimIndent()
+        stubOverpass(responseJson)
+
+        val result = streetDirectionResolver.resolve(BigDecimal("72.000000"), BigDecimal("72.000000"), accuracyMeters = 5.0)
+
+        assertThat(result).isInstanceOf(DirectionResolution.Unknown::class.java)
+        assertThat((result as DirectionResolution.Unknown).reason).isEqualTo(UnknownReason.NO_ONEWAY_TAG)
+    }
+
+    @Test
     fun `union across a full mirror and a trimmed mirror still downgrades a divided carriageway`() {
         overpassA.stubFor(post(urlMatching(".*"))
             .willReturn(okJson(readFixture("overpass-khayaban-e-jinnah-report-649b9a.json"))))

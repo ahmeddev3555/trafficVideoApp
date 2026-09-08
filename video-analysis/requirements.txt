@@ -5,6 +5,16 @@ pydantic-settings==2.5.2
 python-multipart==0.0.9
 opencv-python-headless==4.10.0.84
 numpy==1.26.4
+
+# CPU-only torch. This service runs on a CPU-only VPS; the default PyPI torch wheel
+# pulls ~1.5 GB of unused CUDA libraries, which pushed the container into OOM-restart
+# territory on a 3.7 GB box. The +cpu local version only exists on the PyTorch CPU
+# index, so this is forced regardless of resolution order. Pinned to versions
+# compatible with ultralytics==8.2.103 (needs torch>=1.8.0) and easyocr==1.7.2.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.4.1+cpu
+torchvision==0.19.1+cpu
+
 ultralytics==8.2.103
 supervision==0.23.0
 easyocr==1.7.2

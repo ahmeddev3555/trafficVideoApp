@@ -744,6 +744,40 @@ considered rather than forgotten.
   See `docs/superpowers/specs/2026-09-05-video-analysis-cost-reduction-design.md`.
   *(added and shipped 2026-09-05)*
 
+- **License plates are almost never extracted - there is no plate
+  localization or plate-tuned recognition.** `PlateReader.read_plate`
+  (`video-analysis/app/ocr.py`) runs `easyocr.readtext()` on the *entire
+  vehicle bounding-box crop* and keeps the single highest-confidence string
+  above `plate_confidence_floor` (0.3). The plate is a small fraction of that
+  crop (for a motorcycle rider, ~100&times;45 px inside a ~300&times;500 px
+  crop dominated by the rider's body), so EasyOCR's generic English text
+  detector either misses it or returns a mangled low-confidence read that the
+  floor discards. Verified on report `14872a1a` (2026-09-09): the confirmed
+  wrong-way rider's plate `AKJ 3588` is clearly legible in the stored
+  `wrong_way_frame`, but OCR on the whole-vehicle crop returned `"IKJJD"` at
+  confidence 0.13; a hand-cropped, 4&times;-upscaled crop of just the plate
+  still only reached `"8"` (0.23) / `"TKi3D"` (0.05). Not specific to that
+  report - a full-clip run produced `plate_text = None` for **all 49**
+  tracked vehicles, including large clean cars. `ocr.py`'s own docstring
+  acknowledges this ("No dedicated plate-detector model... Lower accuracy
+  ceiling than a purpose-built detector, acceptable for v1"). Plate
+  extraction is not a confirmation gate (counter-flow / stationary-approach /
+  bearing paths all confirm without it) - it only populates
+  `reports.license_plate` for the human-facing report, and the stored frame
+  lets a reviewer read the plate manually. Directions, none evaluated:
+  (a) a dedicated licence-plate detector (crop to the plate ROI before OCR) -
+  needs a safely-licensable open-source model, the original blocker;
+  (b) a plate-tuned recognizer (Pakistani-plate fine-tune, or a
+  deskew / contrast-normalize / character-segment preprocessing pass before
+  EasyOCR); (c) cheap heuristic ROI (bright rectangular region in the lower
+  portion of the vehicle bbox) as a stopgap; (d) OCR every frame of the
+  chosen candidate rather than just the 3 largest-area ones
+  (`OCR_CROPS_PER_TRACK`), picking the best read across the whole track.
+  Interacts with the 2026-09-05 cost-reduction change (OCR is skipped
+  entirely for sub-`MIN_OBSERVATIONS` tracks) and its deferred
+  defer-to-winner architecture (only OCR the server's chosen candidate).
+  *(added 2026-09-09, investigating why `14872a1a` had no plate)*
+
 - **Concurrent analyses thrash the single-CPU `video-analysis` service -
   shipped 2026-09-06.** `AsyncConfig.analysisExecutor` ran `corePoolSize=2`
   / `maxPoolSize=8`, so a burst of near-simultaneous submissions fired 2-8

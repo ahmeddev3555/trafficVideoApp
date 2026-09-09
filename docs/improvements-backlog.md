@@ -537,12 +537,25 @@ considered rather than forgotten.
     serialisation + sub-12-frame OCR skip, which addressed contention and
     per-track waste but not the resident-model footprint).
 
-  **Still REJECTED as of 2026-09-08:** `24908` (never re-run on the
-  counter-flow stack), `50bcc6` / `71f78` (moving camera — counter-flow has
-  no stationary-camera requirement, so worth a re-run), `d17d21e9` /
-  `b6cb5e2d` (OOM'd mid-re-run pre the torch fix; retry now that RAM is
-  healthy). `d9437ae3` CONFIRMS via the widened stationary-approach path
-  (`67 fr`, growth 2.35, 5-member R=0.99 receding consensus).
+  **Production re-run results (2026-09-08, deployed stack, خیبان جناح
+  bucket cache-seeded `DIVIDED_CARRIAGEWAY` while Overpass was down):**
+  - `14872a1a` &rarr; **CONFIRMED** `counter_flow`, conf 0.815 (the
+    16-frame swerve fragment, `flow_alignment` &minus;0.976, far-carriageway
+    car dropped by the near-camera gate).
+  - `b6cb5e2d` &rarr; **CONFIRMED** `stationary_approach`, conf 0.846
+    (124-frame grower, growth 2.43, 20-member R=0.98 receding consensus).
+    Finished in 126 s, no timeout &mdash; confirms the CPU-torch RAM fix
+    resolved the `video-analysis` instability.
+  - `d9437ae3` &rarr; **CONFIRMED** `stationary_approach`, conf 0.814
+    (67-frame grower, growth 2.35, 5-member R=0.99).
+  - `d17d21e9` &rarr; still **REJECTED**. 6.3 s clip; bearing path
+    `final_score` 0.20 (`direction_confidence` 0.29, CLIP_CONSENSUS only),
+    both fallbacks declined &mdash; not diagnosed which gate; genuinely
+    marginal (rider track fragments in the short clip).
+
+  **Still REJECTED / not re-run:** `24908` (never re-run on the counter-flow
+  stack), `50bcc6` / `71f78` (moving camera — counter-flow has no
+  stationary-camera requirement, worth a re-run), `d17d21e9` (above).
 
   **Parked follow-ups** (whole-branch review, not blocking): (I4) verify a
   real head-on motorcycle track's `max`-over-frames `detection_confidence`
